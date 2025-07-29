@@ -1,0 +1,11 @@
+name: transit_opt_env
+channels:
+  - conda-forge
+  - city-modelling-lab
+dependencies:
+  - python=3.10
+  - pip
+  - cml-genet
+  - pandas
+  - cookiecutter 
+  - poetry       
