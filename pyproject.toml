@@ -1,7 +1,7 @@
 [project]
 name = "transit_opt"
 version = "0.1.0"
-description = "Optimisation tool for tpublic transit network design"
+description = "Optimisation tool for public transit network design"
 readme = "README.md"
 authors = [
   {name = "Hussein Mahfouz", email = "husseinmahfouz93@gmail.com"}
