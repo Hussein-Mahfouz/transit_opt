@@ -1,4 +1,4 @@
-name: /home/hussein/miniconda3/envs/transit_opt_env
+name: transit_opt_dev
 channels:
   - city-modelling-lab
   - conda-forge
@@ -431,4 +431,3 @@ dependencies:
       - typer==0.16.1
       - uv==0.8.4
       - wrapt==1.17.3
-prefix: /home/hussein/miniconda3/envs/transit_opt_env
