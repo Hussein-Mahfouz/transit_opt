@@ -1,71 +1,74 @@
-import pytest
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pytest
+
 from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
 
+
 class TestGTFSDataPreparator:
-    
+
     @pytest.fixture
     def sample_gtfs_path(self):
         """Path to sample GTFS feed for testing."""
         # Store the GTFS file in tests/data/
         test_data_dir = Path(__file__).parent / "data"
         gtfs_file = test_data_dir / "duke-nc-us.zip"
-        
+
         # if not gtfs_file.exists():
         #     pytest.skip(f"Test GTFS file not found: {gtfs_file}")
-        
+
         return str(gtfs_file)
-    
+
     def test_safe_timestr_to_seconds(self):
         """Test time string conversion utility."""
         preparator = GTFSDataPreparator.__new__(GTFSDataPreparator)
-        
+
         # Test standard times
-        assert preparator._safe_timestr_to_seconds('06:30:00') == 23400.0
-        assert preparator._safe_timestr_to_seconds('00:00:00') == 0.0
-        
+        assert preparator._safe_timestr_to_seconds("06:30:00") == 23400.0
+        assert preparator._safe_timestr_to_seconds("00:00:00") == 0.0
+
         # Test overnight times
-        assert preparator._safe_timestr_to_seconds('25:15:00') == 90900.0
-        
+        assert preparator._safe_timestr_to_seconds("25:15:00") == 90900.0
+
         # Test NaN/None handling
         assert np.isnan(preparator._safe_timestr_to_seconds(np.nan))
         assert np.isnan(preparator._safe_timestr_to_seconds(None))
-        
+
         # Test already numeric
         assert preparator._safe_timestr_to_seconds(3600.0) == 3600.0
-        
+
         # Test invalid format
-        assert np.isnan(preparator._safe_timestr_to_seconds('invalid'))
-    
+        assert np.isnan(preparator._safe_timestr_to_seconds("invalid"))
+
     def test_create_initial_solution(self):
         """Test initial solution matrix creation."""
         preparator = GTFSDataPreparator.__new__(GTFSDataPreparator)
         preparator.no_service_threshold_minutes = 480  # 8 hours
-        
+
         # Test data
-        current_headways = np.array([
-            [12.0, 20.0, 35.0],
-            [np.nan, 50.0, 100.0],
-            [15.0, np.nan, 1440.0]
-        ])
-        
+        current_headways = np.array(
+            [[12.0, 20.0, 35.0], [np.nan, 50.0, 100.0], [15.0, np.nan, 1440.0]]
+        )
+
         allowed_headways = [10, 15, 30, 60, 120]
         headway_to_index = {10: 0, 15: 1, 30: 2, 60: 3, 120: 4, 9999: 5}
-        # CREATE headway_to_index FROM allowed_headways 
+        # CREATE headway_to_index FROM allowed_headways
         allowed_values = allowed_headways + [9999.0]  # Add no-service option
         headway_to_index = {float(h): i for i, h in enumerate(allowed_values)}
 
         result = preparator._create_initial_solution(current_headways, headway_to_index)
-        
-        expected = np.array([
-            [0, 1, 2],  # 12→15, 20→30, 35→30
-            [5, 3, 4],  # NaN→no-service, 50→60, 100→120
-            [1, 5, 5]   # 15→15, NaN→no-service, 1440→no-service (>480min threshold)
-        ])
-        
+
+        expected = np.array(
+            [
+                [0, 1, 2],  # 12→15, 20→30, 35→30
+                [5, 3, 4],  # NaN→no-service, 50→60, 100→120
+                [1, 5, 5],  # 15→15, NaN→no-service, 1440→no-service (>480min threshold)
+            ]
+        )
+
         np.testing.assert_array_equal(result, expected)
-    
+
     def test_init_validation_with_real_gtfs(self, sample_gtfs_path):
         """Test initialization with real GTFS data and interval validation."""
         # Valid interval_hours (≥3 and divide 24)
@@ -74,59 +77,56 @@ class TestGTFSDataPreparator:
             assert preparator.interval_hours == hours
             assert preparator.n_intervals == 24 // hours
             assert preparator.feed is not None
-        
+
         # Invalid - too small
         with pytest.raises(ValueError, match="must be ≥ 3"):
             GTFSDataPreparator(sample_gtfs_path, 1)
-            
+
         with pytest.raises(ValueError, match="must be ≥ 3"):
             GTFSDataPreparator(sample_gtfs_path, 2)
-    
+
         # Invalid - doesn't divide 24
         with pytest.raises(ValueError, match="must divide 24 evenly"):
             GTFSDataPreparator(sample_gtfs_path, 5)
-
 
     def test_extract_optimization_data_integration(self, sample_gtfs_path):
         """Test full optimization data extraction with real GTFS."""
         preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=3)
         allowed_headways = [10, 15, 30, 60, 120]
-        
+
         opt_data = preparator.extract_optimization_data(allowed_headways)
-        
+
         # Test structure
-        assert opt_data['problem_type'] == 'discrete_headway_optimization'
-        assert opt_data['n_routes'] > 0
-        assert opt_data['n_intervals'] == 8  # 24/3 = 8
-        assert opt_data['n_choices'] == 6  # 5 headways + no-service
-        
+        assert opt_data["problem_type"] == "discrete_headway_optimization"
+        assert opt_data["n_routes"] > 0
+        assert opt_data["n_intervals"] == 8  # 24/3 = 8
+        assert opt_data["n_choices"] == 6  # 5 headways + no-service
+
         # Test matrix dimensions
-        expected_shape = (opt_data['n_routes'], opt_data['n_intervals'])
-        assert opt_data['decision_matrix_shape'] == expected_shape
-        assert opt_data['initial_solution'].shape == expected_shape
-        
+        expected_shape = (opt_data["n_routes"], opt_data["n_intervals"])
+        assert opt_data["decision_matrix_shape"] == expected_shape
+        assert opt_data["initial_solution"].shape == expected_shape
+
         # Test allowed_headways includes 9999
-        assert 9999.0 in opt_data['allowed_headways']
-        assert len(opt_data['allowed_headways']) == 6
-        
+        assert 9999.0 in opt_data["allowed_headways"]
+        assert len(opt_data["allowed_headways"]) == 6
+
         # Test data consistency
-        assert len(opt_data['routes']['ids']) == opt_data['n_routes']
-        assert opt_data['routes']['round_trip_times'].shape == (opt_data['n_routes'],)
-        assert opt_data['routes']['current_headways'].shape == expected_shape
-
-
+        assert len(opt_data["routes"]["ids"]) == opt_data["n_routes"]
+        assert opt_data["routes"]["round_trip_times"].shape == (opt_data["n_routes"],)
+        assert opt_data["routes"]["current_headways"].shape == expected_shape
 
     def test_headway_calculation_realistic(self, sample_gtfs_path):
         """Test headway calculation with real GTFS schedule patterns."""
         preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=3)
-        
+
         # Extract one route's data to verify headway calculation
         route_data = preparator._extract_route_essentials()
         assert len(route_data) > 0
-        
+
         # Check that headways are reasonable (between 5 and 1440 minutes)
         for route in route_data[:3]:  # Test first 3 routes
-            headways = route['headways_by_interval']
+            headways = route["headways_by_interval"]
             valid_headways = headways[~np.isnan(headways)]
             if len(valid_headways) > 0:
                 assert np.all(valid_headways >= 2)  # At least 5 min headway
@@ -135,232 +135,287 @@ class TestGTFSDataPreparator:
     def test_round_trip_times_realistic(self, sample_gtfs_path):
         """Test round-trip time calculation with real trip data."""
         preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=3)
-        
+
         route_data = preparator._extract_route_essentials()
-        
+
         # Check that round-trip times are reasonable
         for route in route_data[:3]:
-            rtt = route['round_trip_time']
+            rtt = route["round_trip_time"]
             assert 10 <= rtt <= 240  # Between 10 min and 4 hours
-
-
 
     def test_fleet_calculation_realistic(self, sample_gtfs_path):
         """Test fleet size calculation with realistic constraints."""
         preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=3)
         allowed_headways = [10, 15, 30, 60, 120]
-        
+
         opt_data = preparator.extract_optimization_data(allowed_headways)
-        fleet_analysis = opt_data['constraints']['fleet_analysis']  
-        
+        fleet_analysis = opt_data["constraints"]["fleet_analysis"]
+
         # Test fleet analysis structure (updated field names)
-        assert 'current_fleet_per_route' in fleet_analysis        
-        assert 'current_fleet_by_interval' in fleet_analysis     
-        assert 'total_current_fleet_peak' in fleet_analysis      
-        assert 'route_round_trip_times' in fleet_analysis       
-        
-        n_routes = opt_data['n_routes']
-        n_intervals = opt_data['n_intervals']
-        
-        # Test dimensions 
-        assert fleet_analysis['current_fleet_per_route'].shape == (n_routes,)
-        assert fleet_analysis['current_fleet_by_interval'].shape == (n_intervals,)
-        assert fleet_analysis['route_round_trip_times'].shape == (n_routes,)
-        
+        assert "current_fleet_per_route" in fleet_analysis
+        assert "current_fleet_by_interval" in fleet_analysis
+        assert "total_current_fleet_peak" in fleet_analysis
+        assert "route_round_trip_times" in fleet_analysis
+
+        n_routes = opt_data["n_routes"]
+        n_intervals = opt_data["n_intervals"]
+
+        # Test dimensions
+        assert fleet_analysis["current_fleet_per_route"].shape == (n_routes,)
+        assert fleet_analysis["current_fleet_by_interval"].shape == (n_intervals,)
+        assert fleet_analysis["route_round_trip_times"].shape == (n_routes,)
+
         # Test reasonableness
-        current_fleet_per_route = fleet_analysis['current_fleet_per_route']
-        current_fleet_by_interval = fleet_analysis['current_fleet_by_interval']
-        
+        current_fleet_per_route = fleet_analysis["current_fleet_per_route"]
+        current_fleet_by_interval = fleet_analysis["current_fleet_by_interval"]
+
         # Fleet sizes should be positive for routes with service
         active_routes = current_fleet_per_route > 0
         if np.any(active_routes):
             assert np.all(current_fleet_per_route[active_routes] >= 1)
-            assert np.all(current_fleet_per_route[active_routes] <= 200)  # Reasonable upper bound
-        
+            assert np.all(
+                current_fleet_per_route[active_routes] <= 200
+            )  # Reasonable upper bound
+
         # Interval-based fleet should be reasonable
         active_intervals = current_fleet_by_interval > 0
         if np.any(active_intervals):
             assert np.all(current_fleet_by_interval[active_intervals] >= 1)
-            assert np.all(current_fleet_by_interval[active_intervals] <= 1000)  # System-wide upper bound
-        
+            assert np.all(
+                current_fleet_by_interval[active_intervals] <= 1000
+            )  # System-wide upper bound
+
         # Peak fleet should be realistic (max across intervals ≤ sum of route peaks)
-        total_peak = fleet_analysis['total_current_fleet_peak']
+        total_peak = fleet_analysis["total_current_fleet_peak"]
         naive_sum = np.sum(current_fleet_per_route)
         assert total_peak <= naive_sum  # Realistic should be ≤ naive approach
-        assert total_peak >= np.max(current_fleet_by_interval)  # Should equal max interval
-        
+        assert total_peak >= np.max(
+            current_fleet_by_interval
+        )  # Should equal max interval
+
         # Round-trip times should be reasonable
-        round_trip_times = fleet_analysis['route_round_trip_times']
+        round_trip_times = fleet_analysis["route_round_trip_times"]
         active_round_trips = round_trip_times[active_routes]
         if len(active_round_trips) > 0:
-            assert np.all(active_round_trips >= 10)   # At least 10 minutes
+            assert np.all(active_round_trips >= 10)  # At least 10 minutes
             assert np.all(active_round_trips <= 240)  # At most 4 hours
 
     def test_fleet_calculation_edge_cases(self):
         """
         Test fleet calculation edge cases with detailed step-by-step verification.
-        
+
         This test verifies that _analyze_current_fleet() correctly calculates:
         1. Per-route peak fleet requirements (max across intervals for each route)
         2. System-wide fleet by interval (sum across routes for each time period)
         3. Total system peak (max across all intervals - the realistic fleet size)
         4. Efficiency gain vs naive approach (sum of route peaks)
-        
+
         Uses test data with known expected results to verify calculations.
         """
         # ===== SETUP TEST ENVIRONMENT =====
         preparator = GTFSDataPreparator.__new__(GTFSDataPreparator)
         preparator.n_intervals = 4  # 4 time periods for this test
-        
+
         # ===== CREATE TEST DATA WITH KNOWN EXPECTED RESULTS =====
         # We'll create 3 routes with different service patterns to test various scenarios
         route_data = [
             {  # ROUTE 1: Morning peak route
-                'service_id': 'route_1',
-                'round_trip_time': 60.0,  # 1 hour round-trip
-                'headways_by_interval': np.array([
-                    15.0,   # Interval 0: 15min headway (PEAK - frequent service)
-                    30.0,   # Interval 1: 30min headway (moderate service)  
-                    np.nan, # Interval 2: No service
-                    60.0    # Interval 3: 60min headway (light service)
-                ])
+                "service_id": "route_1",
+                "round_trip_time": 60.0,  # 1 hour round-trip
+                "headways_by_interval": np.array(
+                    [
+                        15.0,  # Interval 0: 15min headway (PEAK - frequent service)
+                        30.0,  # Interval 1: 30min headway (moderate service)
+                        np.nan,  # Interval 2: No service
+                        60.0,  # Interval 3: 60min headway (light service)
+                    ]
+                ),
             },
             {  # ROUTE 2: Evening peak route (staggered from Route 1)
-                'service_id': 'route_2', 
-                'round_trip_time': 120.0,  # 2 hour round-trip (longer route)
-                'headways_by_interval': np.array([
-                    60.0,   # Interval 0: 60min headway (light service)
-                    45.0,   # Interval 1: 45min headway (moderate service)
-                    30.0,   # Interval 2: 30min headway (PEAK - frequent service)
-                    np.nan  # Interval 3: No service
-                ])
+                "service_id": "route_2",
+                "round_trip_time": 120.0,  # 2 hour round-trip (longer route)
+                "headways_by_interval": np.array(
+                    [
+                        60.0,  # Interval 0: 60min headway (light service)
+                        45.0,  # Interval 1: 45min headway (moderate service)
+                        30.0,  # Interval 2: 30min headway (PEAK - frequent service)
+                        np.nan,  # Interval 3: No service
+                    ]
+                ),
             },
             {  # ROUTE 3: No service route (edge case)
-                'service_id': 'route_3',
-                'round_trip_time': 40.0,   # Short round-trip (doesn't matter - no service)
-                'headways_by_interval': np.array([
-                    np.nan, # Interval 0: No service
-                    np.nan, # Interval 1: No service  
-                    np.nan, # Interval 2: No service
-                    np.nan  # Interval 3: No service
-                ])
-            }
+                "service_id": "route_3",
+                "round_trip_time": 40.0,  # Short round-trip (doesn't matter - no service)
+                "headways_by_interval": np.array(
+                    [
+                        np.nan,  # Interval 0: No service
+                        np.nan,  # Interval 1: No service
+                        np.nan,  # Interval 2: No service
+                        np.nan,  # Interval 3: No service
+                    ]
+                ),
+            },
         ]
-        
+
         # ===== RUN THE ANALYSIS =====
         fleet_analysis = preparator._analyze_current_fleet(route_data)
-        
+
         # Extract results for detailed verification
-        current_fleet_per_route = fleet_analysis['current_fleet_per_route']
-        current_fleet_by_interval = fleet_analysis['current_fleet_by_interval']
-        
+        current_fleet_per_route = fleet_analysis["current_fleet_per_route"]
+        current_fleet_by_interval = fleet_analysis["current_fleet_by_interval"]
+
         print("=== DETAILED FLEET CALCULATION VERIFICATION ===")
-        
+
         # ===== VERIFY PER-ROUTE PEAK FLEET CALCULATIONS =====
         print("\n🚌 PER-ROUTE PEAK FLEET VERIFICATION:")
         print("Formula: vehicles = ceil((round_trip_time * 1.15) / headway)")
-        
+
         # Route 1 calculations by interval:
-        print(f"\nRoute 1 (60min round-trip) - Morning Peak Route:")
-        print(f"  Interval 0: ceil(60 * 1.15 / 15) = ceil(69/15) = ceil(4.6) = 5 vehicles ← PEAK")
-        print(f"  Interval 1: ceil(60 * 1.15 / 30) = ceil(69/30) = ceil(2.3) = 3 vehicles") 
-        print(f"  Interval 2: No service = 0 vehicles")
-        print(f"  Interval 3: ceil(60 * 1.15 / 60) = ceil(69/60) = ceil(1.15) = 2 vehicles")
-        print(f"  → Peak across intervals = max(5, 3, 0, 2) = 5 vehicles")
-        assert current_fleet_per_route[0] == 5, f"Route 1 peak fleet should be 5, got {current_fleet_per_route[0]}"
-        
-        # Route 2 calculations by interval:  
-        print(f"\nRoute 2 (120min round-trip) - Evening Peak Route:")
-        print(f"  Interval 0: ceil(120 * 1.15 / 60) = ceil(138/60) = ceil(2.3) = 3 vehicles")
-        print(f"  Interval 1: ceil(120 * 1.15 / 45) = ceil(138/45) = ceil(3.07) = 4 vehicles")
-        print(f"  Interval 2: ceil(120 * 1.15 / 30) = ceil(138/30) = ceil(4.6) = 5 vehicles ← PEAK")
-        print(f"  Interval 3: No service = 0 vehicles") 
-        print(f"  → Peak across intervals = max(3, 4, 5, 0) = 5 vehicles")
-        assert current_fleet_per_route[1] == 5, f"Route 2 peak fleet should be 5, got {current_fleet_per_route[1]}"
-        
+        print("\nRoute 1 (60min round-trip) - Morning Peak Route:")
+        print(
+            "  Interval 0: ceil(60 * 1.15 / 15) = ceil(69/15) = ceil(4.6) = 5 vehicles ← PEAK"
+        )
+        print(
+            "  Interval 1: ceil(60 * 1.15 / 30) = ceil(69/30) = ceil(2.3) = 3 vehicles"
+        )
+        print("  Interval 2: No service = 0 vehicles")
+        print(
+            "  Interval 3: ceil(60 * 1.15 / 60) = ceil(69/60) = ceil(1.15) = 2 vehicles"
+        )
+        print("  → Peak across intervals = max(5, 3, 0, 2) = 5 vehicles")
+        assert (
+            current_fleet_per_route[0] == 5
+        ), f"Route 1 peak fleet should be 5, got {current_fleet_per_route[0]}"
+
+        # Route 2 calculations by interval:
+        print("\nRoute 2 (120min round-trip) - Evening Peak Route:")
+        print(
+            "  Interval 0: ceil(120 * 1.15 / 60) = ceil(138/60) = ceil(2.3) = 3 vehicles"
+        )
+        print(
+            "  Interval 1: ceil(120 * 1.15 / 45) = ceil(138/45) = ceil(3.07) = 4 vehicles"
+        )
+        print(
+            "  Interval 2: ceil(120 * 1.15 / 30) = ceil(138/30) = ceil(4.6) = 5 vehicles ← PEAK"
+        )
+        print("  Interval 3: No service = 0 vehicles")
+        print("  → Peak across intervals = max(3, 4, 5, 0) = 5 vehicles")
+        assert (
+            current_fleet_per_route[1] == 5
+        ), f"Route 2 peak fleet should be 5, got {current_fleet_per_route[1]}"
+
         # Route 3 (no service):
-        print(f"\nRoute 3 (40min round-trip):")
-        print(f"  All intervals: No service = 0 vehicles")
-        print(f"  → Peak across intervals = 0 vehicles") 
-        assert current_fleet_per_route[2] == 0, f"Route 3 should have 0 fleet, got {current_fleet_per_route[2]}"
-        
+        print("\nRoute 3 (40min round-trip):")
+        print("  All intervals: No service = 0 vehicles")
+        print("  → Peak across intervals = 0 vehicles")
+        assert (
+            current_fleet_per_route[2] == 0
+        ), f"Route 3 should have 0 fleet, got {current_fleet_per_route[2]}"
+
         # ===== VERIFY SYSTEM-WIDE FLEET BY INTERVAL =====
-        print(f"\n🕐 SYSTEM-WIDE FLEET BY INTERVAL VERIFICATION:")
+        print("\n🕐 SYSTEM-WIDE FLEET BY INTERVAL VERIFICATION:")
         print("Formula: interval_fleet = sum of all route needs at that specific time")
-        print("Notice: Route 1 peaks in Interval 0, Route 2 peaks in Interval 2 → Staggered!")
-        
+        print(
+            "Notice: Route 1 peaks in Interval 0, Route 2 peaks in Interval 2 → Staggered!"
+        )
+
         # Interval 0: Route 1 at peak, Route 2 at minimum
-        print(f"\nInterval 0 (Route 1 peak, Route 2 light):")
-        print(f"  Route 1: 5 vehicles (15min headway - PEAK)")
-        print(f"  Route 2: 3 vehicles (60min headway - light)")  
-        print(f"  Route 3: 0 vehicles (no service)")
-        print(f"  → Total = 5 + 3 + 0 = 8 vehicles")
-        assert current_fleet_by_interval[0] == 8, f"Interval 0 should need 8 vehicles, got {current_fleet_by_interval[0]}"
-        
+        print("\nInterval 0 (Route 1 peak, Route 2 light):")
+        print("  Route 1: 5 vehicles (15min headway - PEAK)")
+        print("  Route 2: 3 vehicles (60min headway - light)")
+        print("  Route 3: 0 vehicles (no service)")
+        print("  → Total = 5 + 3 + 0 = 8 vehicles")
+        assert (
+            current_fleet_by_interval[0] == 8
+        ), f"Interval 0 should need 8 vehicles, got {current_fleet_by_interval[0]}"
+
         # Interval 1: Both routes at moderate levels
-        print(f"\nInterval 1 (Both routes moderate):")
-        print(f"  Route 1: 3 vehicles (30min headway)")
-        print(f"  Route 2: 4 vehicles (45min headway)")
-        print(f"  Route 3: 0 vehicles (no service)")
-        print(f"  → Total = 3 + 4 + 0 = 7 vehicles")
-        assert current_fleet_by_interval[1] == 7, f"Interval 1 should need 7 vehicles, got {current_fleet_by_interval[1]}"
-        
+        print("\nInterval 1 (Both routes moderate):")
+        print("  Route 1: 3 vehicles (30min headway)")
+        print("  Route 2: 4 vehicles (45min headway)")
+        print("  Route 3: 0 vehicles (no service)")
+        print("  → Total = 3 + 4 + 0 = 7 vehicles")
+        assert (
+            current_fleet_by_interval[1] == 7
+        ), f"Interval 1 should need 7 vehicles, got {current_fleet_by_interval[1]}"
+
         # Interval 2: Route 1 off, Route 2 at peak
-        print(f"\nInterval 2 (Route 1 off, Route 2 peak):")
-        print(f"  Route 1: 0 vehicles (no service)")
-        print(f"  Route 2: 5 vehicles (30min headway - PEAK)")
-        print(f"  Route 3: 0 vehicles (no service)")
-        print(f"  → Total = 0 + 5 + 0 = 5 vehicles")
-        assert current_fleet_by_interval[2] == 5, f"Interval 2 should need 5 vehicles, got {current_fleet_by_interval[2]}"
-        
+        print("\nInterval 2 (Route 1 off, Route 2 peak):")
+        print("  Route 1: 0 vehicles (no service)")
+        print("  Route 2: 5 vehicles (30min headway - PEAK)")
+        print("  Route 3: 0 vehicles (no service)")
+        print("  → Total = 0 + 5 + 0 = 5 vehicles")
+        assert (
+            current_fleet_by_interval[2] == 5
+        ), f"Interval 2 should need 5 vehicles, got {current_fleet_by_interval[2]}"
+
         # Interval 3: Only Route 1 light service
-        print(f"\nInterval 3 (Only Route 1 light):")
-        print(f"  Route 1: 2 vehicles (60min headway)")
-        print(f"  Route 2: 0 vehicles (no service)")
-        print(f"  Route 3: 0 vehicles (no service)")
-        print(f"  → Total = 2 + 0 + 0 = 2 vehicles")
-        assert current_fleet_by_interval[3] == 2, f"Interval 3 should need 2 vehicles, got {current_fleet_by_interval[3]}"
-        
+        print("\nInterval 3 (Only Route 1 light):")
+        print("  Route 1: 2 vehicles (60min headway)")
+        print("  Route 2: 0 vehicles (no service)")
+        print("  Route 3: 0 vehicles (no service)")
+        print("  → Total = 2 + 0 + 0 = 2 vehicles")
+        assert (
+            current_fleet_by_interval[3] == 2
+        ), f"Interval 3 should need 2 vehicles, got {current_fleet_by_interval[3]}"
+
         # ===== VERIFY PEAK SYSTEM FLEET (REALISTIC TOTAL) =====
-        print(f"\n🎯 SYSTEM PEAK FLEET VERIFICATION:")
+        print("\n🎯 SYSTEM PEAK FLEET VERIFICATION:")
         print("Realistic total = max fleet needed across all time intervals")
         intervals_fleet = [8, 7, 5, 2]
         expected_peak = max(intervals_fleet)  # = 8 vehicles
-        
+
         print(f"  Fleet by interval: {intervals_fleet}")
-        print(f"  → System peak = max({', '.join(map(str, intervals_fleet))}) = {expected_peak} vehicles")
-        print(f"  → This means we need {expected_peak} vehicles total to serve the system")
-        
-        assert fleet_analysis['total_current_fleet_peak'] == expected_peak, \
-            f"System peak should be {expected_peak}, got {fleet_analysis['total_current_fleet_peak']}"
-        
+        print(
+            f"  → System peak = max({', '.join(map(str, intervals_fleet))}) = {expected_peak} vehicles"
+        )
+        print(
+            f"  → This means we need {expected_peak} vehicles total to serve the system"
+        )
+
+        assert (
+            fleet_analysis["total_current_fleet_peak"] == expected_peak
+        ), f"System peak should be {expected_peak}, got {fleet_analysis['total_current_fleet_peak']}"
+
         # ===== VERIFY EFFICIENCY GAIN CALCULATION =====
-        print(f"\n📈 EFFICIENCY GAIN VERIFICATION:")
-        print("Compares realistic interval-based approach vs naive sum-of-peaks approach")
+        print("\n📈 EFFICIENCY GAIN VERIFICATION:")
+        print(
+            "Compares realistic interval-based approach vs naive sum-of-peaks approach"
+        )
         print("🎯 STAGGERED PEAKS CREATE EFFICIENCY GAIN!")
-        
+
         naive_sum = sum(current_fleet_per_route)  # Sum of route peaks = 5 + 5 + 0 = 10
-        realistic_peak = expected_peak            # Max across intervals = 8
+        realistic_peak = expected_peak  # Max across intervals = 8
         expected_efficiency = naive_sum - realistic_peak  # 10 - 8 = 2 vehicles saved!
-        
-        print(f"  Naive approach: sum of route peaks = {current_fleet_per_route[0]} + {current_fleet_per_route[1]} + {current_fleet_per_route[2]} = {naive_sum} vehicles")
-        print(f"    (Assumes Route 1 and Route 2 both peak simultaneously)")
+
+        print(
+            f"  Naive approach: sum of route peaks = {current_fleet_per_route[0]} + {current_fleet_per_route[1]} + {current_fleet_per_route[2]} = {naive_sum} vehicles"
+        )
+        print("    (Assumes Route 1 and Route 2 both peak simultaneously)")
         print(f"  Realistic approach: max interval fleet = {realistic_peak} vehicles")
-        print(f"    (Route 1 peaks at Interval 0, Route 2 peaks at Interval 2)")
-        print(f"  → Efficiency gain = {naive_sum} - {realistic_peak} = {expected_efficiency} vehicles saved")
-        
+        print("    (Route 1 peaks at Interval 0, Route 2 peaks at Interval 2)")
+        print(
+            f"  → Efficiency gain = {naive_sum} - {realistic_peak} = {expected_efficiency} vehicles saved"
+        )
+
         if expected_efficiency > 0:
             savings_percent = (expected_efficiency / naive_sum) * 100
-            print(f"  → 🎉 Realistic approach saves {expected_efficiency} vehicles ({savings_percent:.1f}% reduction)!")
-            print(f"  → This is why staggered service patterns are more efficient!")
+            print(
+                f"  → 🎉 Realistic approach saves {expected_efficiency} vehicles ({savings_percent:.1f}% reduction)!"
+            )
+            print("  → This is why staggered service patterns are more efficient!")
         elif expected_efficiency == 0:
-            print(f"  → No efficiency gain (routes peak simultaneously)")
+            print("  → No efficiency gain (routes peak simultaneously)")
         else:
             print(f"  → Realistic approach needs {-expected_efficiency} more vehicles")
-        
-        assert fleet_analysis['fleet_stats']['fleet_efficiency_gain'] == expected_efficiency, \
-            f"Efficiency gain should be {expected_efficiency}, got {fleet_analysis['fleet_stats']['fleet_efficiency_gain']}"
-        
-        print(f"\n✅ All fleet calculation tests passed!")
+
+        assert (
+            fleet_analysis["fleet_stats"]["fleet_efficiency_gain"]
+            == expected_efficiency
+        ), f"Efficiency gain should be {expected_efficiency}, got {fleet_analysis['fleet_stats']['fleet_efficiency_gain']}"
+
+        print("\n✅ All fleet calculation tests passed!")
         print(f"   🎯 System needs {expected_peak} vehicles (realistic)")
-        print(f"   📊 Efficiency vs naive: {expected_efficiency} vehicles saved ({(expected_efficiency/naive_sum)*100:.1f}% reduction)")
+        print(
+            f"   📊 Efficiency vs naive: {expected_efficiency} vehicles saved ({(expected_efficiency/naive_sum)*100:.1f}% reduction)"
+        )
