@@ -6,8 +6,8 @@
 
   "python.formatting.provider": "black",           // tells Python extension to use Black
   "editor.codeActionsOnSave": {
-    "source.fixAll": true,                         // Ruff fixes applied
-    "source.organizeImports": true                 // imports sorted
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
   },
 
   "notebook.formatOnSave.enabled": true

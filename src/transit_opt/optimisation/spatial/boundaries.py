@@ -1,15 +1,92 @@
+"""
+Study area boundary management for spatial transit optimization.
+
+This module provides tools for defining, loading, and working with geographic
+boundaries. It handles CRS validation, spatial
+filtering, and coordinate transformations.
+"""
+
+from typing import Literal
+
 import geopandas as gpd
 
 
 class StudyAreaBoundary:
-    """Simple class to handle study area boundaries for spatial transit analysis."""
+    """
+    Manages study area boundaries
+    
+    This class handles loading, validating, and working with geographic boundaries
+    that define the study area for transit optimization. It enforces the use of
+    metric coordinate systems and provides methods for spatial filtering of
+    transit network elements.
+    
+    Key features:
+    - Automatic CRS validation (enforces metric systems)
+    - Spatial filtering of points and grid cells
+    - Buffer operations
+    - Multiple loading options (file, bounds, center+radius)
+    
+    Attributes:
+        target_crs (str): Target coordinate reference system (must be metric)
+        buffer_km (float): Buffer distance in kilometers applied to boundary
+        boundary_gdf (gpd.GeoDataFrame): The boundary geometry in target CRS
+    
+    Examples:
+        Load boundary from file:
+        
+        >>> boundary = StudyAreaBoundary.from_file(
+        ...     "study_area.geojson", 
+        ...     crs="EPSG:3857",
+        ...     buffer_km=2.0
+        ... )
+        
+        Filter transit stops to study area:
+        
+        >>> filtered_stops = boundary.filter_points(gtfs_stops_gdf)
+        
+        Create from bounding box:
+        
+        >>> boundary = StudyAreaBoundary.from_bounds(
+        ...     minx=-79.0, miny=35.9, 
+        ...     maxx=-78.8, maxy=36.1,
+        ...     crs="EPSG:3857"
+        ... )
+    """
 
     def __init__(
         self,
         boundary_gdf: gpd.GeoDataFrame | None = None,
         crs: str = "EPSG:3857",
         buffer_km: float = 0.0,
-    ):
+    ) -> None:
+        """
+        Initialize a StudyAreaBoundary instance.
+        
+        Args:
+            boundary_gdf: GeoDataFrame containing boundary geometry. 
+                         Can be in any CRS - will be converted to target CRS.
+                         If None, boundary must be set later using set_boundary()
+                         or class methods.
+            crs: Target coordinate reference system. Must be a metric CRS
+                 (e.g., 'EPSG:3857', 'EPSG:32617'). Geographic CRS like
+                 'EPSG:4326' are rejected.
+            buffer_km: Buffer distance in kilometers to apply to the boundary.
+                      Use 0.0 for no buffer. Must be >= 0.
+        
+        Raises:
+            ValueError: If CRS is geographic (lat/lon) or uses non-metric units
+            ValueError: If buffer_km is negative
+            ImportError: If pyproj is not available for CRS validation
+        
+        Examples:
+            Create with existing GeoDataFrame:
+            
+            >>> gdf = gpd.read_file("boundary.shp")
+            >>> boundary = StudyAreaBoundary(gdf, crs="EPSG:3857", buffer_km=1.5)
+        """
+        if buffer_km < 0:
+            raise ValueError("Buffer distance cannot be negative")
+
         self.target_crs = self._validate_metric_crs(crs)
         self.buffer_km = buffer_km
         self.boundary_gdf = None
@@ -18,7 +95,24 @@ class StudyAreaBoundary:
             self.set_boundary(boundary_gdf)
 
     def _validate_metric_crs(self, crs: str) -> str:
-        """Validate that CRS is metric, raise error if not."""
+        """
+        Validate that CRS is metric and suitable for distance calculations.
+        
+        Args:
+            crs: Coordinate reference system string (e.g., 'EPSG:3857')
+        
+        Returns:
+            Validated CRS string
+            
+        Raises:
+            ValueError: If CRS is geographic or uses non-metric units
+            ImportError: If pyproj is not available
+            
+        Note:
+            This method requires pyproj for CRS validation. Geographic CRS
+            (latitude/longitude) are rejected because buffer and distance
+            calculations require metric units.
+        """
         try:
             import pyproj
 
@@ -50,8 +144,35 @@ class StudyAreaBoundary:
             else:
                 raise ValueError(f"Invalid CRS {crs}: {e}")
 
-    def set_boundary(self, boundary_gdf: gpd.GeoDataFrame):
-        """Set the boundary from a GeoDataFrame with CRS conversion."""
+    def set_boundary(self, boundary_gdf: gpd.GeoDataFrame) -> None:
+        """
+        Set the boundary from a GeoDataFrame with automatic processing.
+        
+        This method handles:
+        - CRS conversion to target CRS if needed
+        - Buffer application if specified
+        - Dissolving multiple polygons into a single geometry
+        - Validation that boundary is not empty
+        
+        Args:
+            boundary_gdf: GeoDataFrame containing boundary polygon(s).
+                         Can be in any CRS - will be converted automatically.
+        
+        Raises:
+            ValueError: If boundary_gdf is empty or contains no valid geometry
+            
+        Examples:
+            Set boundary from existing GeoDataFrame:
+            
+            >>> boundary_gdf = gpd.read_file("study_area.geojson")
+            >>> boundary_obj.set_boundary(boundary_gdf)
+        """
+        if len(boundary_gdf) == 0:
+            raise ValueError("Boundary GeoDataFrame is empty")
+
+        if boundary_gdf.geometry.isna().all():
+            raise ValueError("Boundary contains no valid geometry")
+
         original_crs = boundary_gdf.crs
 
         # Convert to target CRS if different
@@ -71,8 +192,46 @@ class StudyAreaBoundary:
         print(f"✅ Study area set: {len(boundary_gdf)} polygon(s) in {self.target_crs}")
 
     @classmethod
-    def from_file(cls, file_path: str, crs: str = "EPSG:3857", buffer_km: float = 0.0):
-        """Load boundary from a spatial file with automatic CRS conversion."""
+    def from_file(
+        cls,
+        file_path: str,
+        crs: str = "EPSG:3857",
+        buffer_km: float = 0.0
+    ) -> "StudyAreaBoundary":
+        """
+        Create StudyAreaBoundary from a spatial data file.
+        
+        Supports any format readable by GeoPandas (GeoJSON, Shapefile, etc.).
+        The boundary will be automatically converted to the specified metric CRS.
+        
+        Args:
+            file_path: Path to spatial data file (e.g., .geojson, .shp, .gpkg)
+            crs: Target metric CRS for the boundary
+            buffer_km: Buffer distance in kilometers to apply
+            
+        Returns:
+            StudyAreaBoundary instance with loaded boundary
+            
+        Raises:
+            ValueError: If file cannot be loaded or CRS is invalid
+            FileNotFoundError: If file does not exist
+            
+        Examples:
+            Load from GeoJSON with 2km buffer:
+            
+            >>> boundary = StudyAreaBoundary.from_file(
+            ...     "durham_boundary.geojson",
+            ...     crs="EPSG:3857", 
+            ...     buffer_km=2.0
+            ... )
+            
+            Load Shapefile in local UTM zone:
+            
+            >>> boundary = StudyAreaBoundary.from_file(
+            ...     "study_area.shp",
+            ...     crs="EPSG:32617"  # UTM Zone 17N
+            ... )
+        """
         try:
             boundary_gdf = gpd.read_file(file_path)
 
@@ -85,32 +244,161 @@ class StudyAreaBoundary:
             raise ValueError(f"Could not load boundary from {file_path}: {e}")
 
     @classmethod
-    def from_bounds(cls, minx: float, miny: float, maxx: float, maxy: float, **kwargs):
-        """Create rectangular boundary from bounding box coordinates."""
-        raise NotImplementedError("Coming soon")
+    def from_bounds(
+        cls,
+        minx: float,
+        miny: float,
+        maxx: float,
+        maxy: float,
+        input_crs: str = "EPSG:4326",
+        crs: str = "EPSG:3857",
+        buffer_km: float = 0.0
+    ) -> "StudyAreaBoundary":
+        """
+        Create rectangular boundary from bounding box coordinates.
+        
+        Args:
+            minx: Minimum X coordinate (longitude if EPSG:4326)
+            miny: Minimum Y coordinate (latitude if EPSG:4326)  
+            maxx: Maximum X coordinate (longitude if EPSG:4326)
+            maxy: Maximum Y coordinate (latitude if EPSG:4326)
+            input_crs: CRS of the input coordinates (default: EPSG:4326)
+            crs: Target metric CRS for the boundary
+            buffer_km: Buffer distance in kilometers
+            
+        Returns:
+            StudyAreaBoundary instance with rectangular boundary
+            
+        Examples:
+            Create boundary around Durham, NC:
+            
+            >>> boundary = StudyAreaBoundary.from_bounds(
+            ...     minx=-79.0, miny=35.9,
+            ...     maxx=-78.8, maxy=36.1,
+            ...     crs="EPSG:3857"
+            ... )
+        """
+        from shapely.geometry import box
+
+        # Create rectangular polygon
+        rect = box(minx, miny, maxx, maxy)
+        boundary_gdf = gpd.GeoDataFrame({'geometry': [rect]}, crs=input_crs)
+
+        return cls(boundary_gdf, crs, buffer_km)
 
     @classmethod
     def from_center_radius(
-        cls, center_lat: float, center_lon: float, radius_km: float, **kwargs
-    ):
-        """Create circular boundary around a center point."""
-        raise NotImplementedError("Coming soon")
+        cls,
+        center_lat: float,
+        center_lon: float,
+        radius_km: float,
+        crs: str = "EPSG:3857"
+    ) -> "StudyAreaBoundary":
+        """
+        Create circular boundary around a center point.
+        
+        Args:
+            center_lat: Latitude of center point (EPSG:4326)
+            center_lon: Longitude of center point (EPSG:4326)
+            radius_km: Radius in kilometers
+            crs: Target metric CRS for the boundary
+            
+        Returns:
+            StudyAreaBoundary instance with circular boundary
+            
+        Examples:
+            Create 10km radius around downtown Durham:
+            
+            >>> boundary = StudyAreaBoundary.from_center_radius(
+            ...     center_lat=35.994, 
+            ...     center_lon=-78.899,
+            ...     radius_km=10.0,
+            ...     crs="EPSG:3857"
+            ... )
+        """
+        from shapely.geometry import Point
+
+        # Create point in geographic coordinates
+        center_point = Point(center_lon, center_lat)
+        point_gdf = gpd.GeoDataFrame({'geometry': [center_point]}, crs="EPSG:4326")
+
+        # Convert to metric CRS and buffer
+        point_metric = point_gdf.to_crs(crs)
+        buffered = point_metric.buffer(radius_km * 1000)  # Convert km to meters
+
+        boundary_gdf = gpd.GeoDataFrame({'geometry': buffered}, crs=crs)
+
+        return cls(boundary_gdf, crs, buffer_km=0.0)  # Buffer already applied
 
     @classmethod
-    def auto_detect_from_stops(cls, stops_gdf: gpd.GeoDataFrame, **kwargs):
-        """Auto-detect study area from transit stop distribution."""
-        raise NotImplementedError("Coming soon")
+    def auto_detect_from_stops(
+        cls,
+        stops_gdf: gpd.GeoDataFrame,
+        buffer_km: float = 5.0,
+        crs: str = "EPSG:3857"
+    ) -> "StudyAreaBoundary":
+        """
+        Auto-detect study area from transit stop distribution.
+        
+        Creates a convex hull around transit stops with an additional buffer
+        to define the study area boundary.
+        
+        Args:
+            stops_gdf: GeoDataFrame of transit stops
+            buffer_km: Buffer distance around stop convex hull
+            crs: Target metric CRS for the boundary
+            
+        Returns:
+            StudyAreaBoundary instance covering transit network extent
+            
+        Examples:
+            Auto-detect boundary from GTFS stops:
+            
+            >>> stops_gdf = gpd.read_file("gtfs_stops.geojson")
+            >>> boundary = StudyAreaBoundary.auto_detect_from_stops(
+            ...     stops_gdf, 
+            ...     buffer_km=3.0
+            ... )
+        """
+        # Convert stops to target CRS if needed
+        if stops_gdf.crs != crs:
+            stops_metric = stops_gdf.to_crs(crs)
+        else:
+            stops_metric = stops_gdf
+
+        # Create convex hull around all stops
+        from shapely.ops import unary_union
+        all_points = unary_union(stops_metric.geometry)
+        convex_hull = all_points.convex_hull
+
+        boundary_gdf = gpd.GeoDataFrame({'geometry': [convex_hull]}, crs=crs)
+
+        return cls(boundary_gdf, crs, buffer_km)
 
     def _apply_buffer(
-        self, boundary_gdf: gpd.GeoDataFrame, buffer_km: float | None = None
+        self,
+        boundary_gdf: gpd.GeoDataFrame,
+        buffer_km: float | None = None
     ) -> gpd.GeoDataFrame:
-        """Apply buffer to boundary (already in metric CRS)."""
+        """
+        Apply buffer to boundary geometry.
+        
+        Args:
+            boundary_gdf: Boundary in metric CRS
+            buffer_km: Buffer radius in kilometers (uses instance value if None)
+            
+        Returns:
+            Buffered boundary GeoDataFrame
+            
+        Note:
+            Assumes boundary is already in metric CRS for accurate buffering.
+        """
         buffer_radius = buffer_km if buffer_km is not None else self.buffer_km
 
         if buffer_radius <= 0:
             return boundary_gdf
 
-        # Since we enforce metric CRS, buffer directly in meters
+        # Convert km to meters for buffering
         buffer_m = buffer_radius * 1000
         buffered = boundary_gdf.copy()
         buffered.geometry = boundary_gdf.geometry.buffer(buffer_m)
@@ -119,17 +407,36 @@ class StudyAreaBoundary:
         return buffered
 
     def filter_points(
-        self, points_gdf: gpd.GeoDataFrame, output_crs: str | None = None
+        self,
+        points_gdf: gpd.GeoDataFrame,
+        output_crs: str | None = None
     ) -> gpd.GeoDataFrame:
         """
         Filter points to those within the study area boundary.
+        
+        Performs spatial join to select only points that fall within the
+        boundary polygon. Handles CRS conversion automatically.
 
         Args:
-            points_gdf: GeoDataFrame of points to filter
+            points_gdf: GeoDataFrame of points to filter (e.g., transit stops)
             output_crs: CRS for the output (defaults to boundary CRS)
 
         Returns:
-            Filtered GeoDataFrame in specified CRS
+            Filtered GeoDataFrame containing only points within boundary,
+            in the specified output CRS
+            
+        Raises:
+            ValueError: If no boundary has been set
+            
+        Examples:
+            Filter GTFS stops to study area:
+            
+            >>> gtfs_stops = gpd.read_file("stops.geojson")
+            >>> filtered_stops = boundary.filter_points(
+            ...     gtfs_stops, 
+            ...     output_crs="EPSG:4326"
+            ... )
+            >>> print(f"Kept {len(filtered_stops)}/{len(gtfs_stops)} stops")
         """
         if self.boundary_gdf is None:
             raise ValueError(
@@ -146,12 +453,12 @@ class StudyAreaBoundary:
         else:
             points_for_filtering = points_gdf
 
-        # Spatial filter
+        # Spatial filter using 'within' predicate
         filtered_points = gpd.sjoin(
             points_for_filtering, self.boundary_gdf, how="inner", predicate="within"
         )
 
-        # Keep only original columns
+        # Keep only original columns (remove join artifacts)
         original_columns = points_gdf.columns
         filtered_points = filtered_points[original_columns]
 
@@ -166,19 +473,34 @@ class StudyAreaBoundary:
     def filter_grid(
         self,
         grid_gdf: gpd.GeoDataFrame,
-        predicate: str = "intersects",
+        predicate: Literal["intersects", "within", "contains"] = "intersects",
         output_crs: str | None = None,
     ) -> gpd.GeoDataFrame:
         """
-        Filter grid cells to those intersecting the study area.
-
+        Filter grid cells based on spatial relationship with boundary.
+        
         Args:
-            grid_gdf: GeoDataFrame of grid cells
-            predicate: Spatial relationship ('intersects', 'within', 'contains')
+            grid_gdf: GeoDataFrame of grid cells (e.g., hexagonal zones)
+            predicate: Spatial relationship to test:
+                      - 'intersects': cells that touch or overlap boundary
+                      - 'within': cells completely inside boundary  
+                      - 'contains': cells that completely contain boundary
             output_crs: CRS for the output (defaults to boundary CRS)
 
         Returns:
             Filtered grid GeoDataFrame in specified CRS
+            
+        Raises:
+            ValueError: If no boundary has been set
+            
+        Examples:
+            Filter hexagonal grid to boundary:
+            
+            >>> hex_grid = create_hexagonal_grid(resolution_km=2.0)
+            >>> filtered_grid = boundary.filter_grid(
+            ...     hex_grid, 
+            ...     predicate="intersects"
+            ... )
         """
         if self.boundary_gdf is None:
             raise ValueError("No boundary set.")
@@ -212,13 +534,22 @@ class StudyAreaBoundary:
 
     def get_boundary(self, output_crs: str | None = None) -> gpd.GeoDataFrame:
         """
-        Get the boundary in specified CRS.
-
+        Get boundary geometry in specified CRS.
+        
         Args:
             output_crs: Desired CRS (defaults to boundary's current CRS)
 
         Returns:
-            Boundary GeoDataFrame in specified CRS
+            Copy of boundary GeoDataFrame in specified CRS
+            
+        Raises:
+            ValueError: If no boundary has been set
+            
+        Examples:
+            Get boundary in geographic coordinates for mapping:
+            
+            >>> boundary_geo = boundary.get_boundary("EPSG:4326")
+            >>> boundary_geo.plot()
         """
         if self.boundary_gdf is None:
             raise ValueError("No boundary set.")
@@ -230,20 +561,33 @@ class StudyAreaBoundary:
             return self.boundary_gdf.to_crs(output_crs)
 
     def add_buffer(
-        self, buffer_km: float, update_boundary: bool = True
+        self,
+        buffer_km: float,
+        update_boundary: bool = True
     ) -> gpd.GeoDataFrame:
         """
         Add buffer to the current boundary.
-
+        
         Args:
-            buffer_km: Buffer radius in kilometers
+            buffer_km: Buffer radius in kilometers (must be > 0)
             update_boundary: Whether to update the instance boundary or return new one
 
         Returns:
             Buffered boundary GeoDataFrame
+            
+        Raises:
+            ValueError: If no boundary set or buffer_km <= 0
+            
+        Examples:
+            Add 3km buffer to existing boundary:
+            
+            >>> buffered_boundary = boundary.add_buffer(3.0)
         """
         if self.boundary_gdf is None:
             raise ValueError("No boundary set.")
+
+        if buffer_km <= 0:
+            raise ValueError("Buffer distance must be positive")
 
         buffered = self._apply_buffer(self.boundary_gdf, buffer_km)
 
@@ -254,24 +598,48 @@ class StudyAreaBoundary:
 
         return buffered
 
-    def visualize(self, ax=None, viz_crs: str | None = None, **plot_kwargs):
+    def visualize(
+        self,
+        ax=None,
+        viz_crs: str | None = None,
+        **plot_kwargs
+    ):
         """
-        Visualize the boundary.
-
+        Visualize the boundary on a map.
+        
         Args:
-            ax: Matplotlib axis (optional)
-            viz_crs: CRS for visualization (defaults to EPSG:4326)
-            **plot_kwargs: Additional plotting arguments
-        """
-        if viz_crs is None:
-            viz_crs = self.boundary_gdf.crs  # Use boundary's actual CRS
+            ax: Matplotlib axis (created if None)
+            viz_crs: CRS for visualization (defaults to boundary CRS)
+            **plot_kwargs: Additional plotting arguments passed to GeoPandas plot()
 
+        Returns:
+            Matplotlib axis with boundary plotted
+            
+        Raises:
+            ValueError: If no boundary has been set
+            
+        Examples:
+            Quick visualization:
+            
+            >>> boundary.visualize()
+            
+            Custom styling:
+            
+            >>> ax = boundary.visualize(
+            ...     viz_crs="EPSG:4326",
+            ...     facecolor="lightgreen",
+            ...     edgecolor="darkgreen",
+            ...     alpha=0.7
+            ... )
+        """
         if self.boundary_gdf is None:
             raise ValueError("No boundary set.")
 
+        if viz_crs is None:
+            viz_crs = self.boundary_gdf.crs
+
         if ax is None:
             import matplotlib.pyplot as plt
-
             fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
         # Get boundary in visualization CRS
@@ -293,3 +661,15 @@ class StudyAreaBoundary:
             ax.set_ylabel("Latitude")
 
         return ax
+
+    def __repr__(self) -> str:
+        """String representation of StudyAreaBoundary."""
+        if self.boundary_gdf is None:
+            return f"StudyAreaBoundary(crs={self.target_crs}, no boundary set)"
+        else:
+            n_polygons = len(self.boundary_gdf)
+            area_km2 = self.boundary_gdf.geometry.area.sum() / 1e6  # m² to km²
+            return (
+                f"StudyAreaBoundary(crs={self.target_crs}, "
+                f"{n_polygons} polygon(s), {area_km2:.1f} km²)"
+            )

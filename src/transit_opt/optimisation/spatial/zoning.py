@@ -226,15 +226,25 @@ class HexagonalZoneSystem:
         print("🚀 Using spatial join for zone mapping...")
 
         # Spatial join: finds containing zone for each stop in one operation
+        # stops_with_zones = gpd.sjoin(
+        #     self.stops_gdf, self.hex_grid, how="left", predicate="within"
+        # )
+        hex_grid_for_join = self.hex_grid.reset_index()
+        if 'zone_id' not in hex_grid_for_join.columns:
+            hex_grid_for_join['zone_id'] = hex_grid_for_join.index
+
+        # Rename to avoid conflicts in spatial join
+        hex_grid_for_join = hex_grid_for_join.rename(columns={'zone_id': 'hex_zone_id'})
+
         stops_with_zones = gpd.sjoin(
-            self.stops_gdf, self.hex_grid, how="left", predicate="within"
+            self.stops_gdf, hex_grid_for_join, how="left", predicate="within"
         )
 
         # Convert to dictionary
         stop_zone_map = {}
         for idx, row in stops_with_zones.iterrows():
-            if pd.notna(row["zone_id"]):
-                stop_zone_map[row["stop_id"]] = row["zone_id"]
+            if pd.notna(row["hex_zone_id"]):
+                stop_zone_map[row["stop_id"]] = row["hex_zone_id"]
             else:
                 # Handle stops not in any zone (find nearest)
                 stop_point = row.geometry
