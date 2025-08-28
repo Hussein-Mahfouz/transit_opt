@@ -215,6 +215,7 @@ class TestGTFSDataPreparator:
         # ===== SETUP TEST ENVIRONMENT =====
         preparator = GTFSDataPreparator.__new__(GTFSDataPreparator)
         preparator.n_intervals = 4  # 4 time periods for this test
+        preparator.no_service_threshold_minutes = 480  # 8 hours no-service threshold
 
         # ===== CREATE TEST DATA WITH KNOWN EXPECTED RESULTS =====
         # We'll create 3 routes with different service patterns to test various scenarios

@@ -927,6 +927,8 @@ class GTFSDataPreparator:
             constraints or bounds - those are handled by optimization problem classes that
             use this baseline data to set their own constraint levels.
         """
+        from ..optimisation.utils.fleet_calculations import calculate_fleet_requirements
+
         logger.debug("Analyzing current GTFS fleet requirements by interval")
         logger.debug(
             f"Processing {len(route_data)} routes across {self.n_intervals} intervals"
@@ -935,97 +937,35 @@ class GTFSDataPreparator:
         # Extract dimensions and set parameters
         n_routes = len(route_data)
         n_intervals = self.n_intervals
-        operational_buffer = (
-            1.15  # 15% buffer: accounts for maintenance, delays, crew changes
-        )
-
-        # Initialize output arrays
-        # Peak fleet per route (maximum across all intervals for each route)
-        current_fleet_per_route = np.zeros(n_routes)
-
-        # Total system fleet per interval (sum across all routes for each interval)
-        current_fleet_by_interval = np.zeros(n_intervals)
-
-        # Store round-trip times for optimization problem use
-        route_round_trip_times = np.zeros(n_routes)
+        operational_buffer = 1.15  # 15% buffer: accounts for maintenance, delays, crew changes
 
         logger.debug(
             f"Using operational buffer: {operational_buffer} ({(operational_buffer-1)*100:.0f}% extra time)"
         )
 
-        # ===== MAIN CALCULATION LOOP =====
-        # Process each route to calculate its fleet needs at each time interval
-        for route_idx, route in enumerate(route_data):
-            route_id = route["service_id"]
-            round_trip_time = route["round_trip_time"]
-            current_headways = route[
-                "headways_by_interval"
-            ]  # Array: one headway per interval
+        # Extract data for shared calculation
+        round_trip_times = np.array([r["round_trip_time"] for r in route_data])
+        headways_matrix = np.array([r["headways_by_interval"] for r in route_data])
 
-            # Store round-trip time for optimization classes
-            route_round_trip_times[route_idx] = round_trip_time
+        # Use shared calculation logic (ensures consistency with optimization)
+        fleet_results = calculate_fleet_requirements(
+            headways_matrix=headways_matrix,
+            round_trip_times=round_trip_times,
+            operational_buffer=operational_buffer,
+            no_service_threshold=self.no_service_threshold_minutes  # Use GTFSDataPreparator's parameter
+        )
 
-            # Calculate fleet needed for this route at each time interval
-            route_fleet_by_interval = np.zeros(n_intervals)
+        # Extract results from shared calculation
+        current_fleet_per_route = fleet_results['fleet_per_route']
+        current_fleet_by_interval = fleet_results['fleet_per_interval']
+        total_current_fleet_peak = fleet_results['total_peak_fleet']
+        route_fleet_matrix = fleet_results['route_fleet_matrix']  # For detailed logging
+        route_round_trip_times = round_trip_times
 
-            # Process each time interval for this route
-            for interval_idx in range(n_intervals):
-                current_headway = current_headways[interval_idx]
-
-                # Check if route has service in this interval
-                if not np.isnan(current_headway) and current_headway < 9999:
-                    # Route has active service in this interval
-
-                    # Apply fleet formula: vehicles = ceil((round_trip * buffer) / headway)
-                    vehicles_needed = np.ceil(
-                        (round_trip_time * operational_buffer) / current_headway
-                    )
-
-                    # Store fleet need for this route-interval combination
-                    route_fleet_by_interval[interval_idx] = vehicles_needed
-
-                    # Add to system-wide total for this interval
-                    current_fleet_by_interval[interval_idx] += vehicles_needed
-
-                    logger.debug(
-                        f"Route {route_id}, interval {interval_idx}: "
-                        f"{current_headway:.1f}min headway → {vehicles_needed:.0f} vehicles"
-                    )
-
-                else:
-                    # Route has no service in this interval (headway is NaN or 9999)
-                    route_fleet_by_interval[interval_idx] = 0
-                    # Note: current_fleet_by_interval[interval_idx] doesn't change (no vehicles added)
-
-            # ===== PER-ROUTE SUMMARY =====
-            # Store the peak fleet requirement for this route (max across all its intervals)
-            current_fleet_per_route[route_idx] = np.max(route_fleet_by_interval)
-
-            # Log route summary
-            if current_fleet_per_route[route_idx] > 0:
-                active_intervals = np.sum(route_fleet_by_interval > 0)
-                logger.debug(
-                    f"Route {route_id}: Peak {current_fleet_per_route[route_idx]:.0f} vehicles "
-                    f"({active_intervals}/{n_intervals} intervals active)"
-                )
-            else:
-                logger.debug(f"Route {route_id}: No service (0 vehicles)")
-
-        # ===== SYSTEM-WIDE CALCULATIONS =====
-
-        # The realistic total fleet is the maximum needed across all intervals
-        # (not the sum of route peaks, which assumes all routes peak simultaneously)
-        total_current_fleet_peak = int(np.max(current_fleet_by_interval))
 
         # Calculate efficiency gain vs naive approach
-        total_naive_sum = int(
-            np.sum(current_fleet_per_route)
-        )  # Sum of route peaks (naive)
-        fleet_efficiency_gain = (
-            total_naive_sum - total_current_fleet_peak
-        )  # Positive = savings
-
-        # ===== SUMMARY STATISTICS =====
+        total_naive_sum = int(np.sum(current_fleet_per_route))  # Sum of route peaks (naive)
+        fleet_efficiency_gain = total_naive_sum - total_current_fleet_peak  # Positive = savings
 
         # Count routes that have any service
         routes_with_service = np.sum(current_fleet_per_route > 0)
@@ -1042,14 +982,25 @@ class GTFSDataPreparator:
 
         # Calculate interval utilization (what % of peak fleet is used in each interval)
         if total_current_fleet_peak > 0:
-            interval_utilization = (
-                current_fleet_by_interval / total_current_fleet_peak
-            ).tolist()
+            interval_utilization = (current_fleet_by_interval / total_current_fleet_peak).tolist()
         else:
             interval_utilization = [0.0] * n_intervals
 
-        # ===== LOGGING SUMMARY =====
+        # ===== KEEP ALL THE DETAILED LOGGING (unchanged) ===
 
+        # Per-route logging with debug info
+        for route_idx, route in enumerate(route_data):
+            route_id = route["service_id"]
+            if current_fleet_per_route[route_idx] > 0:
+                active_intervals_count = np.sum(route_fleet_matrix[route_idx, :] > 0)
+                logger.debug(
+                    f"Route {route_id}: Peak {current_fleet_per_route[route_idx]:.0f} vehicles "
+                    f"({active_intervals_count}/{n_intervals} intervals active)"
+                )
+            else:
+                logger.debug(f"Route {route_id}: No service (0 vehicles)")
+
+        # System summary logging
         logger.info("Fleet analysis by interval completed:")
         logger.info(
             f"  Fleet by interval: {current_fleet_by_interval.astype(int).tolist()}"
@@ -1073,29 +1024,23 @@ class GTFSDataPreparator:
                 f"  Negative efficiency: interval approach needs {-fleet_efficiency_gain} more vehicles"
             )
 
-        # ===== RETURN STRUCTURED DATA =====
-
+        # ===== RETURN THE EXACT SAME STRUCTURE (unchanged) ===
         return {
             # ===== BASELINE FLEET ANALYSIS =====
             # Core data that optimization classes need for constraint setting
-            "current_fleet_per_route": current_fleet_per_route.astype(
-                int
-            ),  # Peak per route
-            "current_fleet_by_interval": current_fleet_by_interval.astype(
-                int
-            ),  # Total per interval
+            "current_fleet_per_route": current_fleet_per_route.astype(int),  # Peak per route
+            "current_fleet_by_interval": current_fleet_by_interval.astype(int),  # Total per interval
             "total_current_fleet_peak": total_current_fleet_peak,  # Realistic system total
             "route_round_trip_times": route_round_trip_times,  # For optimization use
             # ===== CONFIGURATION PARAMETERS =====
             # Parameters that optimization classes might need to replicate calculations
             "operational_buffer": operational_buffer,  # Buffer factor used
+            "no_service_threshold_minutes": self.no_service_threshold_minutes,
             # ===== ANALYSIS STATISTICS =====
             # Summary information for logging, reporting, and validation
             "fleet_stats": {
                 # Service coverage metrics
-                "routes_with_service": int(
-                    routes_with_service
-                ),  # How many routes active
+                "routes_with_service": int(routes_with_service),  # How many routes active
                 # Peak period analysis
                 "peak_interval": peak_interval_idx,  # When peak occurs
                 "peak_interval_fleet": total_current_fleet_peak,  # Peak fleet size
@@ -1109,9 +1054,7 @@ class GTFSDataPreparator:
                     if routes_with_service > 0
                     else 0.0
                 ),
-                "max_route_fleet": int(
-                    np.max(current_fleet_per_route)
-                ),  # Largest single route
+                "max_route_fleet": int(np.max(current_fleet_per_route)),  # Largest single route
                 # Fleet size distribution (helps understand system complexity)
                 "fleet_distribution": {
                     "small_routes": int(
