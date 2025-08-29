@@ -116,7 +116,7 @@ class BaseConstraintHandler(ABC):
     def _calculate_fleet_from_solution(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
         Calculate fleet requirements using shared GTFSDataPreparator logic.
-        
+
         This ensures consistency with baseline fleet analysis by using
         the same calculation methods and operational parameters.
         """
@@ -127,7 +127,6 @@ class BaseConstraintHandler(ABC):
         operational_buffer = fleet_analysis["operational_buffer"]
         no_service_threshold = fleet_analysis["no_service_threshold_minutes"]
 
-
         # Use shared calculation logic
         fleet_results = calculate_fleet_requirements(
             headways_matrix=solution_matrix,
@@ -135,10 +134,10 @@ class BaseConstraintHandler(ABC):
             operational_buffer=operational_buffer,
             no_service_threshold=no_service_threshold,
             allowed_headways=self.allowed_headways,
-            no_service_index=self.no_service_index
+            no_service_index=self.no_service_index,
         )
 
-        return fleet_results['fleet_per_interval']
+        return fleet_results["fleet_per_interval"]
 
     def get_constraint_info(self) -> dict[str, Any]:
         """
@@ -183,7 +182,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             'tolerance': 0.20,
             'measure': 'peak'
         }
-        
+
         # If current GTFS needs 100 vehicles at peak:
         # - Constraint limit = 100 * (1 + 0.20) = 120 vehicles
         # - Any solution requiring > 120 vehicles violates constraint
@@ -200,14 +199,14 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             'measure': 'peak'
         }
         handler = FleetTotalConstraintHandler(config, optimization_data)
-        
+
         # Test with a candidate solution
         solution_matrix = np.array([
             [1, 2, 1, 3],  # Route 0: headway choices by interval
             [2, 1, 2, 4],  # Route 1: index 4 = no service
             [0, 1, 1, 2]   # Route 2: index 0 = shortest headway
         ])
-        
+
         violations = handler.evaluate(solution_matrix)
         # violations = [fleet_usage - 80]
         # If violations[0] <= 0: constraint satisfied
@@ -222,7 +221,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             'tolerance': 0.10,
             'measure': 'average'
         }
-        
+
         # If current GTFS averages 60 vehicles across time periods:
         # - Limit = 60 * 1.10 = 66 vehicles average
         # - Solution with intervals [50, 70, 80, 60] = 65 avg ✓ (satisfied)
@@ -232,7 +231,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
     Usage in Optimization Problems:
         ```python
         from transit_opt.optimisation.problems import FleetTotalConstraintHandler
-        
+
         # Create constraint as part of optimization problem
         constraints = [
             FleetTotalConstraintHandler({
@@ -241,7 +240,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
                 'measure': 'peak'
             }, opt_data)
         ]
-        
+
         # In pymoo problem class:
         def _evaluate(self, x, out, *args, **kwargs):
             violations = []
@@ -353,22 +352,22 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             'baseline': 'current_by_interval',
             'tolerance': 0.10  # 10% increase allowed per interval
         }
-        
+
         # Suppose current GTFS needs: [40, 80, 60, 30] vehicles by interval
         # Constraint limits become: [44, 88, 66, 33] vehicles
         handler = FleetPerIntervalConstraintHandler(config, optimization_data)
-        
+
         # Test solution
         solution_matrix = np.array([
             [2, 1, 2, 4],  # Route 0 service pattern
-            [3, 0, 1, 4],  # Route 1 service pattern  
+            [3, 0, 1, 4],  # Route 1 service pattern
             [1, 1, 3, 3]   # Route 2 service pattern
         ])
-        
+
         violations = handler.evaluate(solution_matrix)
-        # Returns: [interval_0_usage - 44, interval_1_usage - 88, 
+        # Returns: [interval_0_usage - 44, interval_1_usage - 88,
         #           interval_2_usage - 66, interval_3_usage - 33]
-        
+
         # Interpretation:
         # violations[0] = -5  → Interval 0: 5 vehicles under limit ✓
         # violations[1] = 2   → Interval 1: 2 vehicles over limit ✗
@@ -383,7 +382,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             'baseline': 'current_peak',
             'tolerance': 0.0  # No increase allowed
         }
-        
+
         # If current peak = 100 vehicles, all intervals limited to 100
         # Useful for: fixed depot capacity, uniform driver availability
         ```
@@ -396,15 +395,15 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             'baseline_values': [50, 120, 80, 40],  # Morning, peak, afternoon, evening
             'tolerance': 0.05  # 5% flexibility
         }
-        
+
         # Real-world example: Bus depot has different capacity by time
         # - Morning (6-9 AM): Limited drivers → 50 vehicles max
-        # - Peak (9-3 PM): Full capacity → 120 vehicles max  
+        # - Peak (9-3 PM): Full capacity → 120 vehicles max
         # - Afternoon (3-6 PM): Some drivers off → 80 vehicles max
         # - Evening (6-10 PM): Reduced service → 40 vehicles max
-        
+
         handler = FleetPerIntervalConstraintHandler(config, optimization_data)
-        
+
         # Check if solution respects time-varying capacity
         violations = handler.evaluate(candidate_solution)
         if all(v <= 0 for v in violations):
@@ -424,14 +423,14 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
                 'tolerance': 0.15,
                 'measure': 'peak'
             }, opt_data),
-            
+
             # Time-specific operational limits
             FleetPerIntervalConstraintHandler({
                 'baseline': 'current_by_interval',
                 'tolerance': 0.20  # More flexibility per interval
             }, opt_data)
         ]
-        
+
         # This ensures solutions are:
         # 1. Within overall budget (total fleet constraint)
         # 2. Operationally feasible by time period (per-interval constraint)
@@ -545,15 +544,16 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
 
         return violations
 
+
 class MinimumFleetConstraintHandler(BaseConstraintHandler):
     """
     Constraint handler for minimum fleet size requirements.
-    
+
     Ensures that solutions maintain minimum fleet levels to prevent
     over-reduction of service. Can apply constraints at system level
     (single minimum) or interval level (minimum per time period).
 
-    
+
     Configuration Parameters:
         min_fleet_fraction (float): Minimum fleet as fraction of original
                                   (e.g., 0.7 = at least 70% of original fleet)
@@ -568,7 +568,7 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             - 'current_peak': Reference original peak fleet
             - 'current_by_interval': Reference original per-interval fleet
             - 'current_average': Reference original average fleet
-    
+
     Example Configurations:
         **System-Level Minimum Service:**
         ```python
@@ -579,20 +579,20 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             'measure': 'peak',
             'baseline': 'current_peak'
         }
-        
+
         # Scenario: Current GTFS peak = 150 vehicles
         # Minimum required = 150 * 0.8 = 120 vehicles at peak
         handler = MinimumFleetConstraintHandler(config, optimization_data)
-        
+
         # Test solution scenarios:
         solution_high_service = create_solution_with_frequent_headways()
         violations_1 = handler.evaluate(solution_high_service)
         # Expected: violations_1 = [negative_value] (constraint satisfied)
-        
-        solution_low_service = create_solution_with_sparse_headways()  
+
+        solution_low_service = create_solution_with_sparse_headways()
         violations_2 = handler.evaluate(solution_low_service)
         # Expected: violations_2 = [positive_value] (minimum service violated)
-        
+
         print(f"High service solution violation: {violations_1[0]}")  # e.g., -20
         print(f"Low service solution violation: {violations_2[0]}")   # e.g., +15
         ```
@@ -605,21 +605,21 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             'level': 'interval',
             'baseline': 'current_by_interval'
         }
-        
+
         # Scenario: Current fleet = [60, 120, 90, 45] by time period
         # Minimums become = [42, 84, 63, 31.5] → [42, 84, 63, 32]
         handler = MinimumFleetConstraintHandler(config, optimization_data)
-        
+
         # Candidate solution results in: [50, 70, 65, 30] fleet
         violations = handler.evaluate(candidate_solution)
         # violations = [42-50, 84-70, 63-65, 32-30] = [-8, 14, -2, 2]
-        
+
         # Interpretation:
         # Interval 0: 8 vehicles above minimum ✓
         # Interval 1: 14 vehicles below minimum ✗ (service too low)
-        # Interval 2: 2 vehicles above minimum ✓  
+        # Interval 2: 2 vehicles above minimum ✓
         # Interval 3: 2 vehicles below minimum ✗ (service too low)
-        
+
         if any(v > 0 for v in violations):
             print("⚠️  Solution reduces service below acceptable levels")
             problematic_intervals = [i for i, v in enumerate(violations) if v > 0]
@@ -629,15 +629,15 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
         **Real World Service Standard Constraints:**
         ```python
         # Real-world example: City policy requires minimum service levels
-        
+
         # Policy: "Peak hour service cannot be reduced below 90% of current"
         peak_hour_minimum = {
             'min_fleet_fraction': 0.9,
-            'level': 'system', 
+            'level': 'system',
             'measure': 'peak',
             'baseline': 'current_peak'
         }
-        
+
         # Policy: "Off-peak service cannot be reduced below 60% of current"
         # (Assuming intervals 0,3 are off-peak, 1,2 are peak)
         manual_minimums = {
@@ -646,17 +646,17 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             'baseline': 'manual',
             'baseline_values': [
                 current_fleet[0] * 0.6,  # Off-peak morning: 60%
-                current_fleet[1] * 0.9,  # Peak midday: 90%  
+                current_fleet[1] * 0.9,  # Peak midday: 90%
                 current_fleet[2] * 0.9,  # Peak afternoon: 90%
                 current_fleet[3] * 0.6   # Off-peak evening: 60%
             ]
         }
-        
+
         constraints = [
             MinimumFleetConstraintHandler(peak_hour_minimum, opt_data),
             MinimumFleetConstraintHandler(manual_minimums, opt_data)
         ]
-        
+
         # This creates 5 constraints total:
         # 1 system-wide peak constraint + 4 interval-specific constraints
         ```
@@ -664,7 +664,7 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
         **Integration with Other Constraints:**
         ```python
         # Typical constraint combination for transit optimization
-        
+
         def create_comprehensive_constraints(opt_data):
             return [
                 # Budget limit: no more than 10% increase in peak fleet
@@ -673,27 +673,27 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
                     'tolerance': 0.10,
                     'measure': 'peak'
                 }, opt_data),
-                
+
                 # Operational limits: respect time-varying capacity
                 FleetPerIntervalConstraintHandler({
-                    'baseline': 'current_by_interval', 
+                    'baseline': 'current_by_interval',
                     'tolerance': 0.15
                 }, opt_data),
-                
+
                 # Service standards: maintain at least 70% of current service
                 MinimumFleetConstraintHandler({
                     'min_fleet_fraction': 0.70,
                     'level': 'system',
-                    'measure': 'average', 
+                    'measure': 'average',
                     'baseline': 'current_average'
                 }, opt_data)
             ]
-        
+
         # This creates a feasible solution space that:
         # 1. Stays within budget (total fleet ≤ 110% of current)
         # 2. Respects operational constraints (per-interval limits)
         # 3. Maintains minimum service quality (≥70% current service)
-        
+
         constraints = create_comprehensive_constraints(opt_data)
         total_constraints = sum(c.n_constraints for c in constraints)
         print(f"Total constraint equations: {total_constraints}")
@@ -703,7 +703,7 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
 
     def _calculate_n_constraints(self) -> int:
         """Number of constraints depends on level setting."""
-        if self.config.get('level', 'system') == 'system':
+        if self.config.get("level", "system") == "system":
             return 1  # Single system-wide constraint
         else:  # level == 'interval'
             return self.n_intervals  # One constraint per interval
@@ -729,7 +729,11 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             raise ValueError("level must be 'system' or 'interval'")
 
         # Validate measure (only used for system level)
-        if self.config["level"] == "system" and self.config["measure"] not in ["peak", "average", "total"]:
+        if self.config["level"] == "system" and self.config["measure"] not in [
+            "peak",
+            "average",
+            "total",
+        ]:
             raise ValueError("measure must be 'peak', 'average', or 'total'")
 
         # Validate baseline
@@ -740,10 +744,10 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
     def evaluate(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
         Evaluate minimum fleet constraint(s).
-        
+
         Args:
             solution_matrix: Decision matrix (n_routes × n_intervals)
-        
+
         Returns:
             Array of constraint violations:
             - System level: Single element [min_required - actual_fleet]
@@ -778,7 +782,9 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
 
         return np.array([violation])
 
-    def _evaluate_interval_constraints(self, fleet_per_interval: np.ndarray) -> np.ndarray:
+    def _evaluate_interval_constraints(
+        self, fleet_per_interval: np.ndarray
+    ) -> np.ndarray:
         """Evaluate per-interval minimum fleet constraints."""
         # Get minimum required fleet for each interval
         min_required_per_interval = self._get_interval_minimums()
@@ -816,7 +822,9 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
         fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
 
         if self.config["baseline"] == "current_by_interval":
-            original_fleet_by_interval = np.array(fleet_analysis["current_fleet_by_interval"])
+            original_fleet_by_interval = np.array(
+                fleet_analysis["current_fleet_by_interval"]
+            )
         elif self.config["baseline"] == "current_peak":
             # Use peak fleet for all intervals
             peak_fleet = fleet_analysis["total_current_fleet_peak"]

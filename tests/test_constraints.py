@@ -6,14 +6,14 @@ transit system. The tests use deterministic fleet calculations to verify that co
 work correctly with actual transit data.
 
 TEST DATA FLOW:
-1. Real GTFS data (duke-nc-us.zip) → GTFSDataPreparator 
+1. Real GTFS data (duke-nc-us.zip) → GTFSDataPreparator
 2. GTFSDataPreparator → sample_optimization_data (baseline fleet analysis)
 3. Test solutions + fleet calculations → precalculated_fleet_data
 4. Constraint handlers evaluate solutions → compare with expected values
 
 CONSTRAINT TYPES TESTED:
 - FleetTotalConstraintHandler: System-wide fleet budget limits
-- FleetPerIntervalConstraintHandler: Fleet limits per time interval  
+- FleetPerIntervalConstraintHandler: Fleet limits per time interval
 - MinimumFleetConstraintHandler: Minimum service level requirements
 
 SOLUTION TYPES:
@@ -33,199 +33,14 @@ from transit_opt.optimisation.problems.base import (
 )
 
 # ================================================================================================
-# FIXTURES - DATA PREPARATION
-# ================================================================================================
-
-@pytest.fixture
-def sample_solutions(sample_optimization_data):
-    """
-    Create test solution matrices for constraint validation.
-    
-    WHAT THIS FIXTURE DOES:
-    Creates 4 different service level scenarios as solution matrices where each element
-    represents a headway choice index (not actual minutes).
-    
-    SOLUTION MATRIX FORMAT:
-    - Shape: (n_routes, n_intervals) 
-    - Values: Indices into allowed_headways array
-    - Example: If allowed_headways = [5, 10, 15, 30, 60, 120], then:
-        * Index 0 = 5-minute headways
-        * Index 1 = 10-minute headways  
-        * Index 2 = 15-minute headways
-        * Index 3 = 30-minute headways
-        * Index 6 = no service (9999 minutes)
-
-    SOLUTION TYPES:
-    - high_service: All zeros (index 0 = 5min headways) - MOST EXPENSIVE
-    - medium_service: All ones (index 1 = 10min headways) - MODERATE COST
-    - low_service: All twos (index 3 = 30min headways) - LOWER COST
-    - no_service: All no_service_index (9999min) - ZERO COST
-    
-    Args:
-        sample_optimization_data: GTFS-derived optimization data structure
-        
-    Returns:
-        dict: Solution matrices for different service levels
-    """
-    n_routes = sample_optimization_data["n_routes"]
-    n_intervals = sample_optimization_data["n_intervals"]
-    no_service_index = sample_optimization_data["no_service_index"]
-    allowed_headways = sample_optimization_data["allowed_headways"]
-
-    print("\n📊 CREATING TEST SOLUTIONS:")
-    print(f"   Routes: {n_routes}, Intervals: {n_intervals}")
-    print(f"   Allowed headways: {allowed_headways}")
-    print(f"   No-service index: {no_service_index}")
-
-    solutions = {
-        # High service solution (frequent headways - use index 0)
-        "high_service": np.zeros((n_routes, n_intervals), dtype=int),
-
-        # Medium service solution (moderate headways - use index 1)
-        "medium_service": np.ones((n_routes, n_intervals), dtype=int),
-
-        # Low service solution (sparse headways - use index 3)
-        "low_service": np.full((n_routes, n_intervals), 3, dtype=int),
-
-        # Minimal service solution (mostly no service)
-        "no_service": np.full((n_routes, n_intervals), no_service_index, dtype=int)
-    }
-
-    # Print solution details for debugging
-    for name, matrix in solutions.items():
-        print(f"   {name}: shape={matrix.shape}, unique_values={np.unique(matrix)}")
-
-    return solutions
-
-
-@pytest.fixture
-def precalculated_fleet_data(sample_optimization_data):
-    """
-    Calculate expected fleet requirements for test solutions using real GTFS parameters.
-    
-    WHAT THIS FIXTURE DOES:
-    1. Extracts baseline fleet data already calculated by GTFSDataPreparator
-    2. Creates test solution matrices (same as sample_solutions fixture)
-    3. Calculates exact fleet requirements for each solution using calculate_fleet_requirements()
-    4. Returns both baseline data and calculated fleet data for deterministic testing
-    
-    WHY WE NEED THIS:
-    - Constraint tests need to know EXACT expected values, not just relationships
-    - Uses same fleet calculation logic as the actual constraint handlers
-    - Provides ground truth for test assertions
-    
-    BASELINE DATA (from GTFS analysis):
-    - current_peak_fleet: Maximum vehicles needed system-wide from current schedule
-    - current_fleet_by_interval: Vehicles needed per time interval from current schedule  
-    - current_fleet_per_route: Peak vehicles needed per route from current schedule
-    
-    SOLUTION DATA (calculated for test solutions):
-    - peak_fleet: Maximum vehicles needed across all intervals for this solution
-    - fleet_by_interval: Vehicles needed per interval for this solution
-    - average_fleet: Average vehicles across all intervals for this solution
-    
-    Args:
-        sample_optimization_data: GTFS-derived optimization data structure
-        
-    Returns:
-        dict: {"baseline": baseline_data, "solutions": solution_fleet_data}
-    """
-    print("\n🔧 CALCULATING FLEET REQUIREMENTS FOR TEST SOLUTIONS:")
-
-    # Extract already-calculated baseline data from GTFSDataPreparator
-    fleet_analysis = sample_optimization_data["constraints"]["fleet_analysis"]
-    baseline_data = {
-        "current_peak_fleet": fleet_analysis["total_current_fleet_peak"],
-        "current_fleet_by_interval": fleet_analysis["current_fleet_by_interval"],
-        "current_fleet_per_route": fleet_analysis["current_fleet_per_route"],
-    }
-
-    print("   📊 BASELINE (from GTFS current schedule):")
-    print(f"      System peak fleet: {baseline_data['current_peak_fleet']} vehicles")
-    print(f"      Fleet by interval: {baseline_data['current_fleet_by_interval']}")
-
-    # Get parameters for fleet calculations (same as GTFSDataPreparator used)
-    from transit_opt.optimisation.utils.fleet_calculations import calculate_fleet_requirements
-
-    allowed_headways = sample_optimization_data["allowed_headways"]
-    round_trip_times = sample_optimization_data["routes"]["round_trip_times"]
-    operational_buffer = fleet_analysis["operational_buffer"]
-    no_service_threshold = fleet_analysis["no_service_threshold_minutes"]
-    no_service_index = sample_optimization_data["no_service_index"]
-
-    n_routes = sample_optimization_data["n_routes"]
-    n_intervals = sample_optimization_data["n_intervals"]
-
-    print("   🔧 FLEET CALCULATION PARAMETERS:")
-    print(f"      Operational buffer: {operational_buffer}")
-    print(f"      No-service threshold: {no_service_threshold} minutes")
-    print(f"      Round-trip times: {round_trip_times}")
-
-    # Create same test solutions as sample_solutions fixture
-    test_solutions = {
-        "high_service": np.zeros((n_routes, n_intervals), dtype=int),
-        "medium_service": np.ones((n_routes, n_intervals), dtype=int),
-        "low_service": np.full((n_routes, n_intervals), 3, dtype=int),
-        "no_service": np.full((n_routes, n_intervals), no_service_index, dtype=int)
-    }
-
-    solution_fleet_data = {}
-    print("\n   🚌 CALCULATING FLEET FOR EACH TEST SOLUTION:")
-
-    for solution_name, solution_matrix in test_solutions.items():
-        print(f"\n      → {solution_name.upper()}:")
-
-        # Convert solution indices to actual headway minutes
-        # This is the key step - solution_matrix contains indices, we need actual headway values
-        headways_matrix = np.array([[allowed_headways[solution_matrix[i,j]]
-                                   for j in range(n_intervals)]
-                                   for i in range(n_routes)])
-
-        print(f"        Solution indices: {np.unique(solution_matrix)}")
-        print(f"        Actual headways: {np.unique(headways_matrix)}")
-
-        # Calculate fleet requirements using same function as constraint handlers
-        fleet_results = calculate_fleet_requirements(
-            headways_matrix=headways_matrix,
-            round_trip_times=round_trip_times,
-            operational_buffer=operational_buffer,
-            no_service_threshold=no_service_threshold,
-            allowed_headways=allowed_headways,
-            no_service_index=no_service_index
-        )
-
-        # Store calculated results
-        fleet_data = {
-            "peak_fleet": fleet_results["total_peak_fleet"],
-            "fleet_by_interval": fleet_results["fleet_per_interval"],
-            "fleet_per_route": fleet_results["fleet_per_route"],
-            "average_fleet": np.mean(fleet_results["fleet_per_interval"])
-        }
-
-        solution_fleet_data[solution_name] = fleet_data
-
-        # Print calculated results for debugging
-        print(f"        Peak fleet: {fleet_data['peak_fleet']} vehicles")
-        print(f"        Average fleet: {fleet_data['average_fleet']:.1f} vehicles")
-        print(f"        Fleet by interval: {fleet_data['fleet_by_interval']}")
-
-    result = {
-        "baseline": baseline_data,
-        "solutions": solution_fleet_data
-    }
-
-    print("\n✅ PRECALCULATED FLEET DATA READY")
-    return result
-
-
-# ================================================================================================
 # DATA STRUCTURE VALIDATION TESTS
 # ================================================================================================
+
 
 class TestConstraintHandlers:
     """
     Test basic constraint handler functionality and data structure validation.
-    
+
     These tests ensure that:
     1. GTFS data has the expected structure for constraint handlers
     2. All required fields are present and have correct types
@@ -235,13 +50,13 @@ class TestConstraintHandlers:
     def test_data_structure_validity(self, sample_optimization_data):
         """
         Validate that optimization data has all required fields and structure.
-        
+
         WHAT THIS TEST DOES:
         - Checks for required top-level keys
         - Validates fleet analysis section exists and has required fields
         - Prints actual data values for debugging
         - Ensures data types and dimensions are reasonable
-        
+
         WHY THIS TEST IS IMPORTANT:
         - Constraint handlers depend on specific data structure
         - Missing fields cause cryptic errors later
@@ -250,7 +65,12 @@ class TestConstraintHandlers:
         print("\n🔍 VALIDATING OPTIMIZATION DATA STRUCTURE:")
 
         # Check required top-level keys
-        required_keys = ["n_routes", "n_intervals", "allowed_headways", "no_service_index"]
+        required_keys = [
+            "n_routes",
+            "n_intervals",
+            "allowed_headways",
+            "no_service_index",
+        ]
         print(f"   📋 Checking top-level keys: {required_keys}")
 
         for key in required_keys:
@@ -259,8 +79,12 @@ class TestConstraintHandlers:
 
         # Check constraints section exists
         print("\n   🔧 Checking constraints section:")
-        assert "constraints" in sample_optimization_data, "Missing 'constraints' section"
-        assert "fleet_analysis" in sample_optimization_data["constraints"], "Missing 'fleet_analysis' section"
+        assert (
+            "constraints" in sample_optimization_data
+        ), "Missing 'constraints' section"
+        assert (
+            "fleet_analysis" in sample_optimization_data["constraints"]
+        ), "Missing 'fleet_analysis' section"
 
         fleet_analysis = sample_optimization_data["constraints"]["fleet_analysis"]
         print("      ✓ constraints.fleet_analysis found")
@@ -270,7 +94,7 @@ class TestConstraintHandlers:
             "total_current_fleet_peak",
             "current_fleet_by_interval",
             "operational_buffer",
-            "no_service_threshold_minutes"
+            "no_service_threshold_minutes",
         ]
 
         print(f"   🚌 Checking fleet analysis keys: {required_fleet_keys}")
@@ -281,17 +105,30 @@ class TestConstraintHandlers:
         # Print summary for debugging
         print("\n📊 DATA SUMMARY:")
         print(f"   Routes: {sample_optimization_data['n_routes']}")
-        print(f"   Time intervals: {sample_optimization_data['n_intervals']} (intervals of {24//sample_optimization_data['n_intervals']}h each)")
+        print(
+            f"   Time intervals: {sample_optimization_data['n_intervals']} (intervals of {24//sample_optimization_data['n_intervals']}h each)"
+        )
         print(f"   Allowed headways: {sample_optimization_data['allowed_headways']}")
-        print(f"   Current peak fleet: {fleet_analysis['total_current_fleet_peak']} vehicles")
+        print(
+            f"   Current peak fleet: {fleet_analysis['total_current_fleet_peak']} vehicles"
+        )
         print(f"   Fleet by interval: {fleet_analysis['current_fleet_by_interval']}")
-        print(f"   Operational buffer: {fleet_analysis['operational_buffer']} (15% extra time)")
+        print(
+            f"   Operational buffer: {fleet_analysis['operational_buffer']} (15% extra time)"
+        )
 
         # Validate data makes sense
-        assert sample_optimization_data['n_routes'] > 0, "Should have at least 1 route"
-        assert sample_optimization_data['n_intervals'] > 0, "Should have at least 1 interval"
-        assert fleet_analysis['total_current_fleet_peak'] >= 0, "Peak fleet should be non-negative"
-        assert len(fleet_analysis['current_fleet_by_interval']) == sample_optimization_data['n_intervals'], "Fleet by interval length should match n_intervals"
+        assert sample_optimization_data["n_routes"] > 0, "Should have at least 1 route"
+        assert (
+            sample_optimization_data["n_intervals"] > 0
+        ), "Should have at least 1 interval"
+        assert (
+            fleet_analysis["total_current_fleet_peak"] >= 0
+        ), "Peak fleet should be non-negative"
+        assert (
+            len(fleet_analysis["current_fleet_by_interval"])
+            == sample_optimization_data["n_intervals"]
+        ), "Fleet by interval length should match n_intervals"
 
         print("✅ All data structure validations passed!")
 
@@ -300,19 +137,20 @@ class TestConstraintHandlers:
 # FLEET TOTAL CONSTRAINT HANDLER TESTS
 # ================================================================================================
 
+
 class TestFleetTotalConstraintHandler:
     """
     Test FleetTotalConstraintHandler - manages system-wide fleet budget limits.
-    
+
     PURPOSE:
     These constraints prevent solutions from using too many vehicles system-wide.
     Example: "Don't use more than 120% of current peak fleet"
-    
+
     CONSTRAINT FORMULA:
     violation = actual_fleet_measure - (baseline_fleet * (1 + tolerance))
     - Positive violation = constraint violated (too many vehicles)
     - Negative violation = constraint satisfied (within limit)
-    
+
     MEASURES TESTED:
     - peak: Maximum vehicles needed across all time intervals
     - average: Average vehicles needed across all time intervals
@@ -322,7 +160,7 @@ class TestFleetTotalConstraintHandler:
     def test_basic_constraint_creation(self, sample_optimization_data):
         """
         Test basic constraint handler initialization and configuration.
-        
+
         WHAT THIS TEST DOES:
         - Creates a FleetTotalConstraintHandler with standard config
         - Verifies handler initializes correctly
@@ -332,9 +170,9 @@ class TestFleetTotalConstraintHandler:
         print("\n🏗️  TESTING FLEET TOTAL CONSTRAINT CREATION:")
 
         config = {
-            'baseline': 'current_peak',  # Use current GTFS peak as baseline
-            'tolerance': 0.15,           # Allow 15% increase
-            'measure': 'peak'            # Measure peak fleet usage
+            "baseline": "current_peak",  # Use current GTFS peak as baseline
+            "tolerance": 0.15,  # Allow 15% increase
+            "measure": "peak",  # Measure peak fleet usage
         }
 
         print(f"   📋 Config: {config}")
@@ -347,25 +185,31 @@ class TestFleetTotalConstraintHandler:
         print(f"   🔧 Stored config: {handler.config}")
 
         # Assertions
-        assert handler.n_constraints == 1, "FleetTotalConstraintHandler should always generate 1 constraint"
-        assert handler.config['baseline'] == 'current_peak', "Baseline should be stored correctly"
-        assert handler.config['tolerance'] == 0.15, "Tolerance should be stored correctly"
-        assert handler.config['measure'] == 'peak', "Measure should be stored correctly"
+        assert (
+            handler.n_constraints == 1
+        ), "FleetTotalConstraintHandler should always generate 1 constraint"
+        assert (
+            handler.config["baseline"] == "current_peak"
+        ), "Baseline should be stored correctly"
+        assert (
+            handler.config["tolerance"] == 0.15
+        ), "Tolerance should be stored correctly"
+        assert handler.config["measure"] == "peak", "Measure should be stored correctly"
 
         print("✅ Basic constraint creation test passed!")
 
     def test_config_validation(self, sample_optimization_data):
         """
         Test configuration validation catches invalid settings.
-        
+
         WHAT THIS TEST DOES:
         - Tests various invalid configurations
         - Ensures appropriate error messages are raised
         - Validates that constraint handler won't accept bad configurations
-        
+
         INVALID CONFIGURATIONS TESTED:
         - Missing baseline
-        - Invalid baseline values  
+        - Invalid baseline values
         - Manual baseline without baseline_value
         """
         print("\n🔍 TESTING CONFIGURATION VALIDATION:")
@@ -378,37 +222,41 @@ class TestFleetTotalConstraintHandler:
 
         # Test 2: Invalid baseline
         print("   Testing invalid baseline...")
-        config = {'baseline': 'invalid_baseline'}
+        config = {"baseline": "invalid_baseline"}
         with pytest.raises(ValueError, match="baseline must be one of"):
             FleetTotalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects invalid baseline")
 
         # Test 3: Manual baseline without value
         print("   Testing manual baseline without value...")
-        config = {'baseline': 'manual'}
-        with pytest.raises(ValueError, match="Manual baseline requires 'baseline_value'"):
+        config = {"baseline": "manual"}
+        with pytest.raises(
+            ValueError, match="Manual baseline requires 'baseline_value'"
+        ):
             FleetTotalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects manual baseline without value")
 
         print("✅ All configuration validation tests passed!")
 
-    def test_peak_measure_constraint_with_known_values(self, sample_optimization_data, precalculated_fleet_data, sample_solutions):
+    def test_peak_measure_constraint_with_known_values(
+        self, sample_optimization_data, precalculated_fleet_data, sample_solutions
+    ):
         """
         Test peak fleet constraint against precalculated values - MAIN DETERMINISTIC TEST.
-        
+
         WHAT THIS TEST DOES:
         1. Sets up a peak fleet constraint with 20% tolerance
         2. Calculates expected limit = baseline_peak × 1.20
         3. For each test solution, calculates expected violation = solution_peak - limit
         4. Calls handler.evaluate() and compares actual vs expected violations
         5. Asserts they match within floating-point tolerance
-        
+
         WHY THIS TEST IS IMPORTANT:
         - Tests the core constraint evaluation logic
         - Uses real GTFS data with deterministic calculations
         - Validates that constraint math works correctly
         - Provides detailed debugging output
-        
+
         EXPECTED BEHAVIOR:
         - High service: Large positive violation (uses too many vehicles)
         - Medium service: Moderate violation (might be positive or negative)
@@ -422,9 +270,9 @@ class TestFleetTotalConstraintHandler:
 
         # Configure constraint: 20% increase allowed from current peak
         config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.20,  # 20% increase allowed
-            'measure': 'peak'
+            "baseline": "current_peak",
+            "tolerance": 0.20,  # 20% increase allowed
+            "measure": "peak",
         }
 
         handler = FleetTotalConstraintHandler(config, sample_optimization_data)
@@ -447,7 +295,9 @@ class TestFleetTotalConstraintHandler:
             expected_violation = solution_peak - expected_limit
 
             print(f"        Solution peak fleet: {solution_peak:.1f} vehicles")
-            print(f"        Expected violation: {solution_peak:.1f} - {expected_limit:.1f} = {expected_violation:.1f}")
+            print(
+                f"        Expected violation: {solution_peak:.1f} - {expected_limit:.1f} = {expected_violation:.1f}"
+            )
 
             # Call constraint handler
             actual_violations = handler.evaluate(sample_solutions[solution_name])
@@ -457,27 +307,34 @@ class TestFleetTotalConstraintHandler:
             print(f"        Match? {abs(actual_violation - expected_violation) < 0.1}")
 
             # Assert they match within tolerance
-            assert abs(actual_violation - expected_violation) < 0.1, \
-                f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            assert (
+                abs(actual_violation - expected_violation) < 0.1
+            ), f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
 
             # Interpret result
             if actual_violation > 0:
-                print(f"        ❌ CONSTRAINT VIOLATED (uses {actual_violation:.1f} vehicles over limit)")
+                print(
+                    f"        ❌ CONSTRAINT VIOLATED (uses {actual_violation:.1f} vehicles over limit)"
+                )
             else:
-                print(f"        ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} vehicles under limit)")
+                print(
+                    f"        ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} vehicles under limit)"
+                )
 
         print("\n✅ Peak measure constraint test passed!")
 
-    def test_average_measure_constraint_with_known_values(self, sample_optimization_data, precalculated_fleet_data, sample_solutions):
+    def test_average_measure_constraint_with_known_values(
+        self, sample_optimization_data, precalculated_fleet_data, sample_solutions
+    ):
         """
         Test average fleet constraint - validates constraint works with different measures.
-        
+
         WHAT THIS TEST DOES:
         - Tests 'average' measure instead of 'peak'
         - Uses precalculated average fleet values
         - Validates constraint evaluation returns reasonable results
         - Less strict than peak test (average fleet calculations can be more complex)
-        
+
         WHY WE TEST THIS:
         - Ensures constraint handler works with different measures
         - Average fleet is sometimes used for budget constraints
@@ -489,9 +346,9 @@ class TestFleetTotalConstraintHandler:
         solutions = precalculated_fleet_data["solutions"]
 
         config = {
-            'baseline': 'current_peak',  # Using peak baseline for simplicity
-            'tolerance': 0.15,           # 15% tolerance
-            'measure': 'average'         # Test average measure
+            "baseline": "current_peak",  # Using peak baseline for simplicity
+            "tolerance": 0.15,  # 15% tolerance
+            "measure": "average",  # Test average measure
         }
 
         print(f"   📋 Config: {config}")
@@ -519,7 +376,9 @@ class TestFleetTotalConstraintHandler:
         if actual_violation > 0:
             print(f"      ❌ CONSTRAINT VIOLATED ({actual_violation:.1f} over limit)")
         else:
-            print(f"      ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} under limit)")
+            print(
+                f"      ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} under limit)"
+            )
 
         print("✅ Average measure constraint test passed!")
 
@@ -528,19 +387,20 @@ class TestFleetTotalConstraintHandler:
 # FLEET PER-INTERVAL CONSTRAINT HANDLER TESTS
 # ================================================================================================
 
+
 class TestFleetPerIntervalConstraintHandler:
     """
     Test FleetPerIntervalConstraintHandler - manages fleet limits per time interval.
-    
+
     PURPOSE:
     These constraints prevent solutions from overloading specific time periods.
     Example: "Don't use more than 125% of current fleet in any time interval"
-    
+
     CONSTRAINT FORMULA (for each interval i):
     violation[i] = solution_fleet[i] - (baseline_fleet[i] * (1 + tolerance))
     - Positive violation = constraint violated for that interval
     - Negative violation = constraint satisfied for that interval
-    
+
     KEY DIFFERENCES FROM TOTAL CONSTRAINT:
     - Generates n_intervals constraints (not just 1)
     - Each constraint applies to one time interval
@@ -550,17 +410,17 @@ class TestFleetPerIntervalConstraintHandler:
     def test_basic_constraint_creation(self, sample_optimization_data):
         """
         Test basic per-interval constraint handler initialization.
-        
+
         WHAT THIS TEST DOES:
         - Creates FleetPerIntervalConstraintHandler with standard config
-        - Verifies n_constraints = n_intervals (one constraint per time interval)  
+        - Verifies n_constraints = n_intervals (one constraint per time interval)
         - Checks configuration storage
         """
         print("\n🏗️  TESTING PER-INTERVAL CONSTRAINT CREATION:")
 
         config = {
-            'baseline': 'current_by_interval',  # Use current fleet per interval as baseline
-            'tolerance': 0.15                   # 15% increase allowed per interval
+            "baseline": "current_by_interval",  # Use current fleet per interval as baseline
+            "tolerance": 0.15,  # 15% increase allowed per interval
         }
 
         print(f"   📋 Config: {config}")
@@ -573,15 +433,19 @@ class TestFleetPerIntervalConstraintHandler:
         print(f"   📊 Number of constraints: {handler.n_constraints}")
 
         # Assertions
-        assert handler.n_constraints == n_intervals, f"Should generate {n_intervals} constraints, got {handler.n_constraints}"
-        assert handler.config['tolerance'] == 0.15, "Tolerance should be stored correctly"
+        assert (
+            handler.n_constraints == n_intervals
+        ), f"Should generate {n_intervals} constraints, got {handler.n_constraints}"
+        assert (
+            handler.config["tolerance"] == 0.15
+        ), "Tolerance should be stored correctly"
 
         print("✅ Basic per-interval constraint creation test passed!")
 
     def test_config_validation(self, sample_optimization_data):
         """
         Test configuration validation for per-interval constraints.
-        
+
         Similar to FleetTotalConstraintHandler but specific to per-interval logic.
         """
         print("\n🔍 TESTING PER-INTERVAL CONFIGURATION VALIDATION:")
@@ -594,30 +458,32 @@ class TestFleetPerIntervalConstraintHandler:
 
         # Test invalid baseline
         print("   Testing invalid baseline...")
-        config = {'baseline': 'invalid'}
+        config = {"baseline": "invalid"}
         with pytest.raises(ValueError, match="baseline must be one of"):
             FleetPerIntervalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects invalid baseline")
 
         print("✅ Per-interval configuration validation tests passed!")
 
-    def test_per_interval_constraint_with_known_values(self, sample_optimization_data, precalculated_fleet_data, sample_solutions):
+    def test_per_interval_constraint_with_known_values(
+        self, sample_optimization_data, precalculated_fleet_data, sample_solutions
+    ):
         """
         Test per-interval constraints against precalculated values - MAIN DETERMINISTIC TEST.
-        
+
         WHAT THIS TEST DOES:
         1. Sets up per-interval fleet constraint with 25% tolerance
         2. Calculates expected limits = baseline_by_interval × 1.25
         3. For one test solution, calculates expected violations = solution_by_interval - limits
         4. Calls handler.evaluate() and compares actual vs expected violations for each interval
         5. Asserts they match within floating-point tolerance
-        
+
         WHY THIS TEST IS IMPORTANT:
         - Tests per-interval constraint logic
         - Validates that constraints work correctly for each time interval
         - Uses real GTFS interval data
         - Provides detailed per-interval debugging
-        
+
         EXPECTED BEHAVIOR:
         - Some intervals may violate (positive) while others satisfy (negative)
         - Pattern depends on solution type and baseline interval loads
@@ -629,8 +495,8 @@ class TestFleetPerIntervalConstraintHandler:
 
         # Configure constraint: 25% increase allowed per interval
         config = {
-            'baseline': 'current_by_interval',
-            'tolerance': 0.25  # 25% increase allowed per interval
+            "baseline": "current_by_interval",
+            "tolerance": 0.25,  # 25% increase allowed per interval
         }
 
         handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
@@ -667,18 +533,23 @@ class TestFleetPerIntervalConstraintHandler:
             actual = actual_violations[i]
             match = abs(actual - expected) < 0.1
 
-            print(f"      Interval {i}: fleet={solution_fleet_by_interval[i]:.1f}, "
-                  f"limit={expected_limits[i]:.1f}, "
-                  f"expected={expected:.1f}, actual={actual:.1f} {'✓' if match else '❌'}")
+            print(
+                f"      Interval {i}: fleet={solution_fleet_by_interval[i]:.1f}, "
+                f"limit={expected_limits[i]:.1f}, "
+                f"expected={expected:.1f}, actual={actual:.1f} {'✓' if match else '❌'}"
+            )
 
             if match:
                 violations_match += 1
 
             # Individual assertion
-            assert abs(actual - expected) < 0.1, \
-                f"Interval {i} violation mismatch: expected {expected:.1f}, got {actual:.1f}"
+            assert (
+                abs(actual - expected) < 0.1
+            ), f"Interval {i} violation mismatch: expected {expected:.1f}, got {actual:.1f}"
 
-        print(f"\n   📊 SUMMARY: {violations_match}/{len(expected_violations)} intervals matched exactly")
+        print(
+            f"\n   📊 SUMMARY: {violations_match}/{len(expected_violations)} intervals matched exactly"
+        )
         print("✅ Per-interval constraint test passed!")
 
 
@@ -686,21 +557,22 @@ class TestFleetPerIntervalConstraintHandler:
 # MINIMUM FLEET CONSTRAINT HANDLER TESTS
 # ================================================================================================
 
+
 class TestMinimumFleetConstraintHandler:
     """
     Test MinimumFleetConstraintHandler - ensures minimum service levels are maintained.
-    
+
     PURPOSE:
     These constraints prevent solutions from cutting service too drastically.
     Example: "Must maintain at least 60% of current peak fleet"
-    
+
     CONSTRAINT FORMULA:
     violation = minimum_required - actual_fleet
     - Positive violation = constraint violated (not enough fleet/service)
     - Negative violation = constraint satisfied (sufficient fleet/service)
-    
+
     NOTE: Sign convention is OPPOSITE of upper-bound constraints!
-    
+
     LEVELS TESTED:
     - system: Single constraint for system-wide minimum
     - interval: One constraint per interval for interval-wise minimums
@@ -709,7 +581,7 @@ class TestMinimumFleetConstraintHandler:
     def test_basic_system_constraint_creation(self, sample_optimization_data):
         """
         Test basic system-level minimum constraint creation.
-        
+
         WHAT THIS TEST DOES:
         - Creates MinimumFleetConstraintHandler with system-level config
         - Verifies n_constraints = 1 for system level
@@ -718,10 +590,10 @@ class TestMinimumFleetConstraintHandler:
         print("\n🏗️  TESTING MINIMUM SYSTEM CONSTRAINT CREATION:")
 
         config = {
-            'min_fleet_fraction': 0.8,    # Require 80% of current
-            'level': 'system',            # System-wide constraint
-            'measure': 'peak',            # Use peak measure
-            'baseline': 'current_peak'    # Compare to current peak
+            "min_fleet_fraction": 0.8,  # Require 80% of current
+            "level": "system",  # System-wide constraint
+            "measure": "peak",  # Use peak measure
+            "baseline": "current_peak",  # Compare to current peak
         }
 
         print(f"   📋 Config: {config}")
@@ -733,15 +605,19 @@ class TestMinimumFleetConstraintHandler:
         print(f"   🔧 Min fleet fraction: {handler.config['min_fleet_fraction']}")
 
         # Assertions
-        assert handler.n_constraints == 1, "System-level minimum should generate 1 constraint"
-        assert handler.config['min_fleet_fraction'] == 0.8, "Min fleet fraction should be stored"
+        assert (
+            handler.n_constraints == 1
+        ), "System-level minimum should generate 1 constraint"
+        assert (
+            handler.config["min_fleet_fraction"] == 0.8
+        ), "Min fleet fraction should be stored"
 
         print("✅ Basic system minimum constraint creation test passed!")
 
     def test_basic_interval_constraint_creation(self, sample_optimization_data):
         """
         Test basic interval-level minimum constraint creation.
-        
+
         WHAT THIS TEST DOES:
         - Creates MinimumFleetConstraintHandler with interval-level config
         - Verifies n_constraints = n_intervals for interval level
@@ -750,9 +626,9 @@ class TestMinimumFleetConstraintHandler:
         print("\n🏗️  TESTING MINIMUM INTERVAL CONSTRAINT CREATION:")
 
         config = {
-            'min_fleet_fraction': 0.7,           # Require 70% of current per interval
-            'level': 'interval',                 # Interval-level constraints
-            'baseline': 'current_by_interval'    # Compare to current per interval
+            "min_fleet_fraction": 0.7,  # Require 70% of current per interval
+            "level": "interval",  # Interval-level constraints
+            "baseline": "current_by_interval",  # Compare to current per interval
         }
 
         print(f"   📋 Config: {config}")
@@ -765,14 +641,16 @@ class TestMinimumFleetConstraintHandler:
         print(f"   📊 Number of constraints: {handler.n_constraints}")
 
         # Assertions
-        assert handler.n_constraints == n_intervals, f"Interval-level should generate {n_intervals} constraints"
+        assert (
+            handler.n_constraints == n_intervals
+        ), f"Interval-level should generate {n_intervals} constraints"
 
         print("✅ Basic interval minimum constraint creation test passed!")
 
     def test_config_validation(self, sample_optimization_data):
         """
         Test configuration validation for minimum constraints.
-        
+
         INVALID CONFIGURATIONS TESTED:
         - Missing min_fleet_fraction
         - Invalid fraction values (outside 0.0-1.0 range)
@@ -788,37 +666,39 @@ class TestMinimumFleetConstraintHandler:
 
         # Test invalid fraction (too high)
         print("   Testing invalid fraction...")
-        config = {'min_fleet_fraction': 1.5}
+        config = {"min_fleet_fraction": 1.5}
         with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
             MinimumFleetConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects fraction > 1.0")
 
         # Test invalid level
         print("   Testing invalid level...")
-        config = {'min_fleet_fraction': 0.8, 'level': 'invalid'}
+        config = {"min_fleet_fraction": 0.8, "level": "invalid"}
         with pytest.raises(ValueError, match="level must be 'system' or 'interval'"):
             MinimumFleetConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects invalid level")
 
         print("✅ Minimum constraint configuration validation tests passed!")
 
-    def test_system_minimum_constraint_with_known_values(self, sample_optimization_data, precalculated_fleet_data, sample_solutions):
+    def test_system_minimum_constraint_with_known_values(
+        self, sample_optimization_data, precalculated_fleet_data, sample_solutions
+    ):
         """
         Test system-level minimum constraint against precalculated values - MAIN DETERMINISTIC TEST.
-        
+
         WHAT THIS TEST DOES:
         1. Sets up system minimum constraint requiring 40% of current peak
         2. Calculates minimum_required = baseline_peak × 0.4
         3. For each test solution, calculates expected violation = minimum_required - solution_peak
         4. Calls handler.evaluate() and compares actual vs expected violations
         5. Asserts they match within floating-point tolerance
-        
-        WHY THIS TEST IS IMPORTANT:  
+
+        WHY THIS TEST IS IMPORTANT:
         - Tests minimum constraint logic (opposite sign convention)
         - Validates system-level minimum service requirements
         - Uses real GTFS baseline data
         - Provides detailed debugging for each solution type
-        
+
         EXPECTED BEHAVIOR:
         - High service: Large negative violation (exceeds minimum easily)
         - Medium service: Moderate negative violation (exceeds minimum)
@@ -832,10 +712,10 @@ class TestMinimumFleetConstraintHandler:
 
         # Configure constraint: Require 40% of current peak (lenient for testing)
         config = {
-            'min_fleet_fraction': 0.4,      # Require 40% of current
-            'level': 'system',              # System-wide minimum
-            'measure': 'peak',              # Use peak measure
-            'baseline': 'current_peak'      # Compare to current peak
+            "min_fleet_fraction": 0.4,  # Require 40% of current
+            "level": "system",  # System-wide minimum
+            "measure": "peak",  # Use peak measure
+            "baseline": "current_peak",  # Compare to current peak
         }
 
         handler = MinimumFleetConstraintHandler(config, sample_optimization_data)
@@ -860,7 +740,9 @@ class TestMinimumFleetConstraintHandler:
             expected_violation = minimum_required - solution_peak
 
             print(f"        Solution peak fleet: {solution_peak:.1f} vehicles")
-            print(f"        Expected violation: {minimum_required:.1f} - {solution_peak:.1f} = {expected_violation:.1f}")
+            print(
+                f"        Expected violation: {minimum_required:.1f} - {solution_peak:.1f} = {expected_violation:.1f}"
+            )
 
             # Call constraint handler
             actual_violations = handler.evaluate(sample_solutions[solution_name])
@@ -870,14 +752,19 @@ class TestMinimumFleetConstraintHandler:
             print(f"        Match? {abs(actual_violation - expected_violation) < 0.1}")
 
             # Assert they match
-            assert abs(actual_violation - expected_violation) < 0.1, \
-                f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            assert (
+                abs(actual_violation - expected_violation) < 0.1
+            ), f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
 
             # Interpret result
             if actual_violation > 0:
-                print(f"        ❌ MINIMUM VIOLATED (need {actual_violation:.1f} more vehicles)")
+                print(
+                    f"        ❌ MINIMUM VIOLATED (need {actual_violation:.1f} more vehicles)"
+                )
             else:
-                print(f"        ✅ MINIMUM SATISFIED ({abs(actual_violation):.1f} vehicles above minimum)")
+                print(
+                    f"        ✅ MINIMUM SATISFIED ({abs(actual_violation):.1f} vehicles above minimum)"
+                )
 
         print("\n✅ System minimum constraint test passed!")
 
@@ -886,26 +773,29 @@ class TestMinimumFleetConstraintHandler:
 # CONSTRAINT INTEGRATION TESTS
 # ================================================================================================
 
+
 class TestConstraintIntegration:
     """
     Test combinations of multiple constraints working together.
-    
+
     PURPOSE:
     - Validates that multiple constraint types can be used simultaneously
     - Tests realistic optimization scenarios with mixed constraints
     - Ensures constraint handlers don't interfere with each other
     """
 
-    def test_multiple_constraint_combination(self, sample_optimization_data, sample_solutions):
+    def test_multiple_constraint_combination(
+        self, sample_optimization_data, sample_solutions
+    ):
         """
         Test combining different constraint types in a realistic scenario.
-        
+
         WHAT THIS TEST DOES:
         - Creates 3 different constraint handlers (total, per-interval, minimum)
         - Configures them with lenient settings to avoid failures
         - Evaluates all constraints on a test solution
         - Validates total constraint count and basic functionality
-        
+
         WHY THIS TEST IS IMPORTANT:
         - Real optimization problems use multiple constraint types
         - Ensures constraints can coexist without conflicts
@@ -918,25 +808,33 @@ class TestConstraintIntegration:
         # Create constraint combination (lenient settings to avoid failures)
         print("   🏗️  Creating constraint handlers:")
 
-        fleet_total = FleetTotalConstraintHandler({
-            'baseline': 'current_peak',
-            'tolerance': 0.50,  # Very lenient - 50% increase allowed
-            'measure': 'peak'
-        }, sample_optimization_data)
+        fleet_total = FleetTotalConstraintHandler(
+            {
+                "baseline": "current_peak",
+                "tolerance": 0.50,  # Very lenient - 50% increase allowed
+                "measure": "peak",
+            },
+            sample_optimization_data,
+        )
         print("      ✓ FleetTotal: 1 constraint (50% tolerance)")
 
-        fleet_intervals = FleetPerIntervalConstraintHandler({
-            'baseline': 'current_by_interval',
-            'tolerance': 0.50  # Very lenient
-        }, sample_optimization_data)
-        print(f"      ✓ FleetPerInterval: {fleet_intervals.n_constraints} constraints (50% tolerance)")
+        fleet_intervals = FleetPerIntervalConstraintHandler(
+            {"baseline": "current_by_interval", "tolerance": 0.50},  # Very lenient
+            sample_optimization_data,
+        )
+        print(
+            f"      ✓ FleetPerInterval: {fleet_intervals.n_constraints} constraints (50% tolerance)"
+        )
 
-        minimum_fleet = MinimumFleetConstraintHandler({
-            'min_fleet_fraction': 0.1,  # Very lenient - only 10% minimum
-            'level': 'system',
-            'measure': 'peak',
-            'baseline': 'current_peak'
-        }, sample_optimization_data)
+        minimum_fleet = MinimumFleetConstraintHandler(
+            {
+                "min_fleet_fraction": 0.1,  # Very lenient - only 10% minimum
+                "level": "system",
+                "measure": "peak",
+                "baseline": "current_peak",
+            },
+            sample_optimization_data,
+        )
         print("      ✓ MinimumFleet: 1 constraint (10% minimum)")
 
         constraints = [fleet_total, fleet_intervals, minimum_fleet]
@@ -949,8 +847,9 @@ class TestConstraintIntegration:
         print(f"      Total + PerInterval + Minimum = {total_constraints}")
         print(f"      Expected: 1 + {n_intervals} + 1 = {expected_constraints}")
 
-        assert total_constraints == expected_constraints, \
-            f"Expected {expected_constraints} total constraints, got {total_constraints}"
+        assert (
+            total_constraints == expected_constraints
+        ), f"Expected {expected_constraints} total constraints, got {total_constraints}"
 
         # Test constraint evaluation
         print("\n   🧪 TESTING CONSTRAINT EVALUATION:")
@@ -959,7 +858,9 @@ class TestConstraintIntegration:
             all_violations = []
             for i, constraint in enumerate(constraints):
                 violations = constraint.evaluate(solution)
-                print(f"      Constraint {i+1}: {len(violations)} violations = {violations}")
+                print(
+                    f"      Constraint {i+1}: {len(violations)} violations = {violations}"
+                )
                 all_violations.extend(violations)
             return np.array(all_violations)
 
@@ -974,8 +875,9 @@ class TestConstraintIntegration:
         print(f"      Expected: {total_constraints}")
         print(f"      All violations: {all_violations}")
 
-        assert len(all_violations) == total_constraints, \
-            f"Expected {total_constraints} violations, got {len(all_violations)}"
+        assert (
+            len(all_violations) == total_constraints
+        ), f"Expected {total_constraints} violations, got {len(all_violations)}"
 
         # Basic sanity checks
         satisfied = np.sum(all_violations <= 0)
@@ -985,15 +887,19 @@ class TestConstraintIntegration:
         print(f"      Violated: {violated}/{total_constraints}")
 
         # All violations should be numeric and finite
-        assert all(isinstance(v, (int, float)) for v in all_violations), "All violations should be numeric"
-        assert all(not np.isnan(v) for v in all_violations), "No violations should be NaN"
+        assert all(
+            isinstance(v, (int, float)) for v in all_violations
+        ), "All violations should be numeric"
+        assert all(
+            not np.isnan(v) for v in all_violations
+        ), "No violations should be NaN"
 
         print("✅ Multiple constraint combination test passed!")
 
     def test_constraint_info_methods(self, sample_optimization_data):
         """
         Test constraint info methods for debugging and introspection.
-        
+
         WHAT THIS TEST DOES:
         - Creates a constraint handler
         - Calls get_constraint_info() method
@@ -1002,11 +908,7 @@ class TestConstraintIntegration:
         """
         print("\n🔍 TESTING CONSTRAINT INFO METHODS:")
 
-        config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.15,
-            'measure': 'peak'
-        }
+        config = {"baseline": "current_peak", "tolerance": 0.15, "measure": "peak"}
 
         handler = FleetTotalConstraintHandler(config, sample_optimization_data)
         info = handler.get_constraint_info()
@@ -1014,20 +916,24 @@ class TestConstraintIntegration:
         print(f"   📊 Constraint info returned: {info}")
 
         # Validate info structure
-        assert 'handler_type' in info, "Should include handler_type"
-        assert 'n_constraints' in info, "Should include n_constraints"
-        assert 'config' in info, "Should include config"
+        assert "handler_type" in info, "Should include handler_type"
+        assert "n_constraints" in info, "Should include n_constraints"
+        assert "config" in info, "Should include config"
 
-        assert info['handler_type'] == 'FleetTotalConstraintHandler', "Should identify handler type"
-        assert info['n_constraints'] == 1, "Should report correct constraint count"
-        assert info['config']['baseline'] == 'current_peak', "Should include config details"
+        assert (
+            info["handler_type"] == "FleetTotalConstraintHandler"
+        ), "Should identify handler type"
+        assert info["n_constraints"] == 1, "Should report correct constraint count"
+        assert (
+            info["config"]["baseline"] == "current_peak"
+        ), "Should include config details"
 
         print("✅ Constraint info methods test passed!")
 
     def test_constraint_edge_cases(self, sample_optimization_data):
         """
         Test edge cases and boundary conditions.
-        
+
         WHAT THIS TEST DOES:
         - Tests with all-no-service solution (extreme case)
         - Validates upper-bound constraints are satisfied with zero fleet
@@ -1051,9 +957,9 @@ class TestConstraintIntegration:
         print("\n   📈 Testing upper-bound constraint (should be satisfied):")
 
         config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.0,  # Very strict - no increase allowed
-            'measure': 'peak'
+            "baseline": "current_peak",
+            "tolerance": 0.0,  # Very strict - no increase allowed
+            "measure": "peak",
         }
 
         handler = FleetTotalConstraintHandler(config, sample_optimization_data)
@@ -1062,26 +968,32 @@ class TestConstraintIntegration:
         print(f"      Violation: {violations[0]:.1f}")
         print("      Expected: <= 0 (satisfied)")
 
-        assert violations[0] <= 0, "No service should satisfy upper-bound constraint (0 vehicles < limit)"
+        assert (
+            violations[0] <= 0
+        ), "No service should satisfy upper-bound constraint (0 vehicles < limit)"
         print("      ✅ Upper-bound constraint satisfied as expected")
 
         # Test 2: Minimum constraint should be violated (0 vehicles < minimum)
         print("\n   📉 Testing minimum constraint (should be violated):")
 
         min_config = {
-            'min_fleet_fraction': 0.3,  # Require 30% of current (lenient but not zero)
-            'level': 'system',
-            'measure': 'peak',
-            'baseline': 'current_peak'
+            "min_fleet_fraction": 0.3,  # Require 30% of current (lenient but not zero)
+            "level": "system",
+            "measure": "peak",
+            "baseline": "current_peak",
         }
 
-        min_handler = MinimumFleetConstraintHandler(min_config, sample_optimization_data)
+        min_handler = MinimumFleetConstraintHandler(
+            min_config, sample_optimization_data
+        )
         min_violations = min_handler.evaluate(all_no_service)
 
         print(f"      Violation: {min_violations[0]:.1f}")
         print("      Expected: > 0 (violated)")
 
-        assert min_violations[0] > 0, "No service should violate minimum constraint (0 vehicles < minimum)"
+        assert (
+            min_violations[0] > 0
+        ), "No service should violate minimum constraint (0 vehicles < minimum)"
         print("      ✅ Minimum constraint violated as expected")
 
         print("✅ Constraint edge cases test passed!")
@@ -1089,7 +1001,7 @@ class TestConstraintIntegration:
     def test_constraint_consistency(self, sample_optimization_data, sample_solutions):
         """
         Test that constraint evaluations are consistent and repeatable.
-        
+
         WHAT THIS TEST DOES:
         - Evaluates same solution multiple times
         - Ensures results are identical (deterministic)
@@ -1097,11 +1009,7 @@ class TestConstraintIntegration:
         """
         print("\n🔄 TESTING CONSTRAINT CONSISTENCY:")
 
-        config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.15,
-            'measure': 'peak'
-        }
+        config = {"baseline": "current_peak", "tolerance": 0.15, "measure": "peak"}
 
         handler = FleetTotalConstraintHandler(config, sample_optimization_data)
         solution = sample_solutions["medium_service"]
@@ -1118,8 +1026,12 @@ class TestConstraintIntegration:
         print(f"      Evaluation 3: {violations3}")
 
         # Results should be identical
-        assert np.allclose(violations1, violations2), "Evaluation 1 and 2 should be identical"
-        assert np.allclose(violations2, violations3), "Evaluation 2 and 3 should be identical"
+        assert np.allclose(
+            violations1, violations2
+        ), "Evaluation 1 and 2 should be identical"
+        assert np.allclose(
+            violations2, violations3
+        ), "Evaluation 2 and 3 should be identical"
 
         print("      ✅ All evaluations identical")
         print("✅ Constraint consistency test passed!")
@@ -1132,7 +1044,7 @@ class TestConstraintIntegration:
 if __name__ == "__main__":
     """
     Run tests directly with detailed output.
-    
+
     Usage: python test_constraints.py
     This will run all tests with verbose output and print statements.
     """
