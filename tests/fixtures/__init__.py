@@ -30,7 +30,7 @@ def sample_optimization_data(sample_gtfs_path):
         log_level="ERROR",  # Quiet during tests
     )
 
-    allowed_headways = [10, 15, 30, 60, 120]
+    allowed_headways = [5, 10, 15, 30, 60, 120]
     return preparator.extract_optimization_data(allowed_headways)
 
 
