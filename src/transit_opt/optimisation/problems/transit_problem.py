@@ -294,7 +294,15 @@ class TransitOptimizationProblem(Problem):
             [[0 1 2]
              [3 1 0]]
         """
-        return x_flat.reshape(self.n_routes, self.n_intervals)
+
+        # 1. Clip to bounds (PSO can generate out-of-bounds values). Probably redundant
+        # as Pymoo should handle this (but just in case)
+        x_bounded = np.clip(x_flat, 0, self.n_choices - 1)
+
+        # 2. Round and convert to integers
+        x_int = np.round(x_bounded).astype(int)
+
+        return x_int.reshape(self.n_routes, self.n_intervals)
 
     def _encode_solution(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
