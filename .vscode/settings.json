@@ -1,0 +1,14 @@
+{
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.python"   // Black is called via Python extension
+  },
+
+  "python.formatting.provider": "black",           // tells Python extension to use Black
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+
+  "notebook.formatOnSave.enabled": true
+}
