@@ -404,13 +404,15 @@ class TransitOptimizationProblem(Problem):
         # Validate solution shape
         expected_shape = (self.n_routes, self.n_intervals)
         if solution_matrix.shape != expected_shape:
-            print(f"   ❌ Invalid solution shape: expected {expected_shape}, got {solution_matrix.shape}")
+            print(
+                f"   ❌ Invalid solution shape: expected {expected_shape}, got {solution_matrix.shape}"
+            )
             return {
-                'objective': np.inf,
-                'constraints': np.array([]),
-                'feasible': False,
-                'constraint_details': [],
-                'solution_matrix': solution_matrix.copy()
+                "objective": np.inf,
+                "constraints": np.array([]),
+                "feasible": False,
+                "constraint_details": [],
+                "solution_matrix": solution_matrix.copy(),
             }
 
         # Evaluate objective
