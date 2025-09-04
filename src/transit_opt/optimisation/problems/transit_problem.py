@@ -54,6 +54,11 @@ class TransitOptimizationProblem(Problem):
         optimization_data: Complete optimization data structure from GTFSDataPreparator
         objective: Single objective function (must inherit from BaseObjective)
         constraints: List of constraint handlers (each inherits from BaseConstraintHandler)
+        penalty_config: Dict with keys:
+            - 'enabled': bool - Use penalty method instead of hard constraints
+            - 'penalty_weight': float - Base penalty weight
+            - 'adaptive': bool - Increase penalty weight over generations
+            - 'constraint_weights': Dict - Individual constraint penalty weights
 
     Example:
         ```python
@@ -110,6 +115,7 @@ class TransitOptimizationProblem(Problem):
         optimization_data: dict[str, Any],
         objective: BaseObjective,
         constraints: list[BaseConstraintHandler] | None = None,
+        penalty_config: dict[str, Any] | None = None,
     ):
 
         print("🏗️  CREATING TRANSIT OPTIMIZATION PROBLEM:")
@@ -143,15 +149,38 @@ class TransitOptimizationProblem(Problem):
         xl = np.zeros(n_var, dtype=int)  # Lower bounds (index 0)
         xu = np.full(n_var, self.n_choices - 1, dtype=int)  # Upper bounds (max index)
 
+        #  Penalty method configuration
+        self.penalty_config = penalty_config or {'enabled': False}
+        self.use_penalty_method = self.penalty_config.get('enabled', False)
+        self.penalty_weight = self.penalty_config.get('penalty_weight', 1000.0)
+        self.constraint_penalty_weights = self.penalty_config.get('constraint_weights', {})
+
+        # Store constraint info for penalty calculation
+        self.constraint_names = [type(c).__name__ for c in (constraints or [])]
+
         # Initialize pymoo Problem
-        super().__init__(
-            n_var=n_var,
-            n_obj=n_obj,
-            n_constr=n_constr,
-            xl=xl,
-            xu=xu,
-            vtype=int,  # Integer decision variables
-        )
+        if self.use_penalty_method:
+            # No hard constraints - handle as penalties
+            super().__init__(
+                n_var=n_var,
+                n_obj=n_obj,
+                n_constr=0,  # 🔧 Zero constraints for penalty method
+                xl=xl, xu=xu,
+                vtype=int
+            )
+            print(f"   🎯 Penalty method enabled: {len(constraints or [])} constraints → objective penalties")
+            print(f"   ⚖️ Base penalty weight: {self.penalty_weight}")
+
+        else:
+            # Use hard constraints (existing approach)
+            super().__init__(
+                n_var=n_var,
+                n_obj=n_obj,
+                n_constr=n_constr,
+                xl=xl, xu=xu,
+                vtype=int
+            )
+            print(f"   🚦 Hard constraints: {n_constr} constraint(s)")
 
         # Log constraint details
         if self.constraints:
@@ -200,61 +229,70 @@ class TransitOptimizationProblem(Problem):
                      Values <= 0 mean constraint satisfied
         """
 
-        pop_size = X.shape[0]
+        pop_size = len(X)
+        F = np.zeros((pop_size, 1))
 
-        print("\n🧮 EVALUATING POPULATION:")
-        print(f"   Population size: {pop_size}")
-        print(f"   Decision variables per solution: {X.shape[1]}")
+        # Always initialize G, but only use it for hard constraints
+        G = None
+        if not self.use_penalty_method and self.n_constr > 0:
+            G = np.zeros((pop_size, self.n_constr)) if self.n_constr > 0 else None
 
-        # Initialize output arrays
-        F = np.zeros((pop_size, 1))  # Objective values (single objective)
-        G = np.zeros((pop_size, self.n_constr)) if self.n_constr > 0 else None
+        for i in range(pop_size):
+            # Decode solution
+            solution_matrix = self.decode_solution(X[i])
 
-        # Evaluate each solution in the population
-        for i, x_flat in enumerate(X):
+            # Evaluate base objective
+            base_objective = self.objective.evaluate(solution_matrix)
 
-            if (i + 1) % max(1, pop_size // 4) == 0:  # Progress updates
-                print(f"   📈 Progress: {i+1}/{pop_size} solutions evaluated")
+            if self.use_penalty_method and self.constraints:
+                # 🔧 PENALTY METHOD: Add constraint violations to objective
+                total_penalty = 0.0
 
-            # 1. Decode solution from flat vector to matrix format
-            solution_matrix = self._decode_solution(x_flat)
+                for j, constraint in enumerate(self.constraints):
+                    violations = constraint.evaluate(solution_matrix)
 
-            # 2. Evaluate objective function
-            try:
-                objective_value = self.objective.evaluate(solution_matrix)
-                F[i, 0] = objective_value
+                    # Get constraint-specific penalty weight
+                    constraint_name = self.constraint_names[j]
+                    constraint_weight = self._get_constraint_penalty_weight(constraint_name)
 
-            except Exception as e:
-                print(f"   ⚠️  Objective evaluation failed for solution {i}: {e}")
-                F[i, 0] = np.inf  # Penalize invalid solutions
+                    # Calculate penalty: sum of squared positive violations
+                    constraint_penalty = np.sum(np.maximum(0, violations) ** 2) * constraint_weight
+                    total_penalty += constraint_penalty
 
-            # 3. Evaluate constraints (if any)
-            if self.constraints and G is not None:
-                constraint_start_idx = 0
+                # Add penalty to objective
+                F[i, 0] = base_objective + total_penalty
 
-                for constraint in self.constraints:
-                    try:
-                        violations = constraint.evaluate(solution_matrix)
+            else:
+                # Hard constraints (existing approach)
+                F[i, 0] = base_objective
 
-                        # Store violations in correct positions
-                        constraint_end_idx = constraint_start_idx + len(violations)
-                        G[i, constraint_start_idx:constraint_end_idx] = violations
-                        constraint_start_idx = constraint_end_idx
+                if self.constraints and G is not None:
 
-                    except Exception as e:
-                        print(
-                            f"   ⚠️  Constraint evaluation failed for solution {i}: {e}"
-                        )
-                        # Assign large positive violations (constraint violated)
-                        constraint_end_idx = (
-                            constraint_start_idx + constraint.n_constraints
-                        )
-                        G[i, constraint_start_idx:constraint_end_idx] = 1e6
-                        constraint_start_idx = constraint_end_idx
+                    constraint_start_idx = 0
+
+                    for constraint in self.constraints:
+                        try:
+                            violations = constraint.evaluate(solution_matrix)
+
+                            # Store violations in correct positions
+                            constraint_end_idx = constraint_start_idx + len(violations)
+                            G[i, constraint_start_idx:constraint_end_idx] = violations
+                            constraint_start_idx = constraint_end_idx
+
+                        except Exception as e:
+                            print(
+                                f"   ⚠️  Constraint evaluation failed for solution {i}: {e}"
+                            )
+                            # Assign large positive violations (constraint violated)
+                            constraint_end_idx = (
+                                constraint_start_idx + constraint.n_constraints
+                            )
+                            G[i, constraint_start_idx:constraint_end_idx] = 1e6
+                            constraint_start_idx = constraint_end_idx
 
         # Pack results for pymoo
         out["F"] = F
-        if G is not None:
+        if not self.use_penalty_method and self.n_constr > 0 and G is not None:
             out["G"] = G
 
         # Log evaluation summary
@@ -271,6 +309,30 @@ class TransitOptimizationProblem(Problem):
             if G is not None:
                 feasible_solutions = np.sum(np.all(G <= 0, axis=1))
                 print(f"      Feasible solutions: {feasible_solutions}/{pop_size}")
+
+    def _get_constraint_penalty_weight(self, constraint_name: str) -> float:
+        """Get penalty weight for specific constraint type."""
+        # 1. Check for specific weight first
+        if constraint_name in self.constraint_penalty_weights:
+            return self.constraint_penalty_weights[constraint_name]
+
+        # 2. Check simplified name patterns
+        simplified_patterns = {
+            'FleetTotalConstraintHandler': 'fleet_total',
+            'FleetPerIntervalConstraintHandler': 'fleet_per_interval',
+            'MinimumFleetConstraintHandler': 'minimum_fleet'
+        }
+
+        pattern_key = simplified_patterns.get(constraint_name)
+        if pattern_key and pattern_key in self.constraint_penalty_weights:
+            return self.constraint_penalty_weights[pattern_key]
+
+        # 3. Return base penalty weight as fallback
+        return self.penalty_weight
+
+    def update_penalty_weight(self, new_weight: float):
+        """Update penalty weight for adaptive penalty scheduling."""
+        self.penalty_weight = new_weight
 
     def _decode_solution(self, x_flat: np.ndarray) -> np.ndarray:
         """

@@ -1036,6 +1036,72 @@ class PSORuntimeCallback(Callback):
             elapsed = current_time - self.start_time
             self.generation_times.append(elapsed)
 
+class PenaltySchedulingCallback(Callback):
+    """Adaptive penalty weight scheduling for constraint handling."""
+
+    def __init__(self, initial_penalty: float, increase_rate: float = 2.0):
+        super().__init__()
+        self.initial_penalty = initial_penalty
+        self.increase_rate = increase_rate
+        self.current_penalty = initial_penalty
+
+    def notify(self, algorithm):
+        gen = algorithm.n_gen
+
+        if hasattr(algorithm.termination, 'n_max_gen'):
+            max_gen = algorithm.termination.n_max_gen
+            progress = gen / max_gen if max_gen > 0 else 0
+        else:
+            progress = min(gen / 100.0, 1.0)  # Fallback
+
+        # Exponential penalty increase
+        self.current_penalty = self.initial_penalty * (self.increase_rate ** progress)
+
+        # Update problem penalty weight
+        if hasattr(algorithm.problem, 'update_penalty_weight'):
+            algorithm.problem.update_penalty_weight(self.current_penalty)
+
+        # Log progress
+        if gen % 25 == 0 and hasattr(algorithm, 'pop'):
+            if hasattr(algorithm.problem, 'use_penalty_method') and algorithm.problem.use_penalty_method:
+                print(f"   Gen {gen}: Penalty weight = {self.current_penalty:.1f}")
+            else:
+                feasible_count = np.sum(algorithm.pop.get("CV") <= 1e-6)
+                pop_size = len(algorithm.pop)
+                print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
+
+class CallbackCollection(Callback):
+    """
+    Wrapper to handle multiple callbacks for pymoo.
+    
+    Pymoo expects a single callback function, but we need to support
+    multiple callbacks (runtime monitoring + penalty scheduling).
+    This wrapper calls all callbacks in sequence.
+    """
+
+    def __init__(self, callbacks):
+        super().__init__()
+        self.callbacks = callbacks or []
+
+    def notify(self, algorithm):
+        """Call all callbacks in sequence."""
+        for callback in self.callbacks:
+            if hasattr(callback, 'notify'):
+                callback.notify(algorithm)
+
+    def __len__(self):
+        """Return number of wrapped callbacks."""
+        return len(self.callbacks)
+
+    def __iter__(self):
+        """Allow iteration over wrapped callbacks."""
+        return iter(self.callbacks)
+
+    def __getitem__(self, index):
+        """Allow indexing into wrapped callbacks."""
+        return self.callbacks[index]
+
+
 
 class PSORunner:
     """
@@ -1259,14 +1325,35 @@ class PSORunner:
 
         start_time = time.time()
 
+        callbacks = []
+
+        # Add runtime monitoring callback
+        runtime_callback = PSORuntimeCallback()
+        callbacks.append(runtime_callback)
+
+        # Add penalty scheduling callback if using penalty method with adaptive penalties
+        pso_config = self.config_manager.get_pso_config()
+        if (hasattr(self.problem, 'use_penalty_method') and
+            self.problem.use_penalty_method and
+            pso_config.adaptive_penalty):
+
+            penalty_callback = PenaltySchedulingCallback(
+                initial_penalty=pso_config.penalty_weight,
+                increase_rate=pso_config.penalty_increase_rate
+            )
+            callbacks.append(penalty_callback)
+            print(f"   🎯 Adaptive penalty method enabled: {pso_config.penalty_weight} → increasing")
+
         try:
             # Create algorithm components
             algorithm = self._create_algorithm()        # Configured PSO instance
             termination = self._create_termination()    # Termination criteria
-            callback = PSORuntimeCallback()             # Runtime monitoring
 
             # Print configuration summary for user reference
             self._print_optimization_summary()
+
+            # Create single callback wrapper for pymoo
+            callback_wrapper = CallbackCollection(callbacks)
 
             # Execute optimization using pymoo
             print("\n📊 Running optimization (pymoo will show progress)...")
@@ -1274,7 +1361,7 @@ class PSORunner:
                 self.problem,            # Problem definition
                 algorithm,               # PSO algorithm instance
                 termination,            # When to stop optimization
-                callback=callback,      # Runtime monitoring
+                callback=callback_wrapper,    # Runtime monitoring
                 verbose=True,           # Enable pymoo's progress output
                 save_history=True       # Enable generation-by-generation tracking
             )
@@ -1282,7 +1369,7 @@ class PSORunner:
             optimization_time = time.time() - start_time
 
             # Process pymoo result into domain-specific format
-            return self._process_single_result(result, callback, optimization_time)
+            return self._process_single_result(result, runtime_callback, optimization_time)
 
         except Exception as e:
             # Provide context for optimization failures
@@ -1518,10 +1605,8 @@ class PSORunner:
 
             for i, constraint_config in enumerate(constraint_configs):
                 constraint_type = constraint_config.get('type')
-
                 # Extract constraint-specific parameters (exclude 'type' field)
                 constraint_kwargs = {k: v for k, v in constraint_config.items() if k != 'type'}
-
                 print(f"      Creating constraint {i+1}: {constraint_type}")
 
                 # Create appropriate constraint handler based on type
@@ -1548,11 +1633,26 @@ class PSORunner:
                     print(f"         ⚠️  Warning: Unknown constraint type '{constraint_type}' - skipping")
                     continue
 
+            # Get penalty configuration from PSO config
+            pso_config = self.config_manager.get_pso_config()
+
+            if hasattr(pso_config, 'use_penalty_method') and pso_config.use_penalty_method:
+                penalty_config = {
+                    'enabled': True,
+                    'penalty_weight': getattr(pso_config, 'penalty_weight', 1000.0),
+                    'adaptive': getattr(pso_config, 'adaptive_penalty', False),
+                    'constraint_weights': self._get_constraint_penalty_weights()
+                }
+            else:
+                penalty_config = {'enabled': False}
+
+
             # === PROBLEM ASSEMBLY ===
             self.problem = TransitOptimizationProblem(
                 self.optimization_data,  # Problem data
                 objective,              # Objective function instance
-                constraints            # List of constraint handler instances
+                constraints,            # List of constraint handler instances
+                penalty_config=penalty_config
             )
 
             # Print problem construction summary
@@ -1561,10 +1661,24 @@ class PSORunner:
             print(f"   🚦 Total constraints: {self.problem.n_constr} (from {len(constraints)} handler(s))")
             print(f"   🎯 Objective: {objective_type}")
             print(f"   📋 Constraint types: {[c.__class__.__name__ for c in constraints]}")
+            if hasattr(self.problem, 'use_penalty_method'):
+                print(f"   🎯 Method: {'Penalty' if self.problem.use_penalty_method else 'Hard constraints'}")
+
 
         except Exception as e:
             # Provide context for problem creation failures
             raise ValueError(f"Failed to create optimization problem: {str(e)}") from e
+
+    def _get_constraint_penalty_weights(self) -> dict[str, float]:
+        """Extract constraint-specific penalty weights from config."""
+        problem_config = self.config_manager.get_problem_config()
+        penalty_weights = {}
+
+        # Check if penalty weights are specified in problem config
+        if 'penalty_weights' in problem_config:
+            penalty_weights = problem_config['penalty_weights']
+
+        return penalty_weights
 
     def _create_algorithm(self) -> AdaptivePSO:
         """
@@ -1747,7 +1861,11 @@ class PSORunner:
         print(f"   Best objective: {best_objective:.6f}")
         print(f"   Generations: {len(optimization_history)}")
         print(f"   Time: {optimization_time:.1f}s")
-        print(f"   Avg time/gen: {optimization_time/len(optimization_history):.3f}s")
+        # print(f"   Avg time/gen: {optimization_time/len(optimization_history):.3f}s")
+        if len(optimization_history) > 0:
+            print(f"   Avg time/gen: {optimization_time/len(optimization_history):.3f}s")
+        else:
+            print("   Avg time/gen: N/A (no history)")
 
         if constraint_violations['total_violations'] > 0:
             print(f"   ⚠️  Constraint violations: {constraint_violations['total_violations']}")
