@@ -69,48 +69,48 @@ class PSOConfig:
 
     ALGORITHM MODES:
     ===============
-    
+
     **Standard PSO Mode:**
     - Fixed or adaptive inertia weight scheduling
     - Hard constraints (infeasible solutions rejected)
     - Traditional PSO behavior with constraint handling via pymoo
-    
+
     **Penalty Method Mode:**
     - Converts constraints to objective penalties
     - Allows exploration of infeasible regions
     - Adaptive penalty weight scheduling available
-    
+
     INERTIA WEIGHT STRATEGIES:
     =========================
-    
+
     **Adaptive Inertia Weight (Recommended):**
     The inertia weight linearly decreases from initial to final value over generations.
     This provides automatic balance between exploration (early) and exploitation (late).
-    
+
     - Early generations (w ≈ 0.9): High exploration, particles move freely
     - Late generations (w ≈ 0.4): Low exploitation, particles converge locally
     - Formula: w(t) = w_initial - (w_initial - w_final) × t/(T-1)
-    
+
     **Fixed Inertia Weight (Traditional):**
     Constant inertia weight throughout optimization (set inertia_weight_final=None).
 
     PENALTY METHOD CONSTRAINT HANDLING:
     ==================================
-    
+
     **Two-Level Weight System:**
     The penalty method uses a hierarchical weight resolution system to allow both
     global defaults and constraint-specific customization.
-    
+
     **Weight Resolution Priority (highest to lowest):**
     1. 🎯 Constraint-specific weights (problem.penalty_weights['constraint_type'])
-    2. 🔄 Algorithm default weight (optimization.algorithm.penalty_weight)  
+    2. 🔄 Algorithm default weight (optimization.algorithm.penalty_weight)
     3. 🛡️ System fallback (1000.0 - hardcoded)
-    
+
     **Why Both Levels Are Needed:**
     - penalty_weight: Provides consistent baseline for ALL constraints
     - penalty_weights: Allows fine-tuning for SPECIFIC constraint types
     - Prevents having to specify every constraint type individually
-    
+
     **Configuration Examples:**
     ```python
     # All constraints use same weight
@@ -123,7 +123,7 @@ class PSOConfig:
         }
         # No penalty_weights section needed
     }
-    
+
     # Mixed weights: some constraints overridden, others use default
     config = {
         'problem': {
@@ -144,65 +144,65 @@ class PSOConfig:
         }
     }
     ```
-    
+
     **Constraint Type Mapping:**
     - 'fleet_total' → FleetTotalConstraintHandler
-    - 'fleet_per_interval' → FleetPerIntervalConstraintHandler  
+    - 'fleet_per_interval' → FleetPerIntervalConstraintHandler
     - 'minimum_fleet' → MinimumFleetConstraintHandler
 
     Attributes:
     ===========
-    
+
     **Core PSO Parameters:**
-    
+
     pop_size : int (REQUIRED)
         Population size (number of particles in swarm).
         Typical range: 20-200, default 50 works well for most problems.
-        
+
     inertia_weight : float, default=0.9
         Initial inertia weight (w) for adaptive strategy, or fixed value.
         - For adaptive: start high (0.9) for exploration
         - For fixed: single value used throughout optimization
         - Typical range: 0.4-0.9
-        
+
     inertia_weight_final : float | None, default=0.4
         Final inertia weight for adaptive strategy.
         - If None: use fixed inertia weight (traditional PSO)
         - If set: linearly decrease from inertia_weight to this value
         - Typical value: 0.4 for exploitation
         - Must be less than inertia_weight
-        
+
     cognitive_coeff : float, default=2.0
         Cognitive coefficient (c1) - attraction to personal best.
         Typical range: 1.5-2.5, default 2.0 is standard.
-        
+
     social_coeff : float, default=2.0
         Social coefficient (c2) - attraction to global best.
         Typical range: 1.5-2.5, default 2.0 is standard.
-        
+
     variant : str, default="adaptive"
         PSO variant to use:
         - 'canonical': Standard PSO (Shi & Eberhart 1998)
         - 'adaptive': PSO with linearly decreasing inertia weight
-        
+
     **Penalty Method Parameters:**
-    
+
     use_penalty_method : bool, default=False
         Whether to apply penalty method for constraints:
         - True: Soft constraints with penalties added to objective
         - False: Hard constraints (infeasible solutions rejected)
-        
+
     penalty_weight : float, default=1000.0
         Default penalty weight for constraint violations.
         - Higher values penalize violations more strongly
         - Typical range: 100-10000
         - Used as fallback for constraints without specific weights
-        
+
     adaptive_penalty : bool, default=False
         Whether to adaptively increase penalty weight:
         - True: Increase penalty weight over generations
         - False: Fixed penalty weight throughout optimization
-        
+
     penalty_increase_rate : float, default=2.0
         Multiplicative factor for adaptive penalty increases.
         - Must be > 1.0 for meaningful adaptation
@@ -211,7 +211,7 @@ class PSOConfig:
 
     Usage Examples:
     ==============
-    
+
     ```python
     # Standard PSO with adaptive inertia (recommended)
     config = PSOConfig(
@@ -220,7 +220,7 @@ class PSOConfig:
         inertia_weight_final=0.4,  # End: exploitation
         use_penalty_method=False   # Hard constraints
     )
-    
+
     # Traditional PSO with fixed inertia
     config = PSOConfig(
         pop_size=30,
@@ -228,7 +228,7 @@ class PSOConfig:
         inertia_weight_final=None,  # Fixed weight
         use_penalty_method=False
     )
-    
+
     # Penalty method PSO with adaptive penalties
     config = PSOConfig(
         pop_size=50,
@@ -844,7 +844,7 @@ class OptimizationConfigManager:
             penalty_weight=alg_config.get("penalty_weight", 1000.0),
             adaptive_penalty=alg_config.get("adaptive_penalty", False),
             penalty_increase_rate=alg_config.get("penalty_increase_rate", 2.0),
-    )
+        )
 
         # Setup termination configuration - check required parameters
         term_config = opt_config.get("termination", {})

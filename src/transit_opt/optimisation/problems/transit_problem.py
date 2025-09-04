@@ -12,7 +12,7 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import BaseConstraintHandler
+from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler
 
 
 class TransitOptimizationProblem(Problem):
@@ -150,10 +150,12 @@ class TransitOptimizationProblem(Problem):
         xu = np.full(n_var, self.n_choices - 1, dtype=int)  # Upper bounds (max index)
 
         #  Penalty method configuration
-        self.penalty_config = penalty_config or {'enabled': False}
-        self.use_penalty_method = self.penalty_config.get('enabled', False)
-        self.penalty_weight = self.penalty_config.get('penalty_weight', 1000.0)
-        self.constraint_penalty_weights = self.penalty_config.get('constraint_weights', {})
+        self.penalty_config = penalty_config or {"enabled": False}
+        self.use_penalty_method = self.penalty_config.get("enabled", False)
+        self.penalty_weight = self.penalty_config.get("penalty_weight", 1000.0)
+        self.constraint_penalty_weights = self.penalty_config.get(
+            "constraint_weights", {}
+        )
 
         # Store constraint info for penalty calculation
         self.constraint_names = [type(c).__name__ for c in (constraints or [])]
@@ -165,20 +167,19 @@ class TransitOptimizationProblem(Problem):
                 n_var=n_var,
                 n_obj=n_obj,
                 n_constr=0,  # 🔧 Zero constraints for penalty method
-                xl=xl, xu=xu,
-                vtype=int
+                xl=xl,
+                xu=xu,
+                vtype=int,
             )
-            print(f"   🎯 Penalty method enabled: {len(constraints or [])} constraints → objective penalties")
+            print(
+                f"   🎯 Penalty method enabled: {len(constraints or [])} constraints → objective penalties"
+            )
             print(f"   ⚖️ Base penalty weight: {self.penalty_weight}")
 
         else:
             # Use hard constraints (existing approach)
             super().__init__(
-                n_var=n_var,
-                n_obj=n_obj,
-                n_constr=n_constr,
-                xl=xl, xu=xu,
-                vtype=int
+                n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl=xl, xu=xu, vtype=int
             )
             print(f"   🚦 Hard constraints: {n_constr} constraint(s)")
 
@@ -253,10 +254,14 @@ class TransitOptimizationProblem(Problem):
 
                     # Get constraint-specific penalty weight
                     constraint_name = self.constraint_names[j]
-                    constraint_weight = self._get_constraint_penalty_weight(constraint_name)
+                    constraint_weight = self._get_constraint_penalty_weight(
+                        constraint_name
+                    )
 
                     # Calculate penalty: sum of squared positive violations
-                    constraint_penalty = np.sum(np.maximum(0, violations) ** 2) * constraint_weight
+                    constraint_penalty = (
+                        np.sum(np.maximum(0, violations) ** 2) * constraint_weight
+                    )
                     total_penalty += constraint_penalty
 
                 # Add penalty to objective
@@ -310,6 +315,114 @@ class TransitOptimizationProblem(Problem):
                 feasible_solutions = np.sum(np.all(G <= 0, axis=1))
                 print(f"      Feasible solutions: {feasible_solutions}/{pop_size}")
 
+                # Add per-constraint feasibility breakdown for hard constraints
+                if G.shape[1] > 1:  # Multiple constraints
+                    print("      Per-constraint feasibility breakdown:")
+                    constraint_start_idx = 0
+
+                    # 🔧 NEW: Track interval-specific feasibility for hard constraints too
+                    interval_feasibility_hard = {}
+
+                    for constraint_idx, constraint in enumerate(self.constraints):
+                        constraint_end_idx = constraint_start_idx + constraint.n_constraints
+                        constraint_violations = G[:, constraint_start_idx:constraint_end_idx]
+                        constraint_satisfied = np.sum(np.all(constraint_violations <= 1e-6, axis=1))
+                        constraint_name = self._get_constraint_name(constraint_idx)
+                        print(f"        {constraint_name}: {constraint_satisfied}/{pop_size} solutions")
+
+                        # 🔧 NEW: For FleetPerInterval, track individual interval feasibility
+                        if isinstance(constraint, FleetPerIntervalConstraintHandler):
+                            for interval_idx in range(constraint.n_constraints):
+                                constraint_col_idx = constraint_start_idx + interval_idx
+                                interval_satisfied = np.sum(constraint_violations[:, interval_idx] <= 1e-6)
+                                interval_name = f"{constraint_name}_Interval_{interval_idx}"
+                                interval_feasibility_hard[interval_name] = interval_satisfied
+
+                        constraint_start_idx = constraint_end_idx
+
+                    # 🔧 NEW: Print interval-specific breakdown for hard constraints
+                    if interval_feasibility_hard:
+                        print("      Per-interval feasibility breakdown:")
+                        # Group by interval for cleaner display
+                        interval_data = {}
+                        for interval_name, satisfied_count in interval_feasibility_hard.items():
+                            if 'Interval_' in interval_name:
+                                interval_num = interval_name.split('_')[-1]
+                                interval_data[int(interval_num)] = satisfied_count
+
+                        # Print in interval order
+                        for interval_idx in sorted(interval_data.keys()):
+                            satisfied_count = interval_data[interval_idx]
+                            interval_label = self._get_interval_label(interval_idx)
+                            print(f"        Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+            elif self.use_penalty_method and self.constraints:
+                # Penalty method: evaluate original constraints to check feasibility
+                feasible_count = 0
+
+                # Track per-constraint and per-interval feasibility
+                constraint_feasibility = {}
+                interval_feasibility = {}
+
+                for constraint_idx, constraint in enumerate(self.constraints):
+                    constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
+                    constraint_feasibility[constraint_name] = 0
+
+                    # For FleetPerInterval, track each interval separately
+                    if isinstance(constraint, FleetPerIntervalConstraintHandler):
+                        for interval_idx in range(self.n_intervals):
+                            interval_name = f"{constraint_name}_Interval_{interval_idx}"
+                            interval_feasibility[interval_name] = 0
+
+                for i in range(pop_size):
+                    solution_matrix = self.decode_solution(X[i])
+                    is_feasible = True
+
+                    # Check all constraint handlers
+                    for constraint_idx, constraint in enumerate(self.constraints):
+                        constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
+                        violations = constraint.evaluate(solution_matrix)
+
+                        # Check overall constraint feasibility
+                        constraint_satisfied = np.all(violations <= 1e-6)
+                        if constraint_satisfied:
+                            constraint_feasibility[constraint_name] += 1
+                        else:
+                            is_feasible = False
+
+                        # For FleetPerInterval, track individual interval feasibility
+                        if isinstance(constraint, FleetPerIntervalConstraintHandler):
+                            for interval_idx, interval_violation in enumerate(violations):
+                                interval_name = f"{constraint_name}_Interval_{interval_idx}"
+                                if interval_violation <= 1e-6:
+                                    interval_feasibility[interval_name] += 1
+
+                    if is_feasible:
+                        feasible_count += 1
+
+                print(f"      Feasible solutions: {feasible_count}/{pop_size}")
+
+                # Print detailed constraint breakdown
+                if len(self.constraints) > 1:
+                    print("      Per-constraint feasibility breakdown:")
+                    for constraint_name, satisfied_count in constraint_feasibility.items():
+                        print(f"        {constraint_name}: {satisfied_count}/{pop_size} solutions")
+
+                # Print interval-specific breakdown for FleetPerInterval
+                if interval_feasibility:
+                    print("      Per-interval feasibility breakdown:")
+                    # Group by interval for cleaner display
+                    interval_data = {}
+                    for interval_name, satisfied_count in interval_feasibility.items():
+                        if 'Interval_' in interval_name:
+                            interval_num = interval_name.split('_')[-1]
+                            interval_data[int(interval_num)] = satisfied_count
+
+                    # Print in interval order
+                    for interval_idx in sorted(interval_data.keys()):
+                        satisfied_count = interval_data[interval_idx]
+                        interval_label = self._get_interval_label(interval_idx)
+                        print(f"        Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+
     def _get_constraint_penalty_weight(self, constraint_name: str) -> float:
         """Get penalty weight for specific constraint type."""
         # 1. Check for specific weight first
@@ -318,9 +431,9 @@ class TransitOptimizationProblem(Problem):
 
         # 2. Check simplified name patterns
         simplified_patterns = {
-            'FleetTotalConstraintHandler': 'fleet_total',
-            'FleetPerIntervalConstraintHandler': 'fleet_per_interval',
-            'MinimumFleetConstraintHandler': 'minimum_fleet'
+            "FleetTotalConstraintHandler": "fleet_total",
+            "FleetPerIntervalConstraintHandler": "fleet_per_interval",
+            "MinimumFleetConstraintHandler": "minimum_fleet",
         }
 
         pattern_key = simplified_patterns.get(constraint_name)
@@ -585,3 +698,21 @@ class TransitOptimizationProblem(Problem):
             "variable_bounds": {"lower": self.xl, "upper": self.xu, "type": "integer"},
             "optimization_data_keys": list(self.optimization_data.keys()),
         }
+
+    def _get_constraint_name(self, constraint_idx: int) -> str:
+        """Get readable name for constraint by index."""
+        if constraint_idx < len(self.constraints):
+            constraint = self.constraints[constraint_idx]
+            return constraint.__class__.__name__.replace('ConstraintHandler', '')
+        return f"Constraint_{constraint_idx}"
+
+    def _get_interval_label(self, interval_idx: int) -> str:
+        """Get readable label for time interval."""
+        try:
+            if hasattr(self, 'optimization_data') and 'intervals' in self.optimization_data:
+                labels = self.optimization_data['intervals']['labels']
+                if interval_idx < len(labels):
+                    return labels[interval_idx]
+        except:
+            pass
+        return f"Period_{interval_idx}"

@@ -1064,8 +1064,35 @@ class PenaltySchedulingCallback(Callback):
         # Log progress
         if gen % 25 == 0 and hasattr(algorithm, 'pop'):
             if hasattr(algorithm.problem, 'use_penalty_method') and algorithm.problem.use_penalty_method:
+                # For penalty method: show both penalty weight AND feasible solutions
                 print(f"   Gen {gen}: Penalty weight = {self.current_penalty:.1f}")
+
+                # Calculate feasible solutions for penalty method
+                # Need to check if solutions would satisfy original constraints
+                pop_objectives = algorithm.pop.get("F").flatten()
+                feasible_count = 0
+
+                # For penalty method, we need to evaluate original constraints
+                # to determine feasibility (since G matrix isn't used)
+                if hasattr(algorithm.problem, 'constraints') and algorithm.problem.constraints:
+                    for i, solution_flat in enumerate(algorithm.pop.get("X")):
+                        solution_matrix = algorithm.problem.decode_solution(solution_flat)
+                        is_feasible = True
+
+                        for constraint in algorithm.problem.constraints:
+                            violations = constraint.evaluate(solution_matrix)
+                            if np.any(violations > 1e-6):  # Same tolerance as hard constraints
+                                is_feasible = False
+                                break
+
+                        if is_feasible:
+                            feasible_count += 1
+
+                pop_size = len(algorithm.pop)
+                print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
+
             else:
+                # For hard constraints: existing logic
                 feasible_count = np.sum(algorithm.pop.get("CV") <= 1e-6)
                 pop_size = len(algorithm.pop)
                 print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
@@ -1376,7 +1403,8 @@ class PSORunner:
             optimization_time = time.time() - start_time
             raise RuntimeError(f"PSO optimization failed after {optimization_time:.1f}s: {str(e)}") from e
 
-    def optimize_multi_run(self, optimization_data, num_runs: int | None = None) -> MultiRunResult:
+    def optimize_multi_run(self, optimization_data, num_runs: int | None = None,
+                           parallel: bool = False) -> MultiRunResult:
         """
         Run multiple independent PSO optimizations for statistical analysis.
         
@@ -1451,32 +1479,75 @@ class PSORunner:
             raise ValueError("Number of runs must be at least 1")
 
         print(f"🔄 STARTING MULTI-RUN PSO OPTIMIZATION ({runs_to_perform} runs)")
+        if parallel:
+            print("   🚀 Parallel execution enabled")
 
         start_time = time.time()
-        all_results = []        # Store successful results
-        best_result = None      # Track best result across runs
 
-        # Execute independent runs
-        for run_idx in range(runs_to_perform):
-            print(f"\n{'='*60}")
-            print(f"🏃 RUN {run_idx + 1}/{runs_to_perform}")
-            print(f"{'='*60}")
+        if parallel:
+            # Parallel execution using multiprocessing
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
-            try:
-                # Run single optimization (each run is independent)
-                result = self.optimize(optimization_data)
-                all_results.append(result)
+            # Determine number of workers (leave some cores free)
+            max_workers = min(runs_to_perform, max(1, mp.cpu_count() - 1))
+            print("🚀 PARALLEL EXECUTION:")
+            print(f"   👥 Using {max_workers} parallel workers")
+            print("   🔇 Individual run output suppressed for clarity")
+            print("   📊 Progress will be shown as runs complete\n")
 
-                # Update best result tracker (minimize objective)
-                if best_result is None or result.best_objective < best_result.best_objective:
-                    best_result = result
 
-                print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
+            all_results = []
+            completed_runs = 0
 
-            except Exception as e:
-                # Log failure but continue with remaining runs
-                print(f"❌ Run {run_idx + 1} failed: {str(e)}")
-                continue
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all runs
+                future_to_run = {
+                    executor.submit(self._run_single_optimization_for_parallel,
+                                optimization_data, run_idx + 1): run_idx + 1
+                    for run_idx in range(runs_to_perform)
+                }
+
+                # Collect results as they complete
+                for future in as_completed(future_to_run):
+                    run_idx = future_to_run[future]
+                    try:
+                        result = future.result()
+                        all_results.append(result)
+                        completed_runs += 1
+
+                        # Show clean progress update
+                        violations = result.constraint_violations
+                        feasible_status = "✅ Feasible" if violations['feasible'] else "❌ Infeasible"
+                        print(f"[{completed_runs:2d}/{runs_to_perform}] Run {run_idx:2d}: "
+                            f"Objective={result.best_objective:.6f}, "
+                            f"Gens={result.generations_completed:2d}, "
+                            f"Time={result.optimization_time:5.1f}s, {feasible_status}")
+                    except Exception as e:
+                        print(f"[{completed_runs+1:2d}/{runs_to_perform}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
+                        continue
+            print("\n✅ All parallel runs completed!")
+
+        else:
+            all_results = []        # Store successful results
+
+            # Execute independent runs
+            for run_idx in range(runs_to_perform):
+                print(f"\n{'='*60}")
+                print(f"🏃 RUN {run_idx + 1}/{runs_to_perform}")
+                print(f"{'='*60}")
+
+                try:
+                    # Run single optimization (each run is independent)
+                    result = self.optimize(optimization_data)
+                    all_results.append(result)
+
+                    print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
+
+                except Exception as e:
+                    # Log failure but continue with remaining runs
+                    print(f"❌ Run {run_idx + 1} failed: {str(e)}")
+                    continue
 
         total_time = time.time() - start_time
 
@@ -1486,6 +1557,10 @@ class PSORunner:
 
         # Generate statistical summary from successful runs
         statistical_summary = self._generate_statistical_summary(all_results)
+
+        # Find best result
+        best_result = min(all_results, key=lambda r: r.best_objective)
+
 
         # Print summary statistics
         print("\n🎯 MULTI-RUN OPTIMIZATION COMPLETED")
@@ -1502,6 +1577,34 @@ class PSORunner:
             total_time=total_time,
             num_runs_completed=len(all_results)
         )
+
+    def _run_single_optimization_for_parallel(self, optimization_data, run_number):
+        """Helper method for parallel execution of single optimization run."""
+        import io
+        import sys
+
+        try:
+            # Capture stdout to prevent interleaved output
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()  # Redirect to string buffer
+
+            # Create a new instance for thread safety
+            runner = PSORunner(self.config_manager)
+            result = runner.optimize(optimization_data)
+
+            # Restore stdout
+            sys.stdout = old_stdout
+
+            # Return result with run identifier
+            result.run_id = run_number
+            return result
+
+        except Exception as e:
+            # Restore stdout even on error
+            if 'old_stdout' in locals():
+                sys.stdout = old_stdout
+            raise RuntimeError(f"Run {run_number} failed: {str(e)}") from e
+
 
     def _create_problem(self):
         """
