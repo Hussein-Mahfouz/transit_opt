@@ -977,7 +977,7 @@ class PSORuntimeCallback(Callback):
         - Minimal computational overhead during optimization
     """
 
-    def __init__(self):
+    def __init__(self, monitoring_config, shared_progress, swarm_id):
         """
         Initialize callback with empty tracking structures.
         
@@ -989,6 +989,18 @@ class PSORuntimeCallback(Callback):
         self.start_time = None              # Will be set on first notify() call
         self.generation_times = []          # Cumulative timing for each generation
         self.inertia_weights = []          # Weight values (only for AdaptivePSO)
+        self.shared_progress = shared_progress  # Shared dict from multiprocessing.Manager
+        self.swarm_id = swarm_id
+
+        # Initialize shared progress for this swarm
+        if self.shared_progress is not None and self.swarm_id is not None:
+            self.shared_progress[self.swarm_id] = {
+                'current_generation': 0,
+                'max_generations': 50,  # Will be updated when we know the real value
+                'best_objective': float('inf'),
+                'start_time': time.time(),
+                'status': 'running'
+            }
 
     def notify(self, algorithm):
         """
@@ -1017,11 +1029,30 @@ class PSORuntimeCallback(Callback):
             - Updates inertia_weights if algorithm is AdaptivePSO
             - Sets start_time on first call
         """
+        current_gen = algorithm.n_gen
         current_time = time.time()
 
         # Initialize timing reference on first call
         if self.start_time is None:
             self.start_time = current_time
+
+        elapsed_time = current_time - self.start_time
+
+        # Update shared progress if available
+        if self.shared_progress is not None and self.swarm_id is not None:
+            pop_objectives = algorithm.pop.get("F").flatten()
+            best_obj = float(np.min(pop_objectives))
+
+            if hasattr(algorithm, 'termination') and hasattr(algorithm.termination, 'n_max_gen'):
+                max_generations = algorithm.termination.n_max_gen
+
+
+            self.shared_progress[self.swarm_id].update({
+                'current_generation': current_gen,
+                'max_generations': max_generations,
+                'best_objective': best_obj,
+                'elapsed_time': elapsed_time
+            })
 
         # Track inertia weight evolution for adaptive PSO
         if isinstance(algorithm, AdaptivePSO):
@@ -1278,7 +1309,8 @@ class PSORunner:
                     "Final inertia weight must be less than initial weight for adaptive PSO"
                 )
 
-    def optimize(self, optimization_data) -> OptimizationResult:
+    def optimize(self, optimization_data, shared_progress = None,
+                 swarm_id = None) -> OptimizationResult:
         """
         Run single PSO optimization with comprehensive result analysis.
         
@@ -1354,8 +1386,16 @@ class PSORunner:
 
         callbacks = []
 
+        # Get monitoring config for max generations
+        monitoring_config = self.config_manager.get_monitoring_config()
+
+
         # Add runtime monitoring callback
-        runtime_callback = PSORuntimeCallback()
+        runtime_callback = PSORuntimeCallback(
+            monitoring_config=monitoring_config,
+            shared_progress=shared_progress,
+            swarm_id=swarm_id
+        )
         callbacks.append(runtime_callback)
 
         # Add penalty scheduling callback if using penalty method with adaptive penalties
@@ -1395,10 +1435,19 @@ class PSORunner:
 
             optimization_time = time.time() - start_time
 
+            # Mark as completed in shared progress if available
+            if shared_progress is not None and swarm_id is not None:
+                shared_progress[swarm_id]['status'] = 'completed'
+
+
             # Process pymoo result into domain-specific format
             return self._process_single_result(result, runtime_callback, optimization_time)
 
         except Exception as e:
+            # Mark as failed in shared progress if available
+            if shared_progress is not None and swarm_id is not None:
+                shared_progress[swarm_id]['status'] = 'failed'
+
             # Provide context for optimization failures
             optimization_time = time.time() - start_time
             raise RuntimeError(f"PSO optimization failed after {optimization_time:.1f}s: {str(e)}") from e
@@ -1487,14 +1536,30 @@ class PSORunner:
         start_time = time.time()
 
         if parallel:
+            import multiprocessing as mp
             import os
+            import threading
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
             # Set environment variable to signal parallel execution
             os.environ['PARALLEL_EXECUTION'] = 'True'
 
+            # Create shared progress tracking
+            manager = mp.Manager()
+            shared_progress = manager.dict()
+            # Get max generations for progress monitoring
+            termination_config = self.config_manager.get_termination_config()
+            max_generations = termination_config.max_generations
+
+            # Start progress monitoring thread
+            progress_thread = threading.Thread(
+                target=self._monitor_parallel_progress,
+                args=(shared_progress, runs_to_perform, max_generations),
+                daemon=True
+            )
+            progress_thread.start()
+
             # Parallel execution using multiprocessing
-            import multiprocessing as mp
-            from concurrent.futures import ProcessPoolExecutor, as_completed
 
             # Determine number of workers (leave some cores free)
             max_workers = min(runs_to_perform, max(1, mp.cpu_count() - 1))
@@ -1515,7 +1580,8 @@ class PSORunner:
                     future = executor.submit(
                         self._run_single_optimization_with_unique_seed,
                         run_idx,
-                        optimization_data
+                        optimization_data,
+                        shared_progress
                     )
                     future_to_run[future] = run_idx + 1
 
@@ -1555,7 +1621,7 @@ class PSORunner:
 
                 try:
                     # Run single optimization (each run is independent)
-                    result = self._run_single_optimization_with_unique_seed(run_idx, optimization_data)
+                    result = self._run_single_optimization_with_unique_seed(run_idx, optimization_data, None)
                     all_results.append(result)
 
                     print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
@@ -1594,13 +1660,17 @@ class PSORunner:
             num_runs_completed=len(all_results)
         )
 
-    def _run_single_optimization_with_unique_seed(self, run_index: int, optimization_data: dict) -> OptimizationResult:
+    def _run_single_optimization_with_unique_seed(self, run_index: int,
+                                                  optimization_data: dict,
+                                                  shared_progress=None) -> OptimizationResult:
         """Run single optimization with unique random seed."""
         import os
         import random
         import sys
         import time
         from io import StringIO
+
+        from tqdm import tqdm
 
         # Generate unique seed based on current time and run index
         unique_seed = int(time.time() * 1000000) % (2**31) + run_index * 1000
@@ -1617,6 +1687,24 @@ class PSORunner:
         fresh_config_manager = OptimizationConfigManager(config_dict=self.config_manager.config)
         fresh_runner = PSORunner(fresh_config_manager)
 
+        # Get max generations for progress bar
+        max_generations = fresh_config_manager.get_termination_config().max_generations
+
+        # Create progress bar for this swarm
+        pbar = None
+        if not is_parallel:  # Only show progress bars for sequential execution
+            pbar = tqdm(
+                total=max_generations,
+                desc=f"Swarm {run_index + 1}",
+                position=run_index,
+                leave=True,
+                ncols=80,
+                bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} gen [{elapsed}<{remaining}]'
+            )
+
+            # Store progress bar in fresh runner for callback access
+            fresh_runner._progress_bar = pbar
+
         if is_parallel:
             # Suppress ALL output during parallel execution
             old_stdout = sys.stdout
@@ -1626,15 +1714,24 @@ class PSORunner:
             sys.stderr = devnull
 
             try:
-                result = fresh_runner.optimize(optimization_data)
+                result = fresh_runner.optimize(
+                    optimization_data,
+                    shared_progress=shared_progress,
+                    swarm_id=run_index
+                )
             finally:
                 # Always restore output
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
         else:
-            # Normal execution with output for sequential runs
+            # Normal execution with output and progress bar for sequential runs
             print(f"   🎲 Run {run_index + 1}: Using seed {unique_seed}")
-            result = fresh_runner.optimize(optimization_data)
+            try:
+                result = fresh_runner.optimize(optimization_data)
+            finally:
+                # Close progress bar when done
+                if pbar is not None:
+                    pbar.close()
 
         return result
 
@@ -1664,6 +1761,62 @@ class PSORunner:
             if 'old_stdout' in locals():
                 sys.stdout = old_stdout
             raise RuntimeError(f"Run {run_number} failed: {str(e)}") from e
+
+    def _monitor_parallel_progress(self, shared_progress, total_swarms, max_generations):
+        """Monitor progress of parallel swarms using tqdm."""
+        import time
+
+        from tqdm import tqdm
+
+        # Create progress bars for each swarm
+        progress_bars = {}
+        for swarm_id in range(total_swarms):
+            progress_bars[swarm_id] = tqdm(
+                total=max_generations,
+                desc=f"Swarm {swarm_id + 1}",
+                position=swarm_id,
+                leave=True,
+                ncols=100,
+                bar_format='{desc}: {percentage:3.0f}%|{bar}| {n}/{total} gen [{elapsed}<{remaining}] obj:{postfix}'
+            )
+
+        try:
+            while True:
+                # Update all progress bars
+                active_swarms = 0
+                for swarm_id in range(total_swarms):
+                    if swarm_id in shared_progress:
+                        progress_data = shared_progress[swarm_id]
+                        pbar = progress_bars[swarm_id]
+
+                        # Update progress bar
+                        current_gen = progress_data.get('current_generation', 0)
+                        best_obj = progress_data.get('best_objective', float('inf'))
+                        status = progress_data.get('status', 'running')
+
+                        if status == 'running':
+                            active_swarms += 1
+                            pbar.n = current_gen
+                            pbar.set_postfix_str(f"{best_obj:.4f}")
+                            pbar.refresh()
+                        elif status in ['completed', 'failed'] and not pbar.disable:
+                            pbar.n = pbar.total
+                            status_symbol = "✓" if status == 'completed' else "✗"
+                            pbar.set_postfix_str(f"{best_obj:.4f} {status_symbol}")
+                            pbar.close()
+
+                # Exit when all swarms complete
+                if active_swarms == 0:
+                    break
+
+                time.sleep(0.1)  # Update frequency
+
+        finally:
+            # Clean up any remaining progress bars
+            for pbar in progress_bars.values():
+                if not pbar.disable:
+                    pbar.close()
+
 
 
     def _create_problem(self):
