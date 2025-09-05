@@ -8,6 +8,4 @@ definitions to provide a complete optimization solution.
 
 from .pso_runner import PSORunner
 
-__all__ = [
-    'PSORunner'
-]
+__all__ = ["PSORunner"]

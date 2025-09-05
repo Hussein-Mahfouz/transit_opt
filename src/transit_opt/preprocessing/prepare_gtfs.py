@@ -349,9 +349,6 @@ class GTFSDataPreparator:
 
         logger.info(f"Successfully extracted {n_routes} routes for optimization")
 
-        # Analyze current fleet (baseline only)
-        fleet_analysis = self._analyze_current_fleet(route_data)
-
         # Create headway mappings
         allowed_values = np.array(allowed_headways + [9999.0], dtype=np.float64)
         headway_to_index = {float(h): i for i, h in enumerate(allowed_values)}
@@ -375,6 +372,9 @@ class GTFSDataPreparator:
         initial_solution = self._create_initial_solution(
             current_headways, headway_to_index
         )
+
+        # Analyze current fleet (baseline only)
+        fleet_analysis = self._analyze_current_fleet(route_data)
 
         # Log solution statistics
         total_cells = initial_solution.size
@@ -840,6 +840,23 @@ class GTFSDataPreparator:
             if len(large_differences) > 5:
                 logger.debug(f"  ... and {len(large_differences) - 5} more")
 
+        # Store discretized headways matrix for fleet analysis consistency
+        discretized_headways = np.zeros_like(current_headways, dtype=float)
+
+        for i in range(n_routes):
+            for j in range(n_intervals):
+                choice_idx = initial_solution[i, j]
+                if choice_idx == no_service_index:
+                    discretized_headways[i, j] = np.inf  # No service
+                else:
+                    discretized_headways[i, j] = allowed_headway_values[choice_idx]
+
+        # Store for use in fleet analysis
+        self._discretized_headways_matrix = discretized_headways
+        logger.debug(
+            "Stored discretized headways matrix for fleet analysis consistency"
+        )
+
         return initial_solution
 
     def _analyze_current_fleet(
@@ -945,23 +962,52 @@ class GTFSDataPreparator:
             f"Using operational buffer: {operational_buffer} ({(operational_buffer-1)*100:.0f}% extra time)"
         )
 
-        # Extract data for shared calculation
+        # Extract data for calculation
         round_trip_times = np.array([r["round_trip_time"] for r in route_data])
-        headways_matrix = np.array([r["headways_by_interval"] for r in route_data])
+        raw_headways_matrix = np.array([r["headways_by_interval"] for r in route_data])
 
-        # Use shared calculation logic (ensures consistency with optimization)
-        fleet_results = calculate_fleet_requirements(
-            headways_matrix=headways_matrix,
+        # CALCULATION 1: Raw GTFS headways (original baseline)
+        logger.debug("Calculating fleet with raw GTFS headways...")
+
+        raw_fleet_results = calculate_fleet_requirements(
+            headways_matrix=raw_headways_matrix,
             round_trip_times=round_trip_times,
             operational_buffer=operational_buffer,
-            no_service_threshold=self.no_service_threshold_minutes,  # Use GTFSDataPreparator's parameter
+            no_service_threshold=self.no_service_threshold_minutes,
         )
 
-        # Extract results from shared calculation
-        current_fleet_per_route = fleet_results["fleet_per_route"]
-        current_fleet_by_interval = fleet_results["fleet_per_interval"]
-        total_current_fleet_peak = fleet_results["total_peak_fleet"]
-        route_fleet_matrix = fleet_results["route_fleet_matrix"]  # For detailed logging
+        # CALCULATION 2: Discretized headways (constraint-consistent baseline)
+        logger.debug("Calculating fleet with discretized headways...")
+
+        # Use stored discretized matrix if available, otherwise apply threshold logic
+        if hasattr(self, "_discretized_headways_matrix"):
+            discretized_headways = self._discretized_headways_matrix
+            logger.debug("Using stored discretized headways matrix")
+        else:
+            # Fallback: apply threshold logic directly
+            discretized_headways = np.where(
+                (np.isnan(raw_headways_matrix))
+                | (raw_headways_matrix >= self.no_service_threshold_minutes),
+                np.inf,  # Mark as no-service
+                raw_headways_matrix,
+            )
+            logger.debug("Applied threshold logic for discretized headways")
+
+        # Calculate fleet requirements using discretized headways
+        discretized_fleet_results = calculate_fleet_requirements(
+            headways_matrix=discretized_headways,
+            round_trip_times=round_trip_times,
+            operational_buffer=operational_buffer,
+            no_service_threshold=self.no_service_threshold_minutes,
+        )
+
+        # Extract results (use discretized for optimization, keep raw for reporting)
+        current_fleet_per_route = discretized_fleet_results["fleet_per_route"]
+        current_fleet_by_interval = discretized_fleet_results["fleet_per_interval"]
+        total_current_fleet_peak = discretized_fleet_results["total_peak_fleet"]
+        route_fleet_matrix = discretized_fleet_results[
+            "route_fleet_matrix"
+        ]  # For detailed logging
         route_round_trip_times = round_trip_times
 
         # Calculate efficiency gain vs naive approach
@@ -993,7 +1039,20 @@ class GTFSDataPreparator:
         else:
             interval_utilization = [0.0] * n_intervals
 
-        # ===== KEEP ALL THE DETAILED LOGGING (unchanged) ===
+        # Log comparison between raw and discretized
+        raw_peak = raw_fleet_results["total_peak_fleet"]
+        discretized_peak = discretized_fleet_results["total_peak_fleet"]
+        logger.info("Fleet analysis completed:")
+        logger.info(f"  Raw GTFS peak fleet: {raw_peak} vehicles")
+        logger.info(
+            f"  Discretized peak fleet: {discretized_peak} vehicles (used for optimization)"
+        )
+        logger.info(f"  Difference: {discretized_peak - raw_peak:+d} vehicles")
+
+        if abs(discretized_peak - raw_peak) > 50:
+            logger.warning(
+                "Large discrepancy between raw and discretized fleet calculations!"
+            )
 
         # Per-route logging with debug info
         for route_idx, route in enumerate(route_data):
@@ -1043,6 +1102,16 @@ class GTFSDataPreparator:
             ),  # Total per interval
             "total_current_fleet_peak": total_current_fleet_peak,  # Realistic system total
             "route_round_trip_times": route_round_trip_times,  # For optimization use
+            # RAW GTFS BASELINE (for reporting/analysis).
+            "raw_fleet_analysis": {
+                "current_fleet_per_route": raw_fleet_results["fleet_per_route"].astype(
+                    int
+                ),
+                "current_fleet_by_interval": raw_fleet_results[
+                    "fleet_per_interval"
+                ].astype(int),
+                "total_current_fleet_peak": raw_fleet_results["total_peak_fleet"],
+            },
             # ===== CONFIGURATION PARAMETERS =====
             # Parameters that optimization classes might need to replicate calculations
             "operational_buffer": operational_buffer,  # Buffer factor used

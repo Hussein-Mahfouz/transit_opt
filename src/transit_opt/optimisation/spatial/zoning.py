@@ -582,6 +582,9 @@ class HexagonalZoneSystem:
         interval_idx: int | None = None,
         figsize=(15, 12),
         show_stops=True,
+        ax=None,
+        vmin=None,  # Add this parameter
+        vmax=None,  # Add this parameter
     ):
         """
         Create spatial visualization showing zones colored by vehicle count.
@@ -591,8 +594,11 @@ class HexagonalZoneSystem:
             optimization_data: Optimization data
             aggregation: 'average', 'peak', or 'intervals'
             interval_idx: Specific interval index (only used when aggregation='intervals')
-            figsize: Figure size
+            figsize: Figure size (only used if ax is None)
             show_stops: Whether to show transit stops
+            ax: Optional matplotlib axis to plot on
+            vmin: Minimum value for color scale (auto-calculated if None)
+            vmax: Maximum value for color scale (auto-calculated if None)
         """
         vehicles_data = self._vehicles_per_zone(solution_matrix, optimization_data)
 
@@ -615,7 +621,12 @@ class HexagonalZoneSystem:
         stops_geo = self.stops_gdf.to_crs("EPSG:4326")
 
         # Create the plot
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+            created_figure = True
+        else:
+            fig = ax.figure
+            created_figure = False
 
         # Plot zones with vehicle-based coloring
         if vehicles_per_zone.max() > 0:
@@ -627,6 +638,8 @@ class HexagonalZoneSystem:
                 edgecolor="black",
                 linewidth=0.5,
                 legend=True,
+                vmin=vmin,  # Set consistent minimum
+                vmax=vmax,  # Set consistent maximum
                 legend_kwds={
                     "label": "Vehicles per Zone",
                     "orientation": "vertical",
@@ -646,12 +659,7 @@ class HexagonalZoneSystem:
                 ax=ax, color="blue", markersize=0.8, alpha=0.6, label="Transit Stops"
             )
 
-        # Customize the plot
-        ax.set_title(
-            f"Spatial Transit Coverage {title_suffix}\n{len(zones_geo)} zones, {vehicles_per_zone.sum():.0f} total vehicles",
-            fontsize=14,
-            pad=20,
-        )
+        # Customize the plot (don't set title here - let caller do it)
         ax.set_xlabel("Longitude", fontsize=12)
         ax.set_ylabel("Latitude", fontsize=12)
 
@@ -684,11 +692,14 @@ class HexagonalZoneSystem:
             ]
             ax.legend(handles=legend_elements, loc="upper right")
 
-        # Set equal aspect ratio and tight layout
+        # Set equal aspect ratio
         ax.set_aspect("equal")
-        plt.tight_layout()
 
-        plt.show()
+        # Only show plot if we created the figure
+        if created_figure:
+            plt.tight_layout()
+            plt.show()
+
         return fig, ax
 
     def _create_stats_text(self, vehicles_per_zone):
