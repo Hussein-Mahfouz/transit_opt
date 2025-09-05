@@ -758,6 +758,7 @@ class OptimizationConfigManager:
 
         if config_path:
             self.config = self._load_yaml_config(config_path)
+            print("📋 Using loaded configuration file")
         else:
             self.config = config_dict
             print("📋 Using provided configuration dictionary")

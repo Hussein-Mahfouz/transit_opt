@@ -1471,6 +1471,8 @@ class PSORunner:
             - Best result is guaranteed feasible if any run produces feasible solution
             - Results can be used for ensemble methods or confidence intervals
         """
+        import time
+
         # Get run count from configuration or parameter
         multi_config = self.config_manager.get_multi_run_config()
         runs_to_perform = num_runs if num_runs is not None else multi_config.num_runs
@@ -1485,6 +1487,11 @@ class PSORunner:
         start_time = time.time()
 
         if parallel:
+            import os
+
+            # Set environment variable to signal parallel execution
+            os.environ['PARALLEL_EXECUTION'] = 'True'
+
             # Parallel execution using multiprocessing
             import multiprocessing as mp
             from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -1501,12 +1508,16 @@ class PSORunner:
             completed_runs = 0
 
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all runs
-                future_to_run = {
-                    executor.submit(self._run_single_optimization_for_parallel,
-                                optimization_data, run_idx + 1): run_idx + 1
-                    for run_idx in range(runs_to_perform)
-                }
+                # Submit all runs with unique seeds
+                future_to_run = {}
+                for run_idx in range(runs_to_perform):
+                    # Each submission gets a unique seed
+                    future = executor.submit(
+                        self._run_single_optimization_with_unique_seed,
+                        run_idx,
+                        optimization_data
+                    )
+                    future_to_run[future] = run_idx + 1
 
                 # Collect results as they complete
                 for future in as_completed(future_to_run):
@@ -1526,9 +1537,14 @@ class PSORunner:
                     except Exception as e:
                         print(f"[{completed_runs+1:2d}/{runs_to_perform}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
                         continue
+            # Clean up environment variable
+            os.environ.pop('PARALLEL_EXECUTION', None)
             print("\n✅ All parallel runs completed!")
 
         else:
+            # Ensure environment variable is not set for sequential execution
+            os.environ.pop('PARALLEL_EXECUTION', None)
+            # Sequential execution with unique seeds
             all_results = []        # Store successful results
 
             # Execute independent runs
@@ -1539,7 +1555,7 @@ class PSORunner:
 
                 try:
                     # Run single optimization (each run is independent)
-                    result = self.optimize(optimization_data)
+                    result = self._run_single_optimization_with_unique_seed(run_idx, optimization_data)
                     all_results.append(result)
 
                     print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
@@ -1577,6 +1593,50 @@ class PSORunner:
             total_time=total_time,
             num_runs_completed=len(all_results)
         )
+
+    def _run_single_optimization_with_unique_seed(self, run_index: int, optimization_data: dict) -> OptimizationResult:
+        """Run single optimization with unique random seed."""
+        import os
+        import random
+        import sys
+        import time
+        from io import StringIO
+
+        # Generate unique seed based on current time and run index
+        unique_seed = int(time.time() * 1000000) % (2**31) + run_index * 1000
+
+        # Set random seeds for reproducible diversity
+        random.seed(unique_seed)
+        np.random.seed(unique_seed)
+
+        # Check if we're in parallel execution mode
+        is_parallel = os.getenv('PARALLEL_EXECUTION', 'False') == 'True'
+
+        # Create fresh config manager and runner for this run
+        from ..config.config_manager import OptimizationConfigManager
+        fresh_config_manager = OptimizationConfigManager(config_dict=self.config_manager.config)
+        fresh_runner = PSORunner(fresh_config_manager)
+
+        if is_parallel:
+            # Suppress ALL output during parallel execution
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            devnull = StringIO()
+            sys.stdout = devnull
+            sys.stderr = devnull
+
+            try:
+                result = fresh_runner.optimize(optimization_data)
+            finally:
+                # Always restore output
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+        else:
+            # Normal execution with output for sequential runs
+            print(f"   🎲 Run {run_index + 1}: Using seed {unique_seed}")
+            result = fresh_runner.optimize(optimization_data)
+
+        return result
 
     def _run_single_optimization_for_parallel(self, optimization_data, run_number):
         """Helper method for parallel execution of single optimization run."""
