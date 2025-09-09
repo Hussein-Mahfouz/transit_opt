@@ -53,6 +53,7 @@ This provides a complete optimization solution without duplicating existing
 functionality or requiring changes to your current constraint/objective code.
 """
 
+import gc
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -1097,6 +1098,22 @@ class PenaltySchedulingCallback(Callback):
                 pop_size = len(algorithm.pop)
                 print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
 
+class MemoryManagementCallback(Callback):
+    """Callback for periodic garbage collection during optimization."""
+
+    def __init__(self, gc_frequency: int = 10):
+        super().__init__()
+        self.gc_frequency = gc_frequency
+        self.last_gc_generation = 0
+
+    def notify(self, algorithm):
+        """Run garbage collection every gc_frequency generations."""
+        current_gen = getattr(algorithm, 'n_gen', 0)
+
+        if current_gen - self.last_gc_generation >= self.gc_frequency:
+            gc.collect()
+            self.last_gc_generation = current_gen
+
 class CallbackCollection(Callback):
     """
     Wrapper to handle multiple callbacks for pymoo.
@@ -1358,6 +1375,10 @@ class PSORunner:
         runtime_callback = PSORuntimeCallback()
         callbacks.append(runtime_callback)
 
+        # Memory management callback
+        memory_callback = MemoryManagementCallback()
+        callbacks.append(memory_callback)
+
         # Add penalty scheduling callback if using penalty method with adaptive penalties
         pso_config = self.config_manager.get_pso_config()
         if (hasattr(self.problem, 'use_penalty_method') and
@@ -1404,7 +1425,7 @@ class PSORunner:
             raise RuntimeError(f"PSO optimization failed after {optimization_time:.1f}s: {str(e)}") from e
 
     def optimize_multi_run(self, optimization_data, num_runs: int | None = None,
-                           parallel: bool = False) -> MultiRunResult:
+                           parallel: bool = False, memory_efficient: bool = True) -> MultiRunResult:
         """
         Run multiple independent PSO optimizations for statistical analysis.
         
@@ -1434,6 +1455,12 @@ class PSORunner:
             num_runs (int | None, optional): Number of independent runs to execute.
                                            If None, uses value from configuration.
                                            Must be >= 1.
+            parallel (bool, optional): If True, runs are executed in parallel
+                                       using multiprocessing. Default is False.
+            memory_efficient (bool, optional): Enable memory optimizations. Defaults to True.
+                                         - True: Disable save_history, enable GC
+                                         - False: Original behavior with full history
+            
                                            
         Returns:
             MultiRunResult: Statistical analysis of all runs containing:
@@ -1480,94 +1507,25 @@ class PSORunner:
         if runs_to_perform < 1:
             raise ValueError("Number of runs must be at least 1")
 
+
         print(f"🔄 STARTING MULTI-RUN PSO OPTIMIZATION ({runs_to_perform} runs)")
+        if memory_efficient:
+            print("   💾 Memory-efficient mode enabled")
         if parallel:
             print("   🚀 Parallel execution enabled")
 
         start_time = time.time()
 
         if parallel:
-            import os
-
-            # Set environment variable to signal parallel execution
-            os.environ['PARALLEL_EXECUTION'] = 'True'
-
-            # Parallel execution using multiprocessing
-            import multiprocessing as mp
-            from concurrent.futures import ProcessPoolExecutor, as_completed
-
-            # Determine number of workers (leave some cores free)
-            max_workers = min(runs_to_perform, max(1, mp.cpu_count() - 1))
-            print("🚀 PARALLEL EXECUTION:")
-            print(f"   👥 Using {max_workers} parallel workers")
-            print("   🔇 Individual run output suppressed for clarity")
-            print("   📊 Progress will be shown as runs complete\n")
-
-
-            all_results = []
-            completed_runs = 0
-
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all runs with unique seeds
-                future_to_run = {}
-                for run_idx in range(runs_to_perform):
-                    # Each submission gets a unique seed
-                    future = executor.submit(
-                        self._run_single_optimization_with_unique_seed,
-                        run_idx,
-                        optimization_data
-                    )
-                    future_to_run[future] = run_idx + 1
-
-                # Collect results as they complete
-                for future in as_completed(future_to_run):
-                    run_idx = future_to_run[future]
-                    try:
-                        result = future.result()
-                        all_results.append(result)
-                        completed_runs += 1
-
-                        # Show clean progress update
-                        violations = result.constraint_violations
-                        feasible_status = "✅ Feasible" if violations['feasible'] else "❌ Infeasible"
-                        print(f"[{completed_runs:2d}/{runs_to_perform}] Run {run_idx:2d}: "
-                            f"Objective={result.best_objective:.6f}, "
-                            f"Gens={result.generations_completed:2d}, "
-                            f"Time={result.optimization_time:5.1f}s, {feasible_status}")
-                    except Exception as e:
-                        print(f"[{completed_runs+1:2d}/{runs_to_perform}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
-                        continue
-            # Clean up environment variable
-            os.environ.pop('PARALLEL_EXECUTION', None)
-            print("\n✅ All parallel runs completed!")
-
+            # Add memory_efficient parameter to parallel execution
+            all_results = self._run_parallel_with_memory_control(optimization_data, runs_to_perform, memory_efficient)
         else:
-            # Ensure environment variable is not set for sequential execution
-            os.environ.pop('PARALLEL_EXECUTION', None)
-            # Sequential execution with unique seeds
-            all_results = []        # Store successful results
+            # Add memory_efficient parameter to sequential execution
+            all_results = self._run_sequential_with_memory_control(optimization_data, runs_to_perform, memory_efficient)
 
-            # Execute independent runs
-            for run_idx in range(runs_to_perform):
-                print(f"\n{'='*60}")
-                print(f"🏃 RUN {run_idx + 1}/{runs_to_perform}")
-                print(f"{'='*60}")
-
-                try:
-                    # Run single optimization (each run is independent)
-                    result = self._run_single_optimization_with_unique_seed(run_idx, optimization_data)
-                    all_results.append(result)
-
-                    print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
-
-                except Exception as e:
-                    # Log failure but continue with remaining runs
-                    print(f"❌ Run {run_idx + 1} failed: {str(e)}")
-                    continue
 
         total_time = time.time() - start_time
 
-        # Check if any runs succeeded
         if not all_results:
             raise RuntimeError("All optimization runs failed")
 
@@ -1577,14 +1535,10 @@ class PSORunner:
         # Find best result
         best_result = min(all_results, key=lambda r: r.best_objective)
 
-
-        # Print summary statistics
         print("\n🎯 MULTI-RUN OPTIMIZATION COMPLETED")
         print(f"   Successful runs: {len(all_results)}/{runs_to_perform}")
         print(f"   Total time: {total_time:.1f}s")
-        print(f"   Best objective: {best_result.best_objective:.6f}")
-        print(f"   Mean objective: {statistical_summary['objective_mean']:.6f}")
-        print(f"   Std objective: {statistical_summary['objective_std']:.6f}")
+        print(f"   Memory mode: {'Efficient' if memory_efficient else 'Full'}")
 
         return MultiRunResult(
             best_result=best_result,
@@ -1594,8 +1548,93 @@ class PSORunner:
             num_runs_completed=len(all_results)
         )
 
-    def _run_single_optimization_with_unique_seed(self, run_index: int, optimization_data: dict) -> OptimizationResult:
+    def _run_parallel_with_memory_control(self, optimization_data, num_runs: int, memory_efficient: bool):
+        """Execute parallel runs with optional memory management."""
+        import gc
+        import multiprocessing as mp
+        import os
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        # Set environment variable
+        os.environ['PARALLEL_EXECUTION'] = 'True'
+
+        max_workers = min(num_runs, max(1, mp.cpu_count() - 1))
+        print(f"   👥 Using {max_workers} parallel workers")
+
+        all_results = []
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all runs
+            future_to_run = {}
+            for run_idx in range(num_runs):
+                future = executor.submit(
+                    self._run_single_optimization_with_unique_seed,
+                    run_idx,
+                    optimization_data,
+                    memory_efficient  # Pass the memory_efficient flag
+                )
+                future_to_run[future] = run_idx + 1
+
+            # Collect results
+            completed_runs = 0
+            for future in as_completed(future_to_run):
+                run_idx = future_to_run[future]
+                try:
+                    result = future.result()
+                    all_results.append(result)
+                    completed_runs += 1
+
+                    violations = result.constraint_violations
+                    feasible_status = "✅ Feasible" if violations['feasible'] else "❌ Infeasible"
+                    print(f"[{completed_runs:2d}/{num_runs}] Run {run_idx:2d}: "
+                        f"Objective={result.best_objective:.6f}, {feasible_status}")
+
+                    # Force garbage collection in memory-efficient mode
+                    if memory_efficient:
+                        gc.collect()
+
+                except Exception as e:
+                    print(f"[{completed_runs+1:2d}/{num_runs}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
+
+        # Clean up
+        os.environ.pop('PARALLEL_EXECUTION', None)
+        if memory_efficient:
+            gc.collect()
+
+        return all_results
+
+    def _run_sequential_with_memory_control(self, optimization_data, num_runs: int, memory_efficient: bool):
+        """Execute sequential runs with optional memory management."""
+        import gc
+
+        all_results = []
+
+        for run_idx in range(num_runs):
+            print(f"\n{'='*60}")
+            print(f"🏃 RUN {run_idx + 1}/{num_runs}")
+            print(f"{'='*60}")
+
+            try:
+                result = self._run_single_optimization_with_unique_seed(
+                    run_idx, optimization_data, memory_efficient
+                )
+
+                all_results.append(result)
+                print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
+
+                # Force garbage collection in memory-efficient mode
+                if memory_efficient:
+                    gc.collect()
+
+            except Exception as e:
+                print(f"❌ Run {run_idx + 1} failed: {str(e)}")
+
+        return all_results
+
+    def _run_single_optimization_with_unique_seed(self, run_index: int, optimization_data: dict,
+                                                  memory_efficient: bool = True) -> OptimizationResult:
         """Run single optimization with unique random seed."""
+        import gc
         import os
         import random
         import sys
@@ -1609,16 +1648,29 @@ class PSORunner:
         random.seed(unique_seed)
         np.random.seed(unique_seed)
 
-        # Check if we're in parallel execution mode
+        # Check execution mode
         is_parallel = os.getenv('PARALLEL_EXECUTION', 'False') == 'True'
 
-        # Create fresh config manager and runner for this run
+        # Create fresh config manager with memory settings
         from ..config.config_manager import OptimizationConfigManager
-        fresh_config_manager = OptimizationConfigManager(config_dict=self.config_manager.config)
+        fresh_config_dict = self.config_manager.config.copy()
+
+        # Apply memory-efficient settings if requested
+        if memory_efficient:
+            if 'optimization' not in fresh_config_dict:
+                fresh_config_dict['optimization'] = {}
+            if 'monitoring' not in fresh_config_dict['optimization']:
+                fresh_config_dict['optimization']['monitoring'] = {}
+
+            # KEY MEMORY OPTIMIZATION: Disable history saving
+            fresh_config_dict['optimization']['monitoring']['save_history'] = False
+            fresh_config_dict['optimization']['monitoring']['detailed_logging'] = False
+
+        fresh_config_manager = OptimizationConfigManager(config_dict=fresh_config_dict)
         fresh_runner = PSORunner(fresh_config_manager)
 
         if is_parallel:
-            # Suppress ALL output during parallel execution
+            # Suppress output during parallel execution
             old_stdout = sys.stdout
             old_stderr = sys.stderr
             devnull = StringIO()
@@ -1628,16 +1680,22 @@ class PSORunner:
             try:
                 result = fresh_runner.optimize(optimization_data)
             finally:
-                # Always restore output
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
         else:
-            # Normal execution with output for sequential runs
             print(f"   🎲 Run {run_index + 1}: Using seed {unique_seed}")
+            if memory_efficient:
+                print("   💾 Memory-efficient mode: save_history=False")
             result = fresh_runner.optimize(optimization_data)
 
-        return result
+        # Clean up and force garbage collection
+        del fresh_runner
+        del fresh_config_manager
 
+        if memory_efficient:
+            gc.collect()
+
+        return result
     def _run_single_optimization_for_parallel(self, optimization_data, run_number):
         """Helper method for parallel execution of single optimization run."""
         import io

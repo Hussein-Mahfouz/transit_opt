@@ -488,7 +488,6 @@ class MonitoringConfig:
         save_history: Whether to save complete optimization history
             - True: Enables detailed post-optimization analysis but uses more memory
             - False: Saves memory but limits post-optimization analysis
-            - Always True for production analysis, False only for memory-limited scenarios
 
         checkpoint_frequency: Save checkpoint every N generations
             - Enables recovery from crashes for long optimizations
@@ -507,7 +506,7 @@ class MonitoringConfig:
             - 'DEBUG': Log detailed debugging information
 
     Memory and Performance Considerations:
-        - save_history=True: ~1MB per 100 generations for typical problems
+        - save_history=True: 
         - detailed_logging=True: ~10x more log output
         - checkpoint_frequency>0: ~500KB per checkpoint
 
@@ -542,7 +541,7 @@ class MonitoringConfig:
     """
 
     progress_frequency: int = 10
-    save_history: bool = True
+    save_history: bool = False
     checkpoint_frequency: int = 0  # Sensible default (no checkpoints)
     detailed_logging: bool = False
     log_level: str = "INFO"
@@ -875,7 +874,7 @@ class OptimizationConfigManager:
         mon_config = opt_config.get("monitoring", {})
         self.monitoring_config = MonitoringConfig(
             progress_frequency=mon_config.get("progress_frequency", 10),
-            save_history=mon_config.get("save_history", True),
+            save_history=mon_config.get("save_history", False),
             checkpoint_frequency=mon_config.get("checkpoint_frequency", 0),
             detailed_logging=mon_config.get("detailed_logging", False),
             log_level=mon_config.get("log_level", "INFO"),
