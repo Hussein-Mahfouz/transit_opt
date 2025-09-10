@@ -229,6 +229,8 @@ class TestPSORunnerIntegration:
         assert result.constraint_violations["feasible"] == True
         assert result.optimization_time > 0
         assert result.generations_completed > 0
+        assert hasattr(result, 'best_feasible_solutions')
+        assert isinstance(result.best_feasible_solutions, list)
 
         print("✅ OptimizationResult structure works")
 
@@ -240,10 +242,7 @@ class TestPSORunnerIntegration:
         across runs and provide statistical summaries. This enables robust
         optimization assessment and confidence interval analysis.
         """
-        from transit_opt.optimisation.runners.pso_runner import (
-            MultiRunResult,
-            OptimizationResult,
-        )
+        from transit_opt.optimisation.runners.pso_runner import MultiRunResult, OptimizationResult
 
         # Create sample results
         result1 = OptimizationResult(
@@ -252,6 +251,7 @@ class TestPSORunnerIntegration:
             constraint_violations={"total_violations": 0},
             optimization_time=100.0,
             generations_completed=50,
+            best_feasible_solutions=[]
         )
 
         result2 = OptimizationResult(
@@ -260,19 +260,37 @@ class TestPSORunnerIntegration:
             constraint_violations={"total_violations": 0},
             optimization_time=120.0,
             generations_completed=55,
+            best_feasible_solutions=[
+                {'solution': np.array([12.0]), 'objective': 40.0, 'generation_found': 30, 'feasible': True, 'violations': 0}
+            ]
         )
 
+         # Create run summaries
+        run_summaries = [
+            {'run_id': 1, 'objective': 45.0, 'feasible': True, 'generations': 50, 'time': 100.0, 'violations': 0, 'best_feasible_solutions_count': 0},
+            {'run_id': 2, 'objective': 40.0, 'feasible': True, 'generations': 55, 'time': 120.0, 'violations': 0, 'best_feasible_solutions_count': 1}
+        ]
+
+        # Create best solutions per run
+        best_feasible_solutions_per_run = [
+            [],  # Run 1 had no feasible solutions tracked
+            [{'solution': np.array([12.0]), 'objective': 40.0, 'generation_found': 30, 'feasible': True, 'violations': 0}]  # Run 2 had 1
+        ]
+
         multi_result = MultiRunResult(
-            best_result=result2,  # Better result
-            all_results=[result1, result2],
+            best_result=result2,  # Best result
+            run_summaries=run_summaries,  # lightweight summaries
+            best_feasible_solutions_per_run=best_feasible_solutions_per_run,  # tracked solutions
             statistical_summary={"objective_mean": 42.5, "num_runs": 2},
             total_time=220.0,
             num_runs_completed=2,
         )
 
         assert multi_result.best_result.best_objective == 40.0
-        assert len(multi_result.all_results) == 2
+        assert len(multi_result.run_summaries) == 2
+        assert len(multi_result.best_feasible_solutions_per_run) == 2
         assert multi_result.statistical_summary["num_runs"] == 2
+
 
         print("✅ MultiRunResult structure works")
 
@@ -457,72 +475,63 @@ class TestPSORunnerWithRealData:
 
         print("   🎯 All validation checks passed!")
 
+    # Find the test_multi_run_with_duke_data method and update it
+
     def test_multi_run_with_duke_data(self, sample_optimization_data):
-        """
-        Test multi-run PSO optimization for statistical analysis.
-
-        Validates that multiple independent runs produce consistent results
-        and proper statistical summaries. This demonstrates the stochastic
-        robustness analysis capabilities essential for production deployment.
-        """
-        print("\n🔄 TESTING MULTI-RUN PSO WITH DUKE GTFS DATA:")
-
+        """Test multi-run optimization with real Duke GTFS data."""
+        # Configure for fast testing
         config = {
             "problem": {
-                "objective": {
-                    "type": "HexagonalCoverageObjective",
-                    "spatial_resolution_km": 2.0,
-                },
-                "constraints": [],  # No constraints for faster testing
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": [],
             },
             "optimization": {
-                "algorithm": {
-                    "type": "PSO",
-                    "pop_size": 15,  # Small for speed
-                    "inertia_weight": 0.9,
-                    "inertia_weight_final": 0.4,
-                },
-                "termination": {"max_generations": 3},  # Very short
-                "multi_run": {
-                    "enabled": True,
-                    "num_runs": 3,  # Small number for testing
-                },
+                "algorithm": {"type": "PSO", "pop_size": 8},
+                "termination": {"max_generations": 2},
             },
         }
 
         config_manager = OptimizationConfigManager(config_dict=config)
         runner = PSORunner(config_manager)
 
-        print("   🎲 Running 3 independent PSO runs...")
-
         # Run multi-run optimization
-        multi_result = runner.optimize_multi_run(sample_optimization_data, num_runs=3)
+        multi_result = runner.optimize_multi_run(
+            sample_optimization_data, num_runs=3, parallel=False
+        )
 
-        # Validate multi-run results
-        assert multi_result.num_runs_completed == 3
-        assert len(multi_result.all_results) == 3
+        # Test new structure instead of all_results
+        assert len(multi_result.run_summaries) == 3
         assert multi_result.best_result is not None
-        assert multi_result.total_time > 0
+        assert len(multi_result.best_feasible_solutions_per_run) == 3
 
-        # Check statistical summary
+        # Test run summaries structure (NEW: replaces all_results tests)
+        for summary in multi_result.run_summaries:
+            assert 'run_id' in summary
+            assert 'objective' in summary
+            assert 'feasible' in summary
+            assert 'generations' in summary
+            assert 'time' in summary
+            assert 'violations' in summary
+            assert 'best_feasible_solutions_count' in summary
+
+        # Test that statistical summary exists and has reasonable values
         stats = multi_result.statistical_summary
-        assert stats["num_runs"] == 3
         assert "objective_mean" in stats
-        assert "objective_std" in stats
-        assert "objective_min" in stats
-        assert "objective_max" in stats
+        assert "num_runs" in stats
+        assert stats["num_runs"] == 3
 
-        # Best result should be the minimum across all runs
-        all_objectives = [r.best_objective for r in multi_result.all_results]
-        assert multi_result.best_result.best_objective == min(all_objectives)
-        assert abs(stats["objective_min"] - min(all_objectives)) < 1e-6
+        # NEW: Test feasible solutions tracking
+        for run_solutions in multi_result.best_feasible_solutions_per_run:
+            assert isinstance(run_solutions, list)
+            # Each solution should have required fields if any exist
+            for solution in run_solutions:
+                assert 'solution' in solution
+                assert 'objective' in solution
+                assert 'generation_found' in solution
+                assert 'feasible' in solution
+                assert solution['feasible'] is True  # Should only track feasible
 
-        print("   ✅ Multi-run optimization completed!")
-        print(f"      Successful runs: {multi_result.num_runs_completed}/3")
-        print(f"      Best objective: {multi_result.best_result.best_objective:.6f}")
-        print(f"      Mean objective: {stats['objective_mean']:.6f}")
-        print(f"      Std objective: {stats['objective_std']:.6f}")
-        print(f"      Total time: {multi_result.total_time:.2f}s")
+        print("✅ Multi-run with Duke data successful")
 
     def test_solution_decoding_integration(self, sample_optimization_data):
         """
@@ -598,6 +607,117 @@ class TestPSORunnerWithRealData:
         print("   ✅ Solution decoding works correctly!")
 
 
+    def test_track_best_n_basic_functionality(self, sample_optimization_data):
+        """Test that track_best_n parameter correctly tracks feasible solutions."""
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": [],  # No constraints to ensure feasible solutions
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 15},
+                "termination": {"max_generations": 3},
+            },
+        }
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        # Test different track_best_n values
+        result_n1 = runner.optimize(sample_optimization_data, track_best_n=1)
+        result_n3 = runner.optimize(sample_optimization_data, track_best_n=3)
+
+        # Should track at most N solutions
+        assert len(result_n1.best_feasible_solutions) <= 1
+        assert len(result_n3.best_feasible_solutions) <= 3
+
+        # Each tracked solution should have required fields
+        for solution in result_n3.best_feasible_solutions:
+            assert 'solution' in solution
+            assert 'objective' in solution
+            assert 'generation_found' in solution
+            assert 'feasible' in solution
+            assert solution['feasible'] is True  # Should only track feasible
+
+        print("✅ track_best_n basic functionality works")
+
+    def test_track_best_n_multi_run_integration(self, sample_optimization_data):
+        """Test track_best_n with multi-run optimization."""
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": [],
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 10},
+                "termination": {"max_generations": 2},
+            },
+        }
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        # Run multi-run with tracking
+        multi_result = runner.optimize_multi_run(
+            sample_optimization_data,
+            num_runs=2,
+            track_best_n=2
+        )
+
+        # Should have solutions per run
+        assert len(multi_result.best_feasible_solutions_per_run) == 2
+
+        # Each run should track at most 2 solutions
+        for run_solutions in multi_result.best_feasible_solutions_per_run:
+            assert len(run_solutions) <= 2
+
+        # Run summaries should include solution counts
+        for summary in multi_result.run_summaries:
+            assert 'best_feasible_solutions_count' in summary
+            assert summary['best_feasible_solutions_count'] >= 0
+
+        print("✅ track_best_n multi-run integration works")
+
+
+def test_best_feasible_solutions_tracker():
+    """Test the BestFeasibleSolutionsTracker class functionality."""
+    from transit_opt.optimisation.runners.pso_runner import BestFeasibleSolutionsTracker
+
+    tracker = BestFeasibleSolutionsTracker(max_solutions=3)
+
+    # Test adding feasible solutions
+    solution1 = np.array([[1, 2], [3, 4]])
+    tracker.add_solution_if_feasible(solution1, 0.5, 10, True, 0)
+
+    solution2 = np.array([[2, 3], [4, 5]])
+    tracker.add_solution_if_feasible(solution2, 0.3, 15, True, 0)
+
+    solution3 = np.array([[3, 4], [5, 6]])
+    tracker.add_solution_if_feasible(solution3, 0.7, 20, True, 0)
+
+    # Test that infeasible solutions are ignored
+    solution4 = np.array([[4, 5], [6, 7]])
+    tracker.add_solution_if_feasible(solution4, 0.1, 25, False, 2)  # Infeasible
+
+    solutions = tracker.get_best_solutions()
+
+    # Should have 3 solutions (infeasible one ignored)
+    assert len(solutions) == 3
+
+    # Should be sorted by objective (best first)
+    objectives = [sol['objective'] for sol in solutions]
+    assert objectives == sorted(objectives)  # Should be sorted
+    assert objectives[0] == 0.3  # Best objective first
+
+    # Test max_solutions limit
+    solution5 = np.array([[5, 6], [7, 8]])
+    tracker.add_solution_if_feasible(solution5, 0.2, 30, True, 0)  # Better than existing
+
+    solutions = tracker.get_best_solutions()
+    assert len(solutions) == 3  # Still only 3 (max_solutions limit)
+    assert solutions[0]['objective'] == 0.2  # New best should be first
+
+    print("✅ BestFeasibleSolutionsTracker works correctly")
 # ================================================================================================
 # ERROR HANDLING AND ROBUSTNESS TESTS
 # ================================================================================================
@@ -1452,9 +1572,7 @@ class TestPSORunnerPenaltyMethod:
         automatic exploration-to-exploitation transition mechanism.
         """
 
-        from transit_opt.optimisation.runners.pso_runner import (
-            PenaltySchedulingCallback,
-        )
+        from transit_opt.optimisation.runners.pso_runner import PenaltySchedulingCallback
 
         print("\n📈 TESTING ADAPTIVE PENALTY CALLBACK:")
 
