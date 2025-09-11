@@ -1732,10 +1732,15 @@ class PSORunner:
 
             try:
                 result = fresh_runner.optimize(optimization_data, track_best_n = track_best_n)
+
             finally:
                 # Always restore output
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
+
+                # Always cleanup regardless of success/failure
+                import gc
+                gc.collect()
         else:
             # Normal execution with output for sequential runs
             print(f"   🎲 Run {run_index + 1}: Using seed {unique_seed}")
