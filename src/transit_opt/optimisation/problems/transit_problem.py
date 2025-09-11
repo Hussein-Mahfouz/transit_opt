@@ -716,3 +716,39 @@ class TransitOptimizationProblem(Problem):
         except:
             pass
         return f"Period_{interval_idx}"
+
+
+    def is_feasible(self, solution_flat: np.ndarray) -> bool:
+        """
+        Check if a solution satisfies all constraints.
+        
+        Leverages existing constraint evaluation logic from evaluate_single_solution
+        for consistency and code reuse.
+        
+        Args:
+            solution_flat: Flat solution vector from particle
+            
+        Returns:
+            bool: True if solution is feasible (satisfies all constraints)
+        """
+        if not self.constraints:
+            return True  # No constraints means always feasible
+
+        # Decode and use existing evaluation logic
+        solution_matrix = self.decode_solution(solution_flat)
+
+        # Use existing constraint evaluation logic
+        for constraint in self.constraints:
+            try:
+                violations = constraint.evaluate(solution_matrix)
+
+                # Check if any constraint is violated
+                if np.any(violations > 0):
+                    return False
+
+
+            except Exception:
+                # If constraint evaluation fails, consider infeasible
+                return False
+
+        return True  # All constraints satisfied
