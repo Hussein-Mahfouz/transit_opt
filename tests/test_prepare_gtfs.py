@@ -221,7 +221,7 @@ class TestGTFSDataPreparator:
         # We'll create 3 routes with different service patterns to test various scenarios
         route_data = [
             {  # ROUTE 1: Morning peak route
-                "service_id": "route_1",
+                "route_id": "route_1",
                 "round_trip_time": 60.0,  # 1 hour round-trip
                 "headways_by_interval": np.array(
                     [
@@ -233,7 +233,7 @@ class TestGTFSDataPreparator:
                 ),
             },
             {  # ROUTE 2: Evening peak route (staggered from Route 1)
-                "service_id": "route_2",
+                "route_id": "route_2",
                 "round_trip_time": 120.0,  # 2 hour round-trip (longer route)
                 "headways_by_interval": np.array(
                     [
@@ -245,7 +245,7 @@ class TestGTFSDataPreparator:
                 ),
             },
             {  # ROUTE 3: No service route (edge case)
-                "service_id": "route_3",
+                "route_id": "route_3",
                 "round_trip_time": 40.0,  # Short round-trip (doesn't matter - no service)
                 "headways_by_interval": np.array(
                     [
