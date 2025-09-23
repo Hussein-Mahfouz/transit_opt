@@ -425,8 +425,11 @@ class GTFSDataPreparator:
                 },
             },
             "reconstruction": {
-                "gtfs_feed": self.feed,
-                "route_mapping": {route_id: i for i, route_id in enumerate(route_ids)},
+                "gtfs_feed": self._create_filtered_gtfs_feed(),
+                "route_mapping": {route_id: idx for idx, route_id in enumerate(route_ids)},
+                "routes_df": self.routes_df,     # Direct access to processed routes
+                "trips_df": self.trips_df,       # Direct access to processed trips
+                "stop_times_df": self.stop_times_df  # Direct access to processed stop times
             },
         }
 
@@ -1191,3 +1194,25 @@ class GTFSDataPreparator:
                 return float(time_value)
         except Exception:
             return np.nan
+
+
+    def _create_filtered_gtfs_feed(self):
+        """Create a GTFS feed containing only the processed/filtered data."""
+        import copy
+
+        # Create a copy of the original feed structure
+        filtered_feed = copy.deepcopy(self.feed)
+
+        # Replace with filtered dataframes that match optimization data
+        filtered_feed.routes = self.routes_df
+        filtered_feed.trips = self.trips_df
+        filtered_feed.stop_times = self.stop_times_df
+
+        # Filter other related tables to maintain referential integrity
+        if hasattr(filtered_feed, 'stops'):
+            valid_stop_ids = set(self.stop_times_df['stop_id'])
+            filtered_feed.stops = filtered_feed.stops[
+                filtered_feed.stops['stop_id'].isin(valid_stop_ids)
+            ]
+
+        return filtered_feed
