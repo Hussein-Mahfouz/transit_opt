@@ -907,6 +907,9 @@ class PSORuntimeCallback(Callback):
         self.feasible_tracker = BestFeasibleSolutionsTracker(track_best_n)
 
 
+
+    # Replace the existing notify method in PSORuntimeCallback
+
     def notify(self, algorithm):
         """
         Called by pymoo at the end of each generation during optimization.
@@ -934,41 +937,60 @@ class PSORuntimeCallback(Callback):
             - Updates inertia_weights if algorithm is AdaptivePSO
             - Sets start_time on first call
         """
-        current_time = time.time()
 
-        # Initialize timing reference on first call
+        # Set start time on first call
         if self.start_time is None:
-            self.start_time = current_time
+            self.start_time = time.time()
+            return  # Don't process first call
 
-        # Track inertia weight evolution for adaptive PSO
-        if isinstance(algorithm, AdaptivePSO):
-            self.inertia_weights.append(algorithm.w)
+        # Get current generation info
+        current_gen = algorithm.n_gen
+        current_time = time.time()
+        elapsed = current_time - self.start_time
 
-        # Track cumulative generation timing
-        if len(self.generation_times) == 0:
-            # First generation: always starts at time 0
-            self.generation_times.append(0.0)
-        else:
-            # Subsequent generations: cumulative elapsed time
-            elapsed = current_time - self.start_time
-            self.generation_times.append(elapsed)
+        # Store timing
+        self.generation_times.append(elapsed)
 
-        # Track best feasible solutions from this generation
+        # Track inertia weight for adaptive PSO
+        if hasattr(algorithm, 'w') and algorithm.w is not None:
+            self.inertia_weights.append(float(algorithm.w))
+
+        # Track feasible solutions
         if hasattr(algorithm, 'pop') and algorithm.pop is not None:
-            for particle in algorithm.pop:
-                solution_matrix = algorithm.problem.decode_solution(particle.X)
-                objective = particle.F[0]
+            pop = algorithm.pop
+            objectives = pop.get("F")
+            constraint_violations = pop.get("G")
+            decision_vars = pop.get("X")
+            current_gen = algorithm.n_gen
 
-                # Check if solution is feasible
-                feasible = algorithm.problem.is_feasible(particle.X)
-                violations = 0 if feasible else 1  # Simplified for tracking
+            if objectives is not None and decision_vars is not None:
+                objectives = objectives.flatten()
+                feasibles = []
+                violations = []
+                solution_matrices = []
+                generations = []
 
-                self.feasible_tracker.add_solution_if_feasible(
-                    solution_matrix=solution_matrix,
-                    objective=objective,
-                    generation=algorithm.n_gen,
-                    feasible=feasible,
-                    violations=violations
+                for i in range(len(objectives)):
+                    # Determine feasibility
+                    is_feasible = True
+                    violation_count = 0
+                    if constraint_violations is not None:
+                        individual_violations = constraint_violations[i]
+                        is_feasible = np.all(individual_violations <= 1e-6)
+                        violation_count = np.sum(individual_violations > 1e-6)
+                    try:
+                        solution_matrix = self.problem.decode_solution(decision_vars[i])
+                    except Exception:
+                        solution_matrix = None
+
+                    feasibles.append(is_feasible)
+                    violations.append(violation_count)
+                    solution_matrices.append(solution_matrix)
+                    generations.append(current_gen)
+
+                # Add top N feasible solutions from this generation
+                self.feasible_tracker.add_generation_solutions(
+                    solution_matrices, objectives, generations, feasibles, violations
                 )
 
 class PenaltySchedulingCallback(Callback):
@@ -1064,48 +1086,52 @@ class CallbackCollection(Callback):
         return self.callbacks[index]
 
 
-
 class BestFeasibleSolutionsTracker:
     """
-    Tracks the best N feasible solutions during a single optimization run.
-    
-    Maintains a sorted list of the best feasible solutions found during
-    optimization, storing complete solution data for analysis.
+    Tracks the best N unique feasible solutions during a single optimization run.
+    Maintains a sorted list of the best feasible solutions found during optimization.
     """
 
     def __init__(self, max_solutions: int = 5):
         self.max_solutions = max_solutions
         self.best_solutions = []  # List of solution dictionaries, sorted by objective
 
-    def add_solution_if_feasible(self, solution_matrix: np.ndarray, objective: float,
-                                generation: int, feasible: bool, violations: int):
+    def add_generation_solutions(self, solution_matrices, objectives, generations, feasibles, violations):
         """
-        Add solution to tracker if it's feasible and among the best N.
-        
-        Args:
-            solution_matrix: Complete route×interval solution matrix
-            objective: Objective function value
-            generation: Generation where solution was found
-            feasible: Whether solution satisfies all constraints
-            violations: Number of constraint violations
+        Add up to max_solutions feasible solutions from the current generation,
+        ensuring uniqueness and keeping only the best N overall.
         """
-        # Only track feasible solutions
-        if not feasible:
-            return
+        # Collect feasible solutions from this generation
+        gen_solutions = []
+        for i in range(len(objectives)):
+            if not feasibles[i]:
+                continue
+            if not np.isfinite(objectives[i]) or solution_matrices[i] is None or solution_matrices[i].size == 0:
+                continue
+            gen_solutions.append({
+                'solution': solution_matrices[i].copy(),
+                'objective': float(objectives[i]),
+                'generation_found': generations[i],
+                'feasible': True,
+                'violations': violations[i]
+            })
 
-        solution_data = {
-            'solution': solution_matrix.copy(),
-            'objective': objective,
-            'generation_found': generation,
-            'feasible': True,
-            'violations': 0  # Always 0 for feasible solutions
-        }
+        # Sort by objective (best first), take up to max_solutions
+        gen_solutions.sort(key=lambda x: x['objective'])
+        gen_solutions = gen_solutions[:self.max_solutions]
 
-        # Add to list and sort by objective (best first)
-        self.best_solutions.append(solution_data)
+        # Add to global best_solutions if unique
+        for new_sol in gen_solutions:
+            is_duplicate = False
+            for existing in self.best_solutions:
+                if np.array_equal(existing['solution'], new_sol['solution']) and existing['objective'] == new_sol['objective']:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                self.best_solutions.append(new_sol)
+
+        # Sort and trim to max_solutions
         self.best_solutions.sort(key=lambda x: x['objective'])
-
-        # Keep only best N solutions
         if len(self.best_solutions) > self.max_solutions:
             self.best_solutions = self.best_solutions[:self.max_solutions]
 
@@ -1371,6 +1397,7 @@ class PSORunner:
 
         # Add runtime monitoring callback
         runtime_callback = PSORuntimeCallback(track_best_n=track_best_n)
+        runtime_callback.problem = self.problem  # Provide problem reference for decoding
         callbacks.append(runtime_callback)
 
         # Add penalty scheduling callback if using penalty method with adaptive penalties

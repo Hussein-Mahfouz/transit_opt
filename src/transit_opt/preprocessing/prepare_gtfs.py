@@ -359,7 +359,7 @@ class GTFSDataPreparator:
         )
 
         # Create aligned arrays
-        route_ids = [r["service_id"] for r in route_data]
+        route_ids = [r["route_id"] for r in route_data]
         round_trip_times = np.array(
             [r["round_trip_time"] for r in route_data], dtype=np.float64
         )
@@ -425,8 +425,11 @@ class GTFSDataPreparator:
                 },
             },
             "reconstruction": {
-                "gtfs_feed": self.feed,
-                "route_mapping": {route_id: i for i, route_id in enumerate(route_ids)},
+                "gtfs_feed": self._create_filtered_gtfs_feed(),
+                "route_mapping": {route_id: idx for idx, route_id in enumerate(route_ids)},
+                "routes_df": self.routes_df,     # Direct access to processed routes
+                "trips_df": self.trips_df,       # Direct access to processed trips
+                "stop_times_df": self.stop_times_df  # Direct access to processed stop times
             },
         }
 
@@ -447,7 +450,7 @@ class GTFSDataPreparator:
 
         Returns:
             List of dictionaries, each containing:
-            - service_id: GTFS service identifier
+            - route_id: GTFS service identifier
             - headways_by_interval: Array of headway values per time interval
             - round_trip_time: Calculated round-trip time in minutes
         """
@@ -455,42 +458,42 @@ class GTFSDataPreparator:
             f"Extracting route essentials with {self.interval_hours}-hour intervals"
         )
 
-        all_services = self.trips_df["service_id"].unique()
+        all_routes = self.trips_df["route_id"].unique()
         route_data = []
         filtered_count = 0
         failed_count = 0
         used_default_count = 0
 
-        logger.debug(f"Processing {len(all_services)} services")
+        logger.debug(f"Processing {len(all_routes)} routes")
 
-        for i, service_id in enumerate(all_services):
+        for i, route_id in enumerate(all_routes):
             # Progress logging for large datasets
             if i % 100 == 0 and i > 0:
                 logger.debug(
-                    f"Processed {i}/{len(all_services)} services "
+                    f"Processed {i}/{len(all_routes)} routes "
                     f"({len(route_data)} retained, {failed_count} failed, {filtered_count} filtered)"
                 )
 
-            service_trips = self.trips_df[self.trips_df["service_id"] == service_id]
+            route_trips = self.trips_df[self.trips_df["route_id"] == route_id]
 
-            if len(service_trips) == 0:
-                logger.debug(f"Service {service_id}: No trips found, skipping")
+            if len(route_trips) == 0:
+                logger.debug(f"Route {route_id}: No trips found, skipping")
                 failed_count += 1
                 continue
 
             # Calculate headways by interval
-            headways_by_interval = self._calculate_service_headways(
-                service_id, service_trips
+            headways_by_interval = self._calculate_route_headways(
+                route_id, route_trips
             )
 
             # Skip if no service found
             if np.all(np.isnan(headways_by_interval)):
-                logger.debug(f"Service {service_id}: No valid headways, skipping")
+                logger.debug(f"Route {route_id}: No valid headways, skipping")
                 failed_count += 1
                 continue
 
             # Calculate round-trip time
-            round_trip_time = self._calculate_round_trip_time(service_id, service_trips)
+            round_trip_time = self._calculate_round_trip_time(route_id, route_trips)
 
             # Track default usage
             if round_trip_time == self.default_round_trip_time:
@@ -499,7 +502,7 @@ class GTFSDataPreparator:
             # Filter out services with excessive round-trip times
             if round_trip_time > self.max_round_trip_minutes:
                 logger.warning(
-                    f"Service {service_id}: Round-trip {round_trip_time:.1f}min "
+                    f"Route {route_id}: Round-trip {round_trip_time:.1f}min "
                     f"exceeds limit ({self.max_round_trip_minutes}min), filtered out"
                 )
                 filtered_count += 1
@@ -508,13 +511,13 @@ class GTFSDataPreparator:
             # Count active intervals
             active_intervals = np.nansum(~np.isnan(headways_by_interval))
             logger.debug(
-                f"Service {service_id}: Round-trip {round_trip_time:.1f}min, "
+                f"Route {route_id}: Round-trip {round_trip_time:.1f}min, "
                 f"{active_intervals}/{len(headways_by_interval)} intervals active"
             )
 
             route_data.append(
                 {
-                    "service_id": service_id,
+                    "route_id": route_id,
                     "headways_by_interval": headways_by_interval,
                     "round_trip_time": round_trip_time,
                 }
@@ -522,7 +525,7 @@ class GTFSDataPreparator:
 
         # Final summary
         logger.info(
-            f"Route extraction complete: {len(route_data)} routes retained from {len(all_services)} total"
+            f"Route extraction complete: {len(route_data)} routes retained from {len(all_routes)} total"
         )
         if filtered_count > 0:
             logger.warning(
@@ -535,8 +538,8 @@ class GTFSDataPreparator:
 
         return route_data
 
-    def _calculate_service_headways(
-        self, service_id: str, service_trips: pd.DataFrame
+    def _calculate_route_headways(
+        self, route_id: str, route_trips: pd.DataFrame
     ) -> np.ndarray:
         """
         Calculate average headway values for each time interval.
@@ -546,7 +549,7 @@ class GTFSDataPreparator:
         and missing data gracefully.
 
         Args:
-            service_id: GTFS service_id identifier
+            route_id: GTFS route_id identifier
             service_trips: DataFrame of trips for this service
 
         Returns:
@@ -568,18 +571,18 @@ class GTFSDataPreparator:
         headways = np.full(self.n_intervals, np.nan)
 
         try:
-            trip_ids = service_trips["trip_id"].tolist()
-            service_stop_times = self.stop_times_df[
+            trip_ids = route_trips["trip_id"].tolist()
+            route_stop_times = self.stop_times_df[
                 self.stop_times_df["trip_id"].isin(trip_ids)
             ].copy()
 
-            if len(service_stop_times) == 0:
-                logger.debug(f"Service {service_id}: No stop times found")
+            if len(route_stop_times) == 0:
+                logger.debug(f"Route {route_id}: No stop times found")
                 return headways
 
             # Get first departure for each trip
-            first_departures = service_stop_times.loc[
-                service_stop_times.groupby("trip_id")["stop_sequence"].idxmin()
+            first_departures = route_stop_times.loc[
+                route_stop_times.groupby("trip_id")["stop_sequence"].idxmin()
             ][["trip_id", "departure_seconds"]].copy()
 
             first_departures["departure_hour"] = (
@@ -588,11 +591,11 @@ class GTFSDataPreparator:
             first_departures = first_departures.dropna()
 
             if len(first_departures) == 0:
-                logger.debug(f"Service {service_id}: No valid departure times")
+                logger.debug(f"Route {route_id}: No valid departure times")
                 return headways
 
             logger.debug(
-                f"Service {service_id}: Processing {len(first_departures)} departures"
+                f"Route {route_id}: Processing {len(first_departures)} departures"
             )
 
             # Calculate headways for each interval
@@ -616,7 +619,7 @@ class GTFSDataPreparator:
                         headways[interval] = headway_value
                         active_intervals += 1
                         logger.debug(
-                            f"Service {service_id}, interval {interval}: "
+                            f"Route {route_id}, interval {interval}: "
                             f"{len(interval_departures)} departures → {headway_value:.1f}min headway"
                         )
                 elif len(interval_departures) == 1:
@@ -624,21 +627,21 @@ class GTFSDataPreparator:
                     headways[interval] = 24 * 60  # 1440 minutes
                     active_intervals += 1
                     logger.debug(
-                        f"Service {service_id}, interval {interval}: "
+                        f"Route {route_id}, interval {interval}: "
                         f"1 departure → 1440min headway (once-daily)"
                     )
 
             if active_intervals == 0:
-                logger.debug(f"Service {service_id}: No active intervals found")
+                logger.debug(f"Route {route_id}: No active intervals found")
 
             return headways
 
         except Exception as e:
-            logger.debug(f"Service {service_id}: Exception in headway calculation: {e}")
+            logger.debug(f"Route {route_id}: Exception in headway calculation: {e}")
             return headways
 
     def _calculate_round_trip_time(
-        self, service_id: str, service_trips: pd.DataFrame
+        self, route_id: str, route_trips: pd.DataFrame
     ) -> float:
         """
         Calculate round-trip time with turnaround buffer for fleet sizing.
@@ -648,7 +651,7 @@ class GTFSDataPreparator:
         in optimization constraints.
 
         Args:
-            service_id: GTFS service_id identifier
+            route_id: GTFS route_id identifier
             service_trips: DataFrame of trips for this service
 
         Returns:
@@ -671,19 +674,19 @@ class GTFSDataPreparator:
             - Turnaround buffer typically 1.10-1.25 (10-25% extra time)
         """
         try:
-            trip_ids = service_trips["trip_id"].tolist()
-            service_stop_times = self.stop_times_df[
+            trip_ids = route_trips["trip_id"].tolist()
+            route_stop_times = self.stop_times_df[
                 self.stop_times_df["trip_id"].isin(trip_ids)
             ].copy()
 
-            if len(service_stop_times) == 0:
+            if len(route_stop_times) == 0:
                 logger.debug(
-                    f"Service {service_id}: No stop times, using default {self.default_round_trip_time}min"
+                    f"Route {route_id}: No stop times, using default {self.default_round_trip_time}min"
                 )
                 return self.default_round_trip_time
 
             trip_durations = []
-            for trip_id, trip_stops in service_stop_times.groupby("trip_id"):
+            for trip_id, trip_stops in route_stop_times.groupby("trip_id"):
                 if len(trip_stops) >= 2:
                     trip_stops = trip_stops.sort_values("stop_sequence")
                     first_departure = trip_stops.iloc[0]["departure_seconds"]
@@ -698,20 +701,20 @@ class GTFSDataPreparator:
                 median_one_way = np.median(trip_durations)
                 round_trip = median_one_way * 2.0 * self.turnaround_buffer
                 logger.debug(
-                    f"Service {service_id}: Calculated round-trip {round_trip:.1f}min "
+                    f"Route {trip_id}: Calculated round-trip {round_trip:.1f}min "
                     f"(median one-way: {median_one_way:.1f}min, {len(trip_durations)} trips, "
                     f"buffer: {self.turnaround_buffer})"
                 )
                 return round_trip
             else:
                 logger.debug(
-                    f"Service {service_id}: No valid durations, using default {self.default_round_trip_time}min"
+                    f"Route {route_id}: No valid durations, using default {self.default_round_trip_time}min"
                 )
                 return self.default_round_trip_time
 
         except Exception as e:
             logger.debug(
-                f"Service {service_id}: Exception calculating round-trip time: {e}, "
+                f"Route {route_id}: Exception calculating round-trip time: {e}, "
                 f"using default {self.default_round_trip_time}min"
             )
             return self.default_round_trip_time
@@ -889,7 +892,7 @@ class GTFSDataPreparator:
 
         Args:
             route_data: Output from _extract_route_essentials() containing:
-                    - service_id: Route identifier (string)
+                    - route_id: Route identifier (string)
                     - round_trip_time: Round-trip time in minutes (float)
                     - headways_by_interval: Array of current headway values per interval
 
@@ -1056,7 +1059,7 @@ class GTFSDataPreparator:
 
         # Per-route logging with debug info
         for route_idx, route in enumerate(route_data):
-            route_id = route["service_id"]
+            route_id = route["route_id"]
             if current_fleet_per_route[route_idx] > 0:
                 active_intervals_count = np.sum(route_fleet_matrix[route_idx, :] > 0)
                 logger.debug(
@@ -1191,3 +1194,25 @@ class GTFSDataPreparator:
                 return float(time_value)
         except Exception:
             return np.nan
+
+
+    def _create_filtered_gtfs_feed(self):
+        """Create a GTFS feed containing only the processed/filtered data."""
+        import copy
+
+        # Create a copy of the original feed structure
+        filtered_feed = copy.deepcopy(self.feed)
+
+        # Replace with filtered dataframes that match optimization data
+        filtered_feed.routes = self.routes_df
+        filtered_feed.trips = self.trips_df
+        filtered_feed.stop_times = self.stop_times_df
+
+        # Filter other related tables to maintain referential integrity
+        if hasattr(filtered_feed, 'stops'):
+            valid_stop_ids = set(self.stop_times_df['stop_id'])
+            filtered_feed.stops = filtered_feed.stops[
+                filtered_feed.stops['stop_id'].isin(valid_stop_ids)
+            ]
+
+        return filtered_feed

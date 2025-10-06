@@ -259,13 +259,14 @@ class HexagonalZoneSystem:
 
     def _precompute_route_stop_mappings(self):
         """OPTIMIZED: Pre-compute all route → stops mappings to avoid repeated filtering."""
+
         print("🚀 Pre-computing route-stop mappings...")
 
         self.route_stops_cache = {}
 
-        # Group trips by service_id once
-        trips_by_service = (
-            self.gtfs_feed.trips.groupby("service_id")["trip_id"].apply(list).to_dict()
+        # Group trips by route_id instead of service_id
+        trips_by_route = (
+            self.gtfs_feed.trips.groupby("route_id")["trip_id"].apply(list).to_dict()
         )
 
         # Group stop_times by trip_id once
@@ -273,16 +274,16 @@ class HexagonalZoneSystem:
             self.gtfs_feed.stop_times.groupby("trip_id")["stop_id"].apply(set).to_dict()
         )
 
-        for service_id, trip_ids in trips_by_service.items():
-            # Get all unique stops for this service
-            service_stops = set()
+        for route_id, trip_ids in trips_by_route.items():
+            # Get all unique stops for this route
+            route_stops = set()
             for trip_id in trip_ids:
                 if trip_id in stop_times_by_trip:
-                    service_stops.update(stop_times_by_trip[trip_id])
+                    route_stops.update(stop_times_by_trip[trip_id])
 
-            self.route_stops_cache[service_id] = service_stops
+            self.route_stops_cache[route_id] = route_stops
 
-        print(f"✅ Cached stops for {len(self.route_stops_cache)} routes/services")
+        print(f"✅ Cached stops for {len(self.route_stops_cache)} routes")
 
     def _create_contiguity_matrix(self):
         """
