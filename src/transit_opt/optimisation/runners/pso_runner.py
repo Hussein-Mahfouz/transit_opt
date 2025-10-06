@@ -1891,6 +1891,10 @@ class PSORunner:
                     objective_kwargs['alpha'] = objective_config['alpha']
                 if 'population_weighted' in objective_config:
                     objective_kwargs['population_weighted'] = objective_config['population_weighted']
+                if 'population_layer' in objective_config:
+                    objective_kwargs['population_layer'] = objective_config['population_layer']
+                if 'population_power' in objective_config:
+                    objective_kwargs['population_power'] = objective_config['population_power']
 
                 objective = HexagonalCoverageObjective(**objective_kwargs)
 
