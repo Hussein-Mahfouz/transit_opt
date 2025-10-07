@@ -678,6 +678,64 @@ class TestPSORunnerWithRealData:
 
         print("✅ track_best_n multi-run integration works")
 
+    def test_population_weighting(self, sample_optimization_data):
+        """Test PSO runner with population weighting using real data."""
+        import os
+        usa_pop_path = os.path.join(os.path.dirname(__file__), "data", "usa_pop_2025_CN_1km_R2025A_UA_v1.tif")
+
+        config = {
+            "problem": {
+                "objective": {
+                    "type": "HexagonalCoverageObjective",
+                    "spatial_resolution_km": 2.0,
+                    "population_weighted": True,
+                    "population_layer": usa_pop_path,
+                    "population_power": 0.5
+                },
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {
+                    "type": "PSO",
+                    "pop_size": 10,
+                    "inertia_weight": 0.9,
+                    "cognitive_coeff": 2.0,
+                    "social_coeff": 2.0
+                },
+                "termination": {
+                    "max_generations": 2,  # Short test
+                    "convergence_tolerance": 1e-6
+                },
+                "monitoring": {
+                    "progress_frequency": 1,
+                    "save_history": False
+                }
+            }
+        }
+        from transit_opt.optimisation.config.config_manager import OptimizationConfigManager
+        from transit_opt.optimisation.runners.pso_runner import PSORunner
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(
+            config_manager=config_manager
+        )
+
+        # Set optimization data
+        runner.optimization_data = sample_optimization_data
+        # Should create problem without error
+        runner._create_problem()
+        assert runner.problem is not None
+        assert runner.problem.objective.population_weighted is True
+        assert runner.problem.objective.population_power == 0.5
+        assert runner.problem.objective.population_per_zone is not None
+
+        # Population data should be reasonable
+        pop_data = runner.problem.objective.population_per_zone
+        assert len(pop_data) > 0
+        assert np.all(pop_data >= 0)
+        assert np.sum(pop_data > 0) > 0  # Should have some populated zones
+
+        print(f"Integration test: {len(pop_data)} zones, {np.sum(pop_data > 0)} with population")
 
 def test_best_feasible_solutions_tracker():
     """Test the BestFeasibleSolutionsTracker class functionality."""
