@@ -83,9 +83,26 @@ class WaitingTimeObjective(BaseSpatialObjective):
         )
 
     def evaluate(self, solution_matrix: np.ndarray) -> float:
-        """Calculate waiting time objective - always compute per interval first."""
+        """
+            Evaluate waiting time objective for given solution.
+            
+            Args:
+                solution_matrix: Decision matrix (n_routes × n_intervals)
+                
+            Returns:
+                Objective value (lower is better)
+            """
+        # DEBUG: Add logging to trace the evaluation
+        print("🔍 EVALUATE DEBUG: Starting evaluation")
+        print(f"   Solution shape: {solution_matrix.shape}")
+        print(f"   Time aggregation: {self.time_aggregation}")
+        print(f"   Metric: {self.metric}")
+        print(f"   Population weighted: {self.population_weighted}")
+
         # ALWAYS calculate per-interval waiting times first
         vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
+
+        print(f"   Vehicle data keys: {list(vehicles_data.keys())}")
 
         # Calculate waiting times for each interval
         interval_waiting_times = []
@@ -101,12 +118,17 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Apply time aggregation
         if self.time_aggregation == "average":
+            vehicles_per_zone = vehicles_data["average"]
+            print(f"   Average vehicles per zone: {vehicles_per_zone}")
+            print(f"   Vehicle range: {np.min(vehicles_per_zone):.3f} - {np.max(vehicles_per_zone):.3f}")
             # Average waiting time across intervals for each zone
             aggregated_waiting_times = np.mean(interval_waiting_times, axis=0)
         elif self.time_aggregation == "sum":
             # Sum waiting times across intervals for each zone
             aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
         elif self.time_aggregation == "peak":
+            vehicles_intervals = vehicles_data["intervals"]  # Shape: (n_zones, n_intervals)
+            print(f"   Intervals vehicle data shape: {vehicles_intervals.shape}")
             # Use waiting time from interval with most vehicles per zone
             aggregated_waiting_times = self._get_peak_interval_waiting_times(
                 interval_waiting_times, vehicles_data["intervals"]
@@ -123,33 +145,28 @@ class WaitingTimeObjective(BaseSpatialObjective):
     def _convert_vehicles_to_waiting_times_for_interval(
         self, vehicles_per_zone: np.ndarray, solution_matrix: np.ndarray, interval_idx: int
     ) -> np.ndarray:
-        """Calculate waiting times using vehicle counts (no route mapping needed)."""
-        n_zones = len(vehicles_per_zone)
-        waiting_times = np.full(n_zones, float('inf'))
-
-        for zone_idx in range(n_zones):
-            vehicle_count = vehicles_per_zone[zone_idx]
-
-            if vehicle_count == 0:
-                continue  # Keep as infinity - no service
-
-            # Convert vehicle count to effective waiting time
-            waiting_times[zone_idx] = self._convert_vehicle_count_to_waiting_time(
-                vehicle_count
-            )
-
-        return waiting_times
+        """Calculate waiting times using vehicle counts."""
+        # Apply the same conversion to all zones - this handles zero vehicles correctly
+        return np.array([
+            self._convert_vehicle_count_to_waiting_time(vehicle_count)
+            for vehicle_count in vehicles_per_zone
+        ])
 
     def _convert_vehicle_count_to_waiting_time(self, vehicle_count: float) -> float:
         """
         Convert vehicle count to waiting time for a zone.
         Simple inverse relationship: more vehicles = lower waiting time.
-        """
-        if vehicle_count <= 0:
-            return float('inf')
 
+        Zones with no vehicles get a penalty equal to the full interval length. Ideally
+        the waiting time should be infinite, but that causes problems for calculations.
+        """
         # Calculate interval length in minutes
         interval_length_minutes = self._get_interval_length_minutes()
+
+        if vehicle_count <= 0:
+            # Inf waiting time is problematic for calculations. Instead I use
+            # a penalty equal to the full interval length (e.g., 240 minutes for 6-hour intervals)
+            return interval_length_minutes
 
         # Convert vehicle count to effective frequency
         # vehicle_count represents vehicles serving this zone in this interval
@@ -162,7 +179,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
             waiting_time = effective_headway / 2.0
             return waiting_time
         else:
-            return float('inf')
+            # Fallback to penalty (shouldn't reach here given the check above)
+            return interval_length_minutes
 
     def _get_interval_length_minutes(self) -> float:
         """Calculate the length of each time interval in minutes (cached)."""
@@ -185,19 +203,20 @@ class WaitingTimeObjective(BaseSpatialObjective):
         return self._interval_length_minutes
 
     def _get_peak_interval_waiting_times(self, interval_waiting_times: np.ndarray, vehicles_intervals: np.ndarray) -> np.ndarray:
-        """Get waiting times from the peak interval (most vehicles) for each zone."""
-        n_zones = vehicles_intervals.shape[0]
-        peak_waiting_times = np.zeros(n_zones)
+        """
+        Get waiting times from the system-wide peak interval.
+        
+        Peak interval = interval with most total vehicles across all zones.
+        All zones use waiting times from this same interval.
+        """
+        # Sum vehicles across all zones for each interval
+        total_vehicles_by_interval = np.sum(vehicles_intervals, axis=0)  # Sum across zones
 
-        for zone_idx in range(n_zones):
-            # Find interval with most vehicles for this zone
-            zone_vehicles_by_interval = vehicles_intervals[zone_idx, :]
-            peak_interval_idx = np.argmax(zone_vehicles_by_interval)
+        # Find interval with most total vehicles
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
 
-            # Use waiting time from that interval
-            peak_waiting_times[zone_idx] = interval_waiting_times[peak_interval_idx, zone_idx]
-
-        return peak_waiting_times
+        # Return waiting times from that interval for ALL zones
+        return interval_waiting_times[peak_interval_idx, :]
 
     def _evaluate_intervals_separately(self, interval_waiting_times: np.ndarray) -> float:
         """Calculate objective for each interval separately, then average."""
@@ -210,25 +229,45 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         return np.mean(interval_objectives)
 
+
     def _calculate_final_objective(self, waiting_times: np.ndarray) -> float:
-        """Apply metric calculation (no spatial lag - doesn't make sense for waiting times)."""
+        """
+        Calculate final objective value from zone waiting times.
+        (no spatial lag - doesn't make sense for waiting times)
+        """
 
-        if self.metric == "total":
-            if self.population_weighted:
-                return calculate_population_weighted_total(
+        print("🎯 _calculate_final_objective DEBUG:")
+        print(f"   Input waiting times: {waiting_times}")
+        print(f"   Population weighted: {self.population_weighted}")
+        print(f"   Metric: {self.metric}")
+
+        if self.population_weighted:
+            print(f"   Population per zone: {self.population_per_zone}")
+            print(f"   Population power: {self.population_power}")
+
+            if self.metric == "total":
+                result = calculate_population_weighted_total(
                     waiting_times, self.population_per_zone, self.population_power
                 )
-            else:
-                return np.sum(waiting_times[np.isfinite(waiting_times)])
+                print(f"   Population-weighted total result: {result}")
+                return result
 
-        else:  # variance
-            if self.population_weighted:
-                return calculate_population_weighted_variance(
+            else:  # variance
+                result = calculate_population_weighted_variance(
                     waiting_times, self.population_per_zone, self.population_power
                 )
-            else:
-                finite_waiting = waiting_times[np.isfinite(waiting_times)]
-                return np.var(finite_waiting) if len(finite_waiting) > 0 else float('inf')
+                print(f"   Population-weighted variance result: {result}")
+                return result
+        else:
+            # Unweighted calculations
+            if self.metric == "total":
+                result = np.sum(waiting_times)
+                print(f"   Unweighted total result: {result}")
+                return result
+            else:  # variance
+                result = np.var(waiting_times)
+                print(f"   Unweighted variance result: {result}")
+                return result
 
     def _get_spatial_summary(self) -> str:
         """Return summary string for logging."""

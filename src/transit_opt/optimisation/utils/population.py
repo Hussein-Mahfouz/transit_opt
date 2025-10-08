@@ -107,10 +107,17 @@ def calculate_population_weighted_total(
     Returns:
         float: Population-weighted total
     """
+
+    print("🔍 Pop-weighted total DEBUG:")
+    print(f"   Values: {values}")
+    print(f"   Population: {population}")
+    print(f"   Power: {population_power}")
+
     if population is None:
         raise ValueError("Population data not available")
 
     pop_weighted = np.power(population, population_power)
+    print(f"   Population weights: {pop_weighted}")
 
     # Handle infinite values (from waiting time objective)
     finite_mask = np.isfinite(values)
