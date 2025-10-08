@@ -146,26 +146,35 @@ class WaitingTimeObjective(BaseSpatialObjective):
         self, vehicles_per_zone: np.ndarray, solution_matrix: np.ndarray, interval_idx: int
     ) -> np.ndarray:
         """Calculate waiting times using vehicle counts."""
+        # Get interval length ONCE per interval, not once per zone
+        interval_length_minutes = self._get_interval_length_minutes()
+
         # Apply the same conversion to all zones - this handles zero vehicles correctly
+        # Pass the interval length to avoid repeated calls
         return np.array([
-            self._convert_vehicle_count_to_waiting_time(vehicle_count)
+            self._convert_vehicle_count_to_waiting_time(vehicle_count, interval_length_minutes)
             for vehicle_count in vehicles_per_zone
         ])
 
-    def _convert_vehicle_count_to_waiting_time(self, vehicle_count: float) -> float:
+    def _convert_vehicle_count_to_waiting_time(
+        self, vehicle_count: float, interval_length_minutes: float
+    ) -> float:
         """
         Convert vehicle count to waiting time for a zone.
         Simple inverse relationship: more vehicles = lower waiting time.
 
         Zones with no vehicles get a penalty equal to the full interval length. Ideally
         the waiting time should be infinite, but that causes problems for calculations.
-        """
-        # Calculate interval length in minutes
-        interval_length_minutes = self._get_interval_length_minutes()
 
+        Args:
+            vehicle_count: Number of vehicles serving this zone
+            interval_length_minutes: Pre-computed interval length to avoid repeated calls
+            
+        Returns:
+            Waiting time in minutes
+        """
         if vehicle_count <= 0:
-            # Inf waiting time is problematic for calculations. Instead I use
-            # a penalty equal to the full interval length (e.g., 240 minutes for 6-hour intervals)
+            # Use penalty equal to the full interval length
             return interval_length_minutes
 
         # Convert vehicle count to effective frequency
@@ -179,7 +188,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
             waiting_time = effective_headway / 2.0
             return waiting_time
         else:
-            # Fallback to penalty (shouldn't reach here given the check above)
+            # Fallback to penalty
             return interval_length_minutes
 
     def _get_interval_length_minutes(self) -> float:
