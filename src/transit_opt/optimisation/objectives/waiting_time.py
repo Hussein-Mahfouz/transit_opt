@@ -92,12 +92,6 @@ class WaitingTimeObjective(BaseSpatialObjective):
             Returns:
                 Objective value (lower is better)
             """
-        # DEBUG: Add logging to trace the evaluation
-        print("🔍 EVALUATE DEBUG: Starting evaluation")
-        print(f"   Solution shape: {solution_matrix.shape}")
-        print(f"   Time aggregation: {self.time_aggregation}")
-        print(f"   Metric: {self.metric}")
-        print(f"   Population weighted: {self.population_weighted}")
 
         # ALWAYS calculate per-interval waiting times first
         vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
@@ -118,17 +112,19 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Apply time aggregation
         if self.time_aggregation == "average":
-            vehicles_per_zone = vehicles_data["average"]
-            print(f"   Average vehicles per zone: {vehicles_per_zone}")
-            print(f"   Vehicle range: {np.min(vehicles_per_zone):.3f} - {np.max(vehicles_per_zone):.3f}")
             # Average waiting time across intervals for each zone
-            aggregated_waiting_times = np.mean(interval_waiting_times, axis=0)
+            # aggregated_waiting_times = np.mean(interval_waiting_times, axis=0)
+            # Use pre-computed vehicle averages, not averaged waiting times
+            vehicles_per_zone = vehicles_data["average"]
+            interval_length = self._get_interval_length_minutes()
+            aggregated_waiting_times = np.array([
+                self._convert_vehicle_count_to_waiting_time(v, interval_length)
+                for v in vehicles_per_zone
+            ])
         elif self.time_aggregation == "sum":
             # Sum waiting times across intervals for each zone
             aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
         elif self.time_aggregation == "peak":
-            vehicles_intervals = vehicles_data["intervals"]  # Shape: (n_zones, n_intervals)
-            print(f"   Intervals vehicle data shape: {vehicles_intervals.shape}")
             # Use waiting time from interval with most vehicles per zone
             aggregated_waiting_times = self._get_peak_interval_waiting_times(
                 interval_waiting_times, vehicles_data["intervals"]
