@@ -407,3 +407,47 @@ class TestHexagonalCoverageObjective:
 
         # Note: variance_avg and variance_peak will typically be different
         # because they measure equity at different temporal aggregation levels
+
+
+class TestPopulationWeighting:
+    """Test population weighting functionality with real WorldPop data."""
+
+    def test_population_interpolation_real_data(self, sample_optimization_data, usa_population_path):
+        """Test population interpolation with real WorldPop data."""
+        objective = HexagonalCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=1.5,
+            population_weighted=True,
+            population_layer=usa_population_path
+        )
+
+        # Check population was interpolated
+        assert objective.population_per_zone is not None
+        assert len(objective.population_per_zone) > 0
+        assert np.all(objective.population_per_zone >= 0), "Population values should be non-negative"
+
+
+    def test_population_power_effects_real_data(self, sample_optimization_data, usa_population_path):
+        """Test different population_power values with real data."""
+        power_values = [0.5, 1.0, 2.0]
+        variances = []
+
+        for power in power_values:
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=2.0,
+                population_weighted=True,
+                population_layer=usa_population_path,
+                population_power=power
+            )
+
+            variance = objective.evaluate(sample_optimization_data['initial_solution'])
+            variances.append(variance)
+
+            # Each should be valid
+            assert variance >= 0
+            assert not np.isnan(variance)
+
+        # higher power should have variance larger than or equal to lower power
+        assert variances[0] <= variances[1] <= variances[2]
+

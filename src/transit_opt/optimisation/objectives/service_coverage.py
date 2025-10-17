@@ -4,6 +4,11 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
+from ..utils.population import (
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+    validate_population_config,
+)
 from .base import BaseSpatialObjective
 
 
@@ -47,7 +52,13 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         alpha (float, optional): Spatial lag decay factor [0,1]. Higher values
                                give more weight to neighbors. Defaults to 0.1.
         population_weighted (bool, optional): Enable population weighting.
-                                           Currently placeholder. Defaults to False.
+                                            Defaults to False.
+        population_layer (Any, optional): Population raster layer for weighting.
+                                        Required if population_weighted is True.
+                                        Recommended: WorldPop data. Defaults to None.
+        population_power (float, optional): Exponent for population weighting.
+                                          Defaults to 1.0 (linear). Values <1.0
+                                          dampen influence of high-pop areas.
 
     Mathematical Details:
         Standard variance: σ² = Σ(vᵢ - μ)² / n
@@ -73,6 +84,16 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             spatial_lag=True,
             alpha=0.15  # 15% neighbor influence
         )
+        # With population weighting 
+        pop_equity_obj = HexagonalCoverageObjective(
+            optimization_data=opt_data,
+            spatial_resolution_km=2.0,
+            boundary=study_boundary,
+            spatial_lag=True,
+            alpha=0.1,
+            population_weighted=True,
+            population_layer="path/to/worldpop.tif"
+        )
         ```
     """
 
@@ -83,18 +104,30 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         crs: str = "EPSG:3857",
         boundary: Optional["StudyAreaBoundary"] = None,
         time_aggregation: str = "average",
-        # NEW SPATIAL LAG PARAMETERS:
         spatial_lag: bool = False,
         alpha: float = 0.1,
-        # PLACEHOLDER POPULATION PARAMETERS:
         population_weighted: bool = False,
+        # Population data used if population_weighted is True
+        population_layer: Any | None = None,
+        population_power: float = 1.0
     ):
         self.boundary = boundary
         self.time_aggregation = time_aggregation
         self.spatial_lag = spatial_lag
         self.alpha = alpha  # Decay factor for neighbor influence
         self.population_weighted = population_weighted
+        self.population_layer = population_layer
+        self.population_per_zone = None
+        self.population_power = population_power
+
         super().__init__(optimization_data, spatial_resolution_km, crs)
+
+        validate_population_config(population_weighted, population_layer)
+
+        if self.population_weighted and self.population_layer is None:
+            raise ValueError("Population layer must be provided if population_weighted is True.")
+        if population_layer is not None:
+            self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
 
     def _create_spatial_system(self):
         """Use your existing HexagonalZoneSystem."""
@@ -150,39 +183,26 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         )
         return np.var(accessibility_scores)
 
-    def _calculate_population_weighted_variance(
-        self, vehicles_per_zone: np.ndarray
-    ) -> float:
-        """
-        Calculate population-weighted variance.
 
-        PLACEHOLDER: Population data integration coming soon.
-        Currently returns standard variance with warning.
 
-        Formula:
-        σ_w² = Σ(p_i * (x_i - μ_w)²) / Σ(p_i)
-        where μ_w = Σ(p_i * x_i) / Σ(p_i)
-        """
-        print("⚠️  Population weighting requested but not yet implemented")
-        print(
-            "    Using standard variance. Population data integration coming in next update."
+    def _calculate_population_weighted_variance(self, vehicles_per_zone: np.ndarray) -> float:
+        """Use shared population-weighted variance calculation."""
+        return calculate_population_weighted_variance(
+            vehicles_per_zone, self.population_per_zone, self.population_power
         )
-        return np.var(vehicles_per_zone)
 
     def _calculate_population_weighted_spatial_variance(
         self, vehicles_per_zone: np.ndarray
     ) -> float:
-        """
-        Calculate population-weighted variance using spatial lag accessibility.
-
-        PLACEHOLDER: Advanced combination of population weighting and spatial lag.
-        Currently uses spatial lag only with warning.
-        """
-        print(
-            "⚠️  Population-weighted spatial variance requested but population data not yet available"
+        """Calculate population-weighted variance using spatial lag accessibility."""
+        accessibility_scores = self.spatial_system._calculate_accessibility_scores(
+            vehicles_per_zone, self.alpha
         )
-        print("    Using spatial lag variance only. Full implementation coming soon.")
-        return self._calculate_spatial_lag_variance(vehicles_per_zone)
+
+        # Use shared variance calculation
+        return calculate_population_weighted_variance(
+            accessibility_scores, self.population_per_zone, self.population_power
+        )
 
     def get_detailed_analysis(self, solution_matrix: np.ndarray) -> dict[str, Any]:
         """Get detailed spatial equity analysis."""

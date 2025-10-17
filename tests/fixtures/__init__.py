@@ -140,9 +140,7 @@ def precalculated_fleet_data(sample_optimization_data):
     print(f"      Fleet by interval: {baseline_data['current_fleet_by_interval']}")
 
     # Get parameters for fleet calculations (same as GTFSDataPreparator used)
-    from transit_opt.optimisation.utils.fleet_calculations import (
-        calculate_fleet_requirements,
-    )
+    from transit_opt.optimisation.utils.fleet_calculations import calculate_fleet_requirements
 
     allowed_headways = sample_optimization_data["allowed_headways"]
     round_trip_times = sample_optimization_data["routes"]["round_trip_times"]
@@ -213,3 +211,10 @@ def precalculated_fleet_data(sample_optimization_data):
 
     print("\n✅ PRECALCULATED FLEET DATA READY")
     return result
+
+@pytest.fixture
+def usa_population_path():
+    """Path to real USA WorldPop data."""
+    test_data_dir = Path(__file__).parent.parent / "data"
+    pop_data = test_data_dir / "usa_pop_2025_CN_1km_R2025A_UA_v1.tif"
+    return str(pop_data)

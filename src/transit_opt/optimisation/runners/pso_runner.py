@@ -1891,8 +1891,38 @@ class PSORunner:
                     objective_kwargs['alpha'] = objective_config['alpha']
                 if 'population_weighted' in objective_config:
                     objective_kwargs['population_weighted'] = objective_config['population_weighted']
+                if 'population_layer' in objective_config:
+                    objective_kwargs['population_layer'] = objective_config['population_layer']
+                if 'population_power' in objective_config:
+                    objective_kwargs['population_power'] = objective_config['population_power']
 
                 objective = HexagonalCoverageObjective(**objective_kwargs)
+
+            elif objective_type == 'WaitingTimeObjective':
+                from ..objectives.waiting_time import WaitingTimeObjective
+
+                # Build kwargs with only explicitly configured values
+                objective_kwargs = {'optimization_data': self.optimization_data}
+
+                # Add explicitly configured waiting time parameters
+                if 'spatial_resolution_km' in objective_config:
+                    objective_kwargs['spatial_resolution_km'] = objective_config['spatial_resolution_km']
+                if 'crs' in objective_config:
+                    objective_kwargs['crs'] = objective_config['crs']
+                if 'boundary' in objective_config:
+                    objective_kwargs['boundary'] = objective_config['boundary']
+                if 'time_aggregation' in objective_config:
+                    objective_kwargs['time_aggregation'] = objective_config['time_aggregation']
+                if 'metric' in objective_config:
+                    objective_kwargs['metric'] = objective_config['metric']
+                if 'population_weighted' in objective_config:
+                    objective_kwargs['population_weighted'] = objective_config['population_weighted']
+                if 'population_layer' in objective_config:
+                    objective_kwargs['population_layer'] = objective_config['population_layer']
+                if 'population_power' in objective_config:
+                    objective_kwargs['population_power'] = objective_config['population_power']
+
+                objective = WaitingTimeObjective(**objective_kwargs)
 
             else:
                 raise ValueError(f"Unknown objective type: {objective_type}")
