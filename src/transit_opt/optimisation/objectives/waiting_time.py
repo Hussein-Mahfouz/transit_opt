@@ -240,11 +240,10 @@ class WaitingTimeObjective(BaseSpatialObjective):
         Calculate final objective value from zone waiting times.
         (no spatial lag - doesn't make sense for waiting times)
         """
-
-        print("🎯 _calculate_final_objective DEBUG:")
-        print(f"   Input waiting times: {waiting_times}")
-        print(f"   Population weighted: {self.population_weighted}")
         print(f"   Metric: {self.metric}")
+        print(f"   Waiting times shape: {waiting_times.shape}")
+        print(f"   Sample waiting times: {waiting_times[:10]}")
+        print(f"   Min/Max waiting times: {waiting_times.min():.2f}/{waiting_times.max():.2f}")
 
         if self.population_weighted:
             print(f"   Population per zone: {self.population_per_zone}")
