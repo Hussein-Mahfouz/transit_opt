@@ -738,24 +738,38 @@ class TestPSORunnerWithRealData:
         print(f"Integration test: {len(pop_data)} zones, {np.sum(pop_data > 0)} with population")
 
 def test_best_feasible_solutions_tracker():
-    """Test the BestFeasibleSolutionsTracker class functionality."""
+    """
+    Test the BestFeasibleSolutionsTracker class functionality.
+    The class tracks the best feasible solutions found during optimisation, updating
+    with each generation
+    """
     from transit_opt.optimisation.runners.pso_runner import BestFeasibleSolutionsTracker
 
     tracker = BestFeasibleSolutionsTracker(max_solutions=3)
 
-    # Test adding feasible solutions
-    solution1 = np.array([[1, 2], [3, 4]])
-    tracker.add_solution_if_feasible(solution1, 0.5, 10, True, 0)
+    # add_generation_solutions expects lists of: solution_matrices, objectives, generations, feasibles, violations
 
-    solution2 = np.array([[2, 3], [4, 5]])
-    tracker.add_solution_if_feasible(solution2, 0.3, 15, True, 0)
+    # Add first batch of solutions
+    solution_matrices = [
+        np.array([[1, 2], [3, 4]]),
+        np.array([[2, 3], [4, 5]]),
+        np.array([[3, 4], [5, 6]])
+    ]
+    objectives = [0.5, 0.3, 0.7]
+    generations = [10, 15, 20]
+    feasibles = [True, True, True]
+    violations = [0, 0, 0]
 
-    solution3 = np.array([[3, 4], [5, 6]])
-    tracker.add_solution_if_feasible(solution3, 0.7, 20, True, 0)
+    tracker.add_generation_solutions(solution_matrices, objectives, generations, feasibles, violations)
 
     # Test that infeasible solutions are ignored
-    solution4 = np.array([[4, 5], [6, 7]])
-    tracker.add_solution_if_feasible(solution4, 0.1, 25, False, 2)  # Infeasible
+    infeasible_matrices = [np.array([[4, 5], [6, 7]])]
+    infeasible_objectives = [0.1]
+    infeasible_generations = [25]
+    infeasible_feasibles = [False]
+    infeasible_violations = [2]
+
+    tracker.add_generation_solutions(infeasible_matrices, infeasible_objectives, infeasible_generations, infeasible_feasibles, infeasible_violations)
 
     solutions = tracker.get_best_solutions()
 
@@ -768,14 +782,32 @@ def test_best_feasible_solutions_tracker():
     assert objectives[0] == 0.3  # Best objective first
 
     # Test max_solutions limit
-    solution5 = np.array([[5, 6], [7, 8]])
-    tracker.add_solution_if_feasible(solution5, 0.2, 30, True, 0)  # Better than existing
+    better_matrices = [
+        np.array([[5, 6], [7, 8]]),
+        np.array([[6, 7], [8, 9]])
+    ]
+    better_objectives = [0.2, 0.4]  # Better than existing
+    better_generations = [30, 15]
+    better_feasibles = [True, True]
+    better_violations = [0, 0]
+
+    tracker.add_generation_solutions(better_matrices, better_objectives, better_generations, better_feasibles, better_violations)
 
     solutions = tracker.get_best_solutions()
     assert len(solutions) == 3  # Still only 3 (max_solutions limit)
     assert solutions[0]['objective'] == 0.2  # New best should be first
+    assert solutions[1]['objective'] == 0.3  # Second best (from 1st batch)
+    assert solutions[2]['objective'] == 0.4
+    # check generations
+    assert solutions[0]['generation_found'] == 30
+    assert solutions[1]['generation_found'] == 15
+    assert solutions[2]['generation_found'] == 15
+
+    # Test get_count method
+    assert tracker.get_count() == 3
 
     print("✅ BestFeasibleSolutionsTracker works correctly")
+
 # ================================================================================================
 # ERROR HANDLING AND ROBUSTNESS TESTS
 # ================================================================================================

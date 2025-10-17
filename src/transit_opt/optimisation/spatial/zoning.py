@@ -709,6 +709,17 @@ class HexagonalZoneSystem:
         zones_with_service = np.sum(vehicles_per_zone > 0)
         zones_without_service = total_zones - zones_with_service
 
+        # Calculate means and standard deviations
+        mean_all_zones = np.mean(vehicles_per_zone)
+        std_all_zones = np.std(vehicles_per_zone)
+        if zones_with_service > 0:
+            # Mean and standard deviation only for zones that have service
+            zones_with_service_values = vehicles_per_zone[vehicles_per_zone > 0]
+            mean_served_zones = np.mean(zones_with_service_values)
+            std_served_zones = np.std(zones_with_service_values)
+        else:
+            mean_served_zones = 0.0
+
         stats = [
             "📊 ZONE STATISTICS:",
             f"Total Zones: {total_zones}",
@@ -716,10 +727,11 @@ class HexagonalZoneSystem:
             f"Zones without Service: {zones_without_service}",
             "",
             "🚌 VEHICLE DISTRIBUTION:",
-            f"Total Vehicles: {vehicles_per_zone.sum():.0f}",
-            f"Mean per Zone: {np.mean(vehicles_per_zone):.1f}",
+            f"Mean per Zone (All Zones): {mean_all_zones:.1f}",
+            f"Mean per Zone (Served Zones): {mean_served_zones:.1f}",
             f"Max in Zone: {np.max(vehicles_per_zone):.0f}",
-            f"Std Dev: {np.std(vehicles_per_zone):.1f}",
+            f"Std Dev (All Zones): {std_all_zones:.1f}",
+            f"Std Dev (Served Zones): {std_served_zones:.1f}",
         ]
 
         return "\n".join(stats)

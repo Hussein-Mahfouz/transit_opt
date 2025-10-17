@@ -1,10 +1,14 @@
 from typing import Any, Optional
 
 import numpy as np
-from rasterstats import zonal_stats
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
+from ..utils.population import (
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+    validate_population_config,
+)
 from .base import BaseSpatialObjective
 
 
@@ -115,11 +119,15 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         self.population_layer = population_layer
         self.population_per_zone = None
         self.population_power = population_power
+
         super().__init__(optimization_data, spatial_resolution_km, crs)
+
+        validate_population_config(population_weighted, population_layer)
+
         if self.population_weighted and self.population_layer is None:
             raise ValueError("Population layer must be provided if population_weighted is True.")
         if population_layer is not None:
-            self.population_per_zone = self._interpolate_population_to_zones()
+            self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
 
     def _create_spatial_system(self):
         """Use your existing HexagonalZoneSystem."""
@@ -137,41 +145,6 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         if self.population_weighted:
             features.append("population weighted [PLACEHOLDER]")
         return ", ".join(features)
-
-    def _interpolate_population_to_zones(self):
-        """
-        Assign population from raster to hexagons using zonal_stats. We use 
-        raster population data from WorldPop.
-        """
-        import rasterio
-
-        hexgrid = self.spatial_system.hex_grid
-
-        # Check crs compatibility
-        with rasterio.open(self.population_layer) as src:
-            raster_crs = src.crs
-            vector_crs = hexgrid.crs
-
-            if raster_crs != vector_crs:
-                print(f"⚠️ CRS mismatch: Raster {raster_crs} != Vector{vector_crs}")
-                print(" Creating transformed hexgrid with raster CRS for zonal stats.")
-                hexgrid_transformed = hexgrid.to_crs(raster_crs)
-            else:
-                hexgrid_transformed = hexgrid
-
-        stats = zonal_stats(
-            hexgrid_transformed,
-            self.population_layer,
-            stats=["sum"],
-            nodata=0,
-            geojson_out=False
-        )
-
-        pop_array = np.array([item['sum'] if item['sum'] is not None else 0 for item in stats])
-        # Replace negative values with 0 (WorldPop can have negatives)
-        pop_array = np.maximum(pop_array, 0)
-        print(f"📊 Population per zone: min={np.min(pop_array)}, max={np.max(pop_array)}, mean={np.mean(pop_array):.2f}")
-        return pop_array
 
     def evaluate(self, solution_matrix: np.ndarray) -> float:
         """Minimize variance in vehicle distribution across hexagons."""
@@ -210,36 +183,26 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         )
         return np.var(accessibility_scores)
 
+
+
     def _calculate_population_weighted_variance(self, vehicles_per_zone: np.ndarray) -> float:
-        pop = self.population_per_zone
-
-        if pop is None or len(pop) != len(vehicles_per_zone):
-            raise ValueError("Population data is not properly initialized or mismatched.")
-
-        # Apply power transformation to population if needed
-        pop_weighted = np.power(pop, self.population_power)
-
-        mean_weighted = np.sum(pop_weighted * vehicles_per_zone) / np.sum(pop_weighted) if np.sum(pop_weighted) > 0 else 0
-        variance_weighted = np.sum(pop_weighted * (vehicles_per_zone - mean_weighted) ** 2) / np.sum(pop_weighted) if np.sum(pop_weighted) > 0 else 0
-        return variance_weighted
-
+        """Use shared population-weighted variance calculation."""
+        return calculate_population_weighted_variance(
+            vehicles_per_zone, self.population_per_zone, self.population_power
+        )
 
     def _calculate_population_weighted_spatial_variance(
         self, vehicles_per_zone: np.ndarray
     ) -> float:
-        """
-        Calculate population-weighted variance using spatial lag accessibility.
-        """
+        """Calculate population-weighted variance using spatial lag accessibility."""
         accessibility_scores = self.spatial_system._calculate_accessibility_scores(
             vehicles_per_zone, self.alpha
         )
 
-        pop = self.population_per_zone
-        # Apply power transformation to population if needed
-        pop_weighted = np.power(pop, self.population_power)
-        mean_weighted = np.sum(pop_weighted * accessibility_scores) / np.sum(pop_weighted) if np.sum(pop_weighted) > 0 else 0
-        variance_weighted = np.sum(pop_weighted * (accessibility_scores - mean_weighted) ** 2) / np.sum(pop_weighted) if np.sum(pop_weighted) > 0 else 0
-        return variance_weighted
+        # Use shared variance calculation
+        return calculate_population_weighted_variance(
+            accessibility_scores, self.population_per_zone, self.population_power
+        )
 
     def get_detailed_analysis(self, solution_matrix: np.ndarray) -> dict[str, Any]:
         """Get detailed spatial equity analysis."""
