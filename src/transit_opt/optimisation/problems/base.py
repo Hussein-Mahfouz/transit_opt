@@ -331,8 +331,8 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
     Constraint handler for per-interval fleet size limits.
 
     This constraint ensures that fleet requirements for each time interval
-    individually do not exceed specified limits. Useful for scenarios where
-    you have different capacity constraints by time of day.
+    individually do not exceed specified limits and/or stay above minimum levels. 
+    Useful for scenarios where you have different capacity constraints by time of day.
 
     Configuration Parameters:
         baseline (str): How to determine baseline fleet per interval
@@ -341,6 +341,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             - 'manual': Use manually specified values
         baseline_values (List[float], optional): Manual values per interval
         tolerance (float): Allowed increase above baseline per interval
+        min_fraction (float): Allowed reduction below baseline per interval
         allow_borrowing (bool, optional): Whether intervals can borrow unused
                                         capacity from other intervals
 
@@ -438,12 +439,30 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
     """
 
     def _calculate_n_constraints(self) -> int:
-        """One constraint per time interval."""
-        return self.n_intervals
+        """Calculate constraints: intervals × (ceiling + floor constraints)."""
+        n_ceiling = self.n_intervals if self.config.get('tolerance') is not None else 0
+        n_floor = self.n_intervals if self.config.get('min_fraction') is not None else 0
+        return n_ceiling + n_floor
 
     def _validate_config(self) -> None:
         """Validate per-interval fleet constraint configuration."""
         super()._validate_config()
+
+        tolerance = self.config.get('tolerance', None)
+        min_fraction = self.config.get('min_fraction', None)
+
+        # At least one constraint must be specified
+        if tolerance is None and min_fraction is None:
+            raise ValueError(
+                "FleetPerIntervalConstraintHandler must specify either 'tolerance' "
+                "or 'min_fraction' or both"
+            )
+        # Validate parameter ranges
+        if tolerance is not None and tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
+
+        if min_fraction is not None and not (0.0 <= min_fraction <= 1.0):
+            raise ValueError("min_fraction must be between 0.0 and 1.0")
 
         if "baseline" not in self.config:
             raise ValueError("Per-interval fleet constraint requires 'baseline'")
@@ -456,34 +475,111 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             raise ValueError("Manual baseline requires 'baseline_values'")
 
         # Set defaults
-        self.config.setdefault("tolerance", 0.1)
         self.config.setdefault("allow_borrowing", False)
 
     def evaluate(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
-        Evaluate per-interval fleet constraints.
+        Evaluate both ceiling and floor constraints for fleet per interval.
 
         Args:
-            solution_matrix: Decision matrix (n_routes × n_intervals)
+            solution_matrix: Decision matrix (n_routes × n_intervals) - PT only
 
         Returns:
-            Array of constraint violations, one per interval:
-            [interval_0_usage - limit_0, ..., interval_n_usage - limit_n]
+            Array of constraint violations where <= 0 means satisfied.
+            Order: [ceiling_violations_per_interval..., floor_violations_per_interval...]
         """
         # Calculate fleet requirements by interval
         fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
 
-        # Get limits for each interval
-        fleet_limits = self._get_interval_limits()
+        violations = []
 
-        # Calculate constraint violations
-        violations = fleet_per_interval - fleet_limits
+        # Check ceiling constraints
+        tolerance = self.config.get('tolerance', None)
+        if tolerance is not None:
+            ceiling_violations = self._check_ceiling_violations(fleet_per_interval)
+            violations.extend(ceiling_violations)
 
-        # Handle borrowing if enabled
-        if self.config["allow_borrowing"]:
-            violations = self._apply_borrowing_logic(violations, fleet_limits)
+        # Check floor constraints
+        min_fraction = self.config.get('min_fraction', None)
+        if min_fraction is not None:
+            floor_violations = self._check_floor_violations(fleet_per_interval)
+            violations.extend(floor_violations)
+
+        return np.array(violations)
+
+
+    def _check_ceiling_violations(self, fleet_per_interval: np.ndarray) -> list[float]:
+        """Check ceiling constraint violations"""
+        violations = []
+        baseline_fleet = self._get_interval_baselines()
+        tolerance = self.config['tolerance']
+
+        for interval_idx in range(self.n_intervals):
+            current_fleet = fleet_per_interval[interval_idx]
+            max_allowed = baseline_fleet[interval_idx] * (1 + tolerance)
+
+            # Positive violation means constraint is violated
+            violation = current_fleet - max_allowed
+            violations.append(violation)
 
         return violations
+
+    def _check_floor_violations(self, fleet_per_interval: np.ndarray) -> list[float]:
+        """Check floor constraint violations"""
+        violations = []
+        baseline_fleet = self._get_interval_baselines()
+        min_fraction = self.config['min_fraction']
+
+        for interval_idx in range(self.n_intervals):
+            current_fleet = fleet_per_interval[interval_idx]
+            min_required = baseline_fleet[interval_idx] * min_fraction
+
+            # Positive violation means constraint is violated (current < required)
+            violation = min_required - current_fleet
+            violations.append(violation)
+
+        return violations
+
+    def _get_interval_baselines(self) -> np.ndarray:
+        """Get baseline fleet values for each interval (shared by ceiling/floor logic)."""
+        if self.config["baseline"] == "manual":
+            baseline_values = np.array(self.config["baseline_values"])
+            if len(baseline_values) != self.n_intervals:
+                raise ValueError(f"Manual baseline must have {self.n_intervals} values")
+            return baseline_values
+        else:
+            # Extract from fleet analysis (existing logic)
+            fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
+
+            if self.config["baseline"] == "current_by_interval":
+                baseline_values = fleet_analysis.get("current_fleet_by_interval")
+                return np.array(baseline_values)
+            elif self.config["baseline"] == "current_peak":
+                peak_fleet = fleet_analysis.get("total_current_fleet_peak")
+                return np.full(self.n_intervals, peak_fleet)
+            else:
+                raise ValueError(f"Unknown baseline: {self.config['baseline']}")
+
+    def get_constraint_info(self) -> dict[str, Any]:
+        """Get information about this constraint handler."""
+        constraint_types = []
+        if self.config.get('tolerance') is not None:
+            constraint_types.append(f"ceiling (tolerance: {self.config['tolerance']})")
+        if self.config.get('min_fraction') is not None:
+            constraint_types.append(f"floor (min_fraction: {self.config['min_fraction']})")
+
+        return {
+            "handler_type": f"FleetPerInterval ({', '.join(constraint_types)})",
+            "n_constraints": self.n_constraints,
+            "baseline": self.config['baseline'],
+            "constraint_details": {
+                "tolerance": self.config.get('tolerance'),
+                "min_fraction": self.config.get('min_fraction'),
+                "allow_borrowing": self.config.get('allow_borrowing', False)
+            }
+        }
+
+
 
     def _get_interval_limits(self) -> np.ndarray:
         """Get fleet limits for each time interval."""

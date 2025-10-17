@@ -450,18 +450,42 @@ class TestFleetPerIntervalConstraintHandler:
         """
         print("\n🔍 TESTING PER-INTERVAL CONFIGURATION VALIDATION:")
 
+        # Missing both tolerance and min_fraction
+        print("   Testing missing both tolerance and min_fraction...")
+        config = {"baseline": "current_by_interval"}  # Neither tolerance nor min_fraction
+        with pytest.raises(ValueError,
+                           match="FleetPerIntervalConstraintHandler must specify either 'tolerance' "
+                "or 'min_fraction' or both"):
+            FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+        print("   ✓ Correctly rejects missing both parameters")
+
         # Test missing baseline
         print("   Testing missing baseline...")
-        with pytest.raises(ValueError, match="requires 'baseline'"):
+        with pytest.raises(ValueError,
+                           match="FleetPerIntervalConstraintHandler must specify either 'tolerance' "
+                "or 'min_fraction' or both"):
             FleetPerIntervalConstraintHandler({}, sample_optimization_data)
         print("   ✓ Correctly rejects missing baseline")
 
         # Test invalid baseline
         print("   Testing invalid baseline...")
-        config = {"baseline": "invalid"}
+        config = {"baseline": "invalid", "tolerance": 0.1}
         with pytest.raises(ValueError, match="baseline must be one of"):
             FleetPerIntervalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects invalid baseline")
+
+        # Validate parameter ranges
+        print("   Testing invalid min_fraction...")
+        config = {"baseline": "current_by_interval", "min_fraction": 1.5}  # > 1.0
+        with pytest.raises(ValueError, match="min_fraction must be between 0.0 and 1.0"):
+            FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+        print("   ✓ Correctly rejects invalid min_fraction")
+
+        print("   Testing negative tolerance...")
+        config = {"baseline": "current_by_interval", "tolerance": -0.1}  # < 0
+        with pytest.raises(ValueError, match="tolerance must be non-negative"):
+            FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+        print("   ✓ Correctly rejects negative tolerance")
 
         print("✅ Per-interval configuration validation tests passed!")
 
@@ -551,6 +575,61 @@ class TestFleetPerIntervalConstraintHandler:
             f"\n   📊 SUMMARY: {violations_match}/{len(expected_violations)} intervals matched exactly"
         )
         print("✅ Per-interval constraint test passed!")
+
+    def test_floor_only_constraint(self, sample_optimization_data, sample_solutions):
+        """Test floor-only constraint"""
+        print("\n🔽 TESTING FLOOR-ONLY CONSTRAINT:")
+
+        config = {
+            "baseline": "current_by_interval",
+            "min_fraction": 0.7  # Only floor constraint, no ceiling
+        }
+
+        handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+        n_intervals = sample_optimization_data["n_intervals"]
+
+        print(f"   📊 Expected constraints: {n_intervals} (floor only)")
+        print(f"   📊 Actual constraints: {handler.n_constraints}")
+
+        assert handler.n_constraints == n_intervals, f"Should generate {n_intervals} floor constraints"
+
+        # Test with low service (likely to violate floor constraint)
+        violations = handler.evaluate(sample_solutions["low_service"])
+        print(f"   🧪 Violations: {violations}")
+
+        assert len(violations) == n_intervals, "Should return one violation per interval"
+
+        # Basic sanity check: violations should be numeric
+        assert all(isinstance(v, (int, float)) for v in violations), "All violations should be numeric"
+        print("✅ Floor-only constraint test passed!")
+
+    def test_combined_ceiling_floor_constraint(self, sample_optimization_data, sample_solutions):
+        """Test combined ceiling + floor constraints (new functionality)."""
+        print("\n🔗 TESTING COMBINED CEILING + FLOOR CONSTRAINTS:")
+
+        config = {
+            "baseline": "current_by_interval",
+            "tolerance": 0.25,      # Ceiling constraint
+            "min_fraction": 0.6     # Floor constraint
+        }
+
+        handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+        n_intervals = sample_optimization_data["n_intervals"]
+        expected_constraints = 2 * n_intervals  # ceiling + floor
+
+        print(f"   📊 Expected constraints: {expected_constraints} ({n_intervals} ceiling + {n_intervals} floor)")
+        print(f"   📊 Actual constraints: {handler.n_constraints}")
+
+        assert handler.n_constraints == expected_constraints
+
+        # Test evaluation returns correct number of violations
+        violations = handler.evaluate(sample_solutions["medium_service"])
+        print(f"Violations shape: {violations.shape}")
+        print(f"First {n_intervals} (ceiling): {violations[:n_intervals]}")
+        print(f"Last {n_intervals} (floor): {violations[n_intervals:]}")
+
+        assert len(violations) == expected_constraints
+        print("✅ Combined ceiling + floor constraint test passed!")
 
 
 # ================================================================================================
