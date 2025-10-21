@@ -12,7 +12,7 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler
+from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
 
 
 class TransitOptimizationProblem(Problem):
@@ -327,12 +327,16 @@ class TransitOptimizationProblem(Problem):
 
                     for constraint in self.constraints:
                         try:
-                            # For now, constraints only handle PT part #TODO: extend for DRT
-                            if self.drt_enabled:
+                            # Smart constraint handling based on type and DRT status
+                            if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                                # FleetTotalConstraintHandler can handle full PT+DRT solution
+                                violations = constraint.evaluate(solution)
+                            elif self.drt_enabled:
+                                # Other constraints only handle PT part when DRT enabled
                                 violations = constraint.evaluate(solution['pt'])
                             else:
+                                # PT-only case: pass solution directly
                                 violations = constraint.evaluate(solution)
-
                             # Store violations in correct positions
                             constraint_end_idx = constraint_start_idx + len(violations)
                             G[i, constraint_start_idx:constraint_end_idx] = violations
