@@ -1216,3 +1216,344 @@ class GTFSDataPreparator:
             ]
 
         return filtered_feed
+
+    # ------------------------------
+    # Adding DRT Support
+    # ------------------------------
+
+    def extract_optimization_data_with_drt(
+        self,
+        allowed_headways: list[int],
+        drt_config: dict | None = None
+    ) -> dict[str, Any]:
+        """
+        Extract optimization data with optional DRT integration and spatial layer loading.
+        This method extends the base PT optimization data extraction to include DRT-specific
+        configurations. This includes user specified:
+        - DRT service areas (one shp file per DRT service)
+        - a list of allowed_fleet_sizes. Similar to allowed_headways, each DRT service area will be assigned a value 
+        from this discrete list during the optimisation problem
+        
+        Args:
+            allowed_headways: List of allowed headway values in minutes for PT
+            drt_config: Optional DRT configuration dict with structure:
+                {
+                    'enabled': bool,
+                    'target_crs': str,  # CRS to convert all zones to (e.g., 'EPSG:3857', 'EPSG:4326')
+                    'zones': [
+                        {
+                            'zone_id': str,
+                            'service_area_path': str,  # Path to shapefile (.shp)
+                            'allowed_fleet_sizes': [int, ...],  # e.g., [0, 5, 10, 15, 20]
+                            'zone_name': str  # Human-readable name
+                        }
+                    ]
+                }
+        
+        Returns:
+            Extended optimization data with DRT support including loaded spatial layers
+        """
+        print("🔧 EXTRACTING OPTIMIZATION DATA WITH DRT SUPPORT:")
+
+        # Get base PT optimization data
+        base_opt_data = self.extract_optimization_data(allowed_headways)
+        print(f"   ✅ Base PT data extracted: {base_opt_data['n_routes']} routes, {base_opt_data['n_intervals']} intervals")
+
+        # Add DRT configuration if provided
+        if drt_config and drt_config.get('enabled', False):
+            print("   🚁 Adding DRT configuration...")
+
+            # Validate DRT configuration
+            self._validate_drt_config(drt_config)
+
+            # Load spatial layers for each DRT zone
+            drt_zones_with_geometry = self._load_drt_spatial_layers(drt_config)
+
+            # Calculate DRT dimensions
+            n_drt_zones = len(drt_zones_with_geometry)
+
+            # Find maximum number of fleet choices across all DRT zones
+            max_drt_choices = max(len(zone.get('allowed_fleet_sizes', [])) for zone in drt_zones_with_geometry)
+
+            # Calculate total decision variables for combined problem
+            pt_variables = base_opt_data['n_routes'] * base_opt_data['n_intervals']
+            drt_variables = n_drt_zones * base_opt_data['n_intervals']
+            total_variables = pt_variables + drt_variables
+
+            # Create combined variable bounds
+            combined_bounds = []
+            # PT bounds: each PT variable can choose from len(allowed_headways) options
+            pt_bounds = [len(allowed_headways)] * pt_variables
+            combined_bounds.extend(pt_bounds)
+
+            # Create bounds for each DRT zone
+            for zone in drt_zones_with_geometry:
+                zone_choices = len(zone.get('allowed_fleet_sizes', []))
+                zone_bounds = [zone_choices] * base_opt_data['n_intervals']
+                combined_bounds.extend(zone_bounds)
+
+            # Extend base optimization data with DRT fields
+            base_opt_data.update({
+                # DRT configuration with loaded spatial data
+                'drt_enabled': True,
+                'drt_config': {
+                    'enabled': True,
+                    'target_crs': drt_config.get('target_crs', 'EPSG:3857'),  # Store target CRS
+                    'zones': drt_zones_with_geometry,
+                    'total_service_area': self._calculate_total_drt_service_area(drt_zones_with_geometry)
+                },
+                'n_drt_zones': n_drt_zones,
+                'drt_max_choices': max_drt_choices,
+
+                # Combined problem dimensions
+                'total_decision_variables': total_variables,
+                'pt_decision_variables': pt_variables,
+                'drt_decision_variables': drt_variables,
+                'combined_variable_bounds': combined_bounds,
+                'variable_structure': {
+                    'pt_size': pt_variables,
+                    'drt_size': drt_variables,
+                    # solution matrix shapes
+                    'pt_shape': (base_opt_data['n_routes'], base_opt_data['n_intervals']),
+                    'drt_shape': (n_drt_zones, base_opt_data['n_intervals']),
+                }
+            })
+
+            # Create combined initial solution with DRT variables
+            combined_initial_solution = self._create_combined_initial_solution(
+                base_opt_data['initial_solution'],  # PT-only initial solution
+                drt_zones_with_geometry,
+                base_opt_data['n_intervals']
+            )
+
+            # Replace the PT-only initial solution with combined solution
+            base_opt_data['initial_solution'] = combined_initial_solution
+
+            print("   🚁 DRT integration complete:")
+            print(f"      DRT zones: {n_drt_zones}")
+            print(f"      Max fleet choices per zone: {max_drt_choices}")
+            print(f"      PT variables: {pt_variables}")
+            print(f"      DRT variables: {drt_variables}")
+            print(f"      Total variables: {total_variables}")
+            print(f"      Total DRT service area: {base_opt_data['drt_config']['total_service_area']:.2f} km²")
+
+        else:
+            # No DRT - add compatibility fields
+            print("   🚌 PT-only mode (no DRT)")
+            base_opt_data.update({
+                'drt_enabled': False,
+                'drt_config': None,
+                'n_drt_zones': 0,
+                'drt_max_choices': 0,
+                'total_decision_variables': base_opt_data['n_routes'] * base_opt_data['n_intervals'],
+                'pt_decision_variables': base_opt_data['n_routes'] * base_opt_data['n_intervals'],
+                'drt_decision_variables': 0,
+                'combined_variable_bounds': [len(allowed_headways)] * (base_opt_data['n_routes'] * base_opt_data['n_intervals']),
+                'pt_solution_shape': (base_opt_data['n_routes'], base_opt_data['n_intervals']),
+                'drt_solution_shape': (0, base_opt_data['n_intervals']),
+            })
+
+        return base_opt_data
+
+    def _load_drt_spatial_layers(self, drt_config: dict) -> list[dict]:
+        """
+        Load DRT service area shapefiles and attach geometry to zone configurations.
+        
+        Args:
+            drt_config: DRT configuration with zone definitions
+            
+        Returns:
+            List of zone dictionaries with added 'geometry' and 'area_km2' fields
+        """
+        from pathlib import Path
+
+        import geopandas as gpd
+
+        print("   🗺️ Loading DRT spatial layers...")
+
+        # Get target CRS from config with smart defaults
+        target_crs = drt_config.get('target_crs')
+        if target_crs is None:
+            raise ValueError("DRT config must specify 'target_crs' for spatial layers")
+        print(f"      Target CRS: {target_crs}")
+
+        zones_with_geometry = []
+        total_area = 0.0
+
+        for i, zone in enumerate(drt_config['zones']):
+            zone_id = zone['zone_id']
+            service_area_path = zone['service_area_path']
+
+            print(f"      Loading zone {i+1}: {zone_id}")
+            print(f"         Path: {service_area_path}")
+
+            # Validate file exists
+            if not Path(service_area_path).exists():
+                raise FileNotFoundError(f"DRT service area file not found: {service_area_path}")
+
+            try:
+                # Load shapefile
+                zone_gdf = gpd.read_file(service_area_path)
+
+                # Log original CRS
+                original_crs = zone_gdf.crs.to_string() if zone_gdf.crs else 'Unknown'
+                print(f"         Original CRS: {original_crs}")
+
+
+                # Ensure we have at least one polygon
+                if len(zone_gdf) == 0:
+                    raise ValueError(f"No features found in DRT service area: {service_area_path}")
+
+                # If multiple polygons, union them into a single service area
+                if len(zone_gdf) > 1:
+                    print(f"         Unioning {len(zone_gdf)} polygons into single service area")
+                    service_area_geometry = zone_gdf.geometry.unary_union
+                else:
+                    service_area_geometry = zone_gdf.geometry.iloc[0]
+
+                # Convert to crs specified in drt_config
+                print(f"         🔄 Converting: {original_crs} → {target_crs}")
+                zone_gdf = zone_gdf.to_crs(target_crs)
+
+                # Calculate area in km² (convert to metric CRS if needed)
+                area_km2 = service_area_geometry.area / 1_000_000  # Default conversion assuming metric CRS
+                total_area += area_km2
+
+                # Create enhanced zone configuration
+                enhanced_zone = zone.copy()
+                enhanced_zone.update({
+                    'geometry': service_area_geometry,
+                    'area_km2': area_km2,
+                    'crs': target_crs,
+                    'feature_count': len(zone_gdf)
+                })
+
+                zones_with_geometry.append(enhanced_zone)
+
+                # Add DRT operational parameters from config (used for calculating drt service coverage)
+                default_drt_speed = drt_config.get('default_drt_speed_kmh', 25.0)
+
+                for zone in zones_with_geometry:
+                    # Use zone-specific speed if provided, otherwise use default from config
+                    zone['drt_speed_kmh'] = zone.get('drt_speed_kmh', default_drt_speed)
+
+                    print(f"   DRT Zone {zone['zone_id']}: {zone['area_km2']:.2f} km², "
+                        f"speed {zone['drt_speed_kmh']} km/h")
+
+                print(f"         ✅ Loaded: {area_km2:.2f} km² service area")
+                print(f"            CRS: {enhanced_zone['crs']}")
+                print(f"            Fleet choices: {zone.get('allowed_fleet_sizes', [])}")
+
+            except Exception as e:
+                raise ValueError(f"Failed to load DRT service area for zone {zone_id}: {e}")
+
+        print("   ✅ All DRT spatial layers loaded successfully")
+        print(f"      Total DRT service area: {total_area:.2f} km²")
+
+        return zones_with_geometry
+
+    def _calculate_total_drt_service_area(self, zones_with_geometry: list[dict]) -> float:
+        """Calculate total service area coverage across all DRT zones."""
+        return sum(zone['area_km2'] for zone in zones_with_geometry)
+
+    def _validate_drt_config(self, drt_config: dict):
+        """Validate DRT configuration structure with updated field names."""
+        print("   🔍 Validating DRT configuration...")
+
+        if not isinstance(drt_config, dict):
+            raise ValueError("drt_config must be a dictionary")
+
+        if not drt_config.get('enabled', False):
+            return  # No validation needed if disabled
+
+        # check crs is specified correctly
+        target_crs = drt_config.get('target_crs')
+        if not target_crs or not isinstance(target_crs, str):
+            raise ValueError("DRT config must specify a valid target_crs string when enabled")
+
+        zones = drt_config.get('zones', [])
+        if not zones:
+            raise ValueError("DRT config must specify at least one zone when enabled")
+
+        required_zone_fields = ['zone_id', 'service_area_path', 'allowed_fleet_sizes']
+        for i, zone in enumerate(zones):
+            if not isinstance(zone, dict):
+                raise ValueError(f"DRT zone {i} must be a dictionary")
+
+            for field in required_zone_fields:
+                if field not in zone:
+                    raise ValueError(f"DRT zone {i} missing required field: {field}")
+
+            # Validate allowed_fleet_sizes
+            allowed_fleet_sizes = zone['allowed_fleet_sizes']
+            if not isinstance(allowed_fleet_sizes, list) or not allowed_fleet_sizes:
+                raise ValueError(f"DRT zone {i} must have non-empty allowed_fleet_sizes list")
+
+            # Validate fleet sizes are non-negative integers
+            for j, fleet_size in enumerate(allowed_fleet_sizes):
+                if not isinstance(fleet_size, int) or fleet_size < 0:
+                    raise ValueError(f"DRT zone {i} allowed_fleet_sizes[{j}] must be a non-negative integer, got {fleet_size}")
+
+            # Validate service area path is string
+            service_area_path = zone['service_area_path']
+            if not isinstance(service_area_path, str):
+                raise ValueError(f"DRT zone {i} service_area_path must be a string path")
+
+        print(f"   ✅ DRT configuration valid: {len(zones)} zones")
+        print(f"      Target CRS: {target_crs}")
+
+    def _create_combined_initial_solution(
+        self,
+        pt_initial_solution: np.ndarray,
+        drt_zones: list[dict],
+        n_intervals: int
+    ) -> np.ndarray:
+        """
+        Create combined PT+DRT initial solution by adding DRT variables.
+        
+        Args:
+            pt_initial_solution: PT-only initial solution matrix (n_routes × n_intervals)
+            drt_zones: List of DRT zone configurations
+            n_intervals: Number of time intervals
+            
+        Returns:
+            Combined flat solution vector with PT + DRT variables
+        """
+        print("   🔧 Creating combined PT+DRT initial solution...")
+
+        # Flatten PT solution
+        pt_flat = pt_initial_solution.flatten()
+
+        # Create DRT initial solution (conservative approach: start with minimal service)
+        n_drt_zones = len(drt_zones)
+        drt_initial_matrix = np.zeros((n_drt_zones, n_intervals), dtype=int)
+
+        # Set initial DRT service levels
+        for zone_idx, zone in enumerate(drt_zones):
+            allowed_fleet_sizes = zone.get('allowed_fleet_sizes', [])
+
+            if len(allowed_fleet_sizes) > 1:
+                # Start with second-smallest fleet size (avoid 0 = no service)
+                # This gives a warm start with minimal service
+                initial_fleet_idx = 1 if allowed_fleet_sizes[0] == 0 else 0
+                drt_initial_matrix[zone_idx, :] = initial_fleet_idx
+
+                fleet_size = allowed_fleet_sizes[initial_fleet_idx]
+                print(f"      Zone {zone['zone_id']}: Initial fleet choice {initial_fleet_idx} ({fleet_size} vehicles)")
+            else:
+                # Fallback: use index 0
+                drt_initial_matrix[zone_idx, :] = 0
+                print(f"      Zone {zone['zone_id']}: Default fleet choice 0")
+
+        # Flatten DRT solution
+        drt_flat = drt_initial_matrix.flatten()
+
+        # Combine PT and DRT
+        combined_solution = np.concatenate([pt_flat, drt_flat])
+
+        print("   ✅ Combined initial solution created:")
+        print(f"      PT variables: {len(pt_flat)}")
+        print(f"      DRT variables: {len(drt_flat)}")
+        print(f"      Total variables: {len(combined_solution)}")
+
+        return combined_solution

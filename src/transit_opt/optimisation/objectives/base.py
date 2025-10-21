@@ -99,6 +99,27 @@ class BaseSpatialObjective(BaseObjective):
 
         print(f"✅ Spatial system ready: {self._get_spatial_summary()}")
 
+    def visualize(
+        self,
+        solution_matrix: np.ndarray,
+        aggregation: str = "average",
+        interval_idx: int | None = None,
+        figsize=(15, 12),
+        show_stops=True,
+        show_drt_zones=None,
+        ax=None,
+        vmin=None,
+        vmax=None,
+        **kwargs
+    ):
+        """
+        Generic visualization method for all spatial objectives.
+        
+        This method should be overridden by each objective to provide
+        objective-specific data conversion and visualization parameters.
+        """
+        raise NotImplementedError("Subclasses must implement visualize()")
+
     @abstractmethod
     def _create_spatial_system(self):
         """Create the specific spatial representation."""
