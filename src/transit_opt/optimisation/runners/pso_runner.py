@@ -1637,6 +1637,8 @@ class PSORunner:
                 # Collect results as they complete
                 for future in as_completed(future_to_run):
                     run_idx = future_to_run[future]
+                    result = None  # ← INITIALIZE result to None each iteration
+
                     try:
                         result = future.result()
                        # Create lightweight summary
@@ -1668,15 +1670,21 @@ class PSORunner:
 
 
                         # Show clean progress update
-                        violations = result.constraint_violations
-                        feasible_status = "✅ Feasible" if violations['feasible'] else "❌ Infeasible"
+                        violations_text = f"Violations={run_summary['violations']}" if not run_summary['feasible'] else f"FeasibleSols={run_summary['best_feasible_solutions_count']}"
+                        feasible_status = "✅ Feasible" if run_summary['feasible'] else "❌ Infeasible"
+
                         print(f"[{completed_runs:2d}/{runs_to_perform}] Run {run_idx:2d}: "
-                              f"Objective={result.best_objective:.6f}, "
-                              f"Gens={result.generations_completed:2d}, "
-                              f"Time={result.optimization_time:5.1f}s, "
-                              f"FeasibleSols={len(result.best_feasible_solutions)}, {feasible_status}")
+                            f"Objective={run_summary['objective']:.6f}, "
+                            f"Gens={run_summary['generations']:2d}, "
+                            f"Time={run_summary['time']:5.1f}s, "
+                            f"{violations_text}, {feasible_status}")
+
                     except Exception as e:
-                        print(f"[{completed_runs+1:2d}/{runs_to_perform}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
+                        print(f"❌ Run {run_idx:2d}: FAILED - {str(e)}")
+
+                        # Clean up result
+                        if result is not None:
+                            del result
                         continue
             # Clean up environment variable
             os.environ.pop('PARALLEL_EXECUTION', None)
