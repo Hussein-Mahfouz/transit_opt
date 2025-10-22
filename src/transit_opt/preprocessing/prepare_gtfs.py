@@ -947,7 +947,8 @@ class GTFSDataPreparator:
             constraints or bounds - those are handled by optimization problem classes that
             use this baseline data to set their own constraint levels.
         """
-        from ..optimisation.utils.fleet_calculations import calculate_fleet_requirements
+        from ..optimisation.utils.fleet_calculations import \
+            calculate_fleet_requirements
 
         logger.debug("Analyzing current GTFS fleet requirements by interval")
         logger.debug(
@@ -1535,7 +1536,9 @@ class GTFSDataPreparator:
             if len(allowed_fleet_sizes) > 1:
                 # Start with second-smallest fleet size (avoid 0 = no service)
                 # This gives a warm start with minimal service
-                initial_fleet_idx = 1 if allowed_fleet_sizes[0] == 0 else 0
+                # initial_fleet_idx = 1 if allowed_fleet_sizes[0] == 0 else 0
+                # Ignore logic above. Start with 0 vehicles
+                initial_fleet_idx = 0
                 drt_initial_matrix[zone_idx, :] = initial_fleet_idx
 
                 fleet_size = allowed_fleet_sizes[initial_fleet_idx]

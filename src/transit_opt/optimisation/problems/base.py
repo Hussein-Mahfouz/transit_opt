@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+import pytest
 
 
 class BaseConstraintHandler(ABC):
@@ -402,6 +403,235 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
         fleet_limit = baseline * (1 + tolerance)
 
         return fleet_limit
+
+
+    def test_fleet_total_constraint_with_drt_integration(self):
+        """Test FleetTotalConstraintHandler with PT+DRT combined fleet calculation."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create DRT-enabled optimization data
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)  # 4 intervals
+        allowed_headways = [15, 30, 60, 120]
+
+        # DRT configuration with test shapefiles
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'default_drt_speed_kmh': 25.0,
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 10, 20, 30],  # 4 choices
+                    'zone_name': 'Duke Area 1',
+                    'drt_speed_kmh': 20.0
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 5, 15, 25],   # 4 choices
+                    'zone_name': 'Duke Area 2'
+                }
+            ]
+        }
+
+        # Extract PT+DRT optimization data
+        opt_data = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
+
+        # Verify DRT is enabled
+        assert opt_data['drt_enabled'] is True
+        assert opt_data['n_drt_zones'] == 2
+
+        # Create constraint handler with PT baseline (DRT baseline is always 0)
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.30,  # 30% increase allowed
+            'measure': 'peak'
+        }
+
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # ===== TEST PT-ONLY SOLUTION (backward compatibility) =====
+        print("\n🚌 Testing PT-only solution handling...")
+
+        # Create PT-only solution matrix
+        pt_solution = np.array([
+            [1, 2, 1, 0],  # Route 1: moderate service
+            [0, 1, 2, 1],  # Route 2: different pattern
+        ])
+
+        # Test that PT-only solution works when DRT is enabled
+        pt_violations = constraint.evaluate(pt_solution)
+        assert len(pt_violations) == 1, "Should return single constraint violation value"
+
+        # ===== TEST PT+DRT COMBINED SOLUTION =====
+        print("🚁 Testing PT+DRT combined solution...")
+
+        # Create PT+DRT combined solution
+        drt_solution = np.array([
+            [2, 1, 3, 1],  # Zone 1: [20, 10, 30, 10] vehicles
+            [1, 2, 1, 0],  # Zone 2: [5, 15, 5, 0] vehicles
+        ])
+
+        combined_solution = {
+            'pt': pt_solution,
+            'drt': drt_solution
+        }
+
+        # Test combined solution evaluation
+        combined_violations = constraint.evaluate(combined_solution)
+        assert len(combined_violations) == 1, "Should return single constraint violation value"
+
+        # ===== VERIFY CONSTRAINT LOGIC =====
+        print("🔍 Verifying constraint calculations...")
+
+        # Calculate expected PT fleet (using constraint's internal method)
+        pt_fleet_per_interval = constraint._calculate_fleet_from_solution(pt_solution)
+
+        # Calculate expected DRT fleet (using constraint's internal method)
+        drt_fleet_per_interval = constraint._calculate_drt_fleet_from_solution(drt_solution)
+
+        # Expected DRT fleet calculation:
+        # Zone 1: [20, 10, 30, 10] vehicles per interval
+        # Zone 2: [5, 15, 5, 0] vehicles per interval
+        # Total: [25, 25, 35, 10] vehicles per interval
+        zone1_fleet = [20, 10, 30, 10]  # From allowed_fleet_sizes[choice_idx]
+        zone2_fleet = [5, 15, 5, 0]     # From allowed_fleet_sizes[choice_idx]
+        expected_drt_fleet = np.array([25, 25, 35, 10])
+
+        print(f"   Expected DRT fleet by interval: {expected_drt_fleet}")
+        print(f"   Calculated DRT fleet by interval: {drt_fleet_per_interval}")
+        np.testing.assert_array_equal(drt_fleet_per_interval, expected_drt_fleet)
+
+        # Combined fleet should be PT + DRT
+        expected_combined_fleet = pt_fleet_per_interval + drt_fleet_per_interval
+
+        # Get baseline fleet limit (PT-only, as DRT doesn't exist in baseline)
+        baseline_pt_peak = opt_data['constraints']['fleet_analysis']['total_current_fleet_peak']
+        fleet_limit = baseline_pt_peak * (1 + constraint_config['tolerance'])
+
+        print(f"   PT baseline peak: {baseline_pt_peak}")
+        print(f"   Fleet limit (with tolerance): {fleet_limit}")
+        print(f"   Combined peak fleet: {np.max(expected_combined_fleet)}")
+
+        # Verify violation calculation
+        if constraint_config['measure'] == 'peak':
+            fleet_usage = np.max(expected_combined_fleet)
+        elif constraint_config['measure'] == 'average':
+            fleet_usage = np.mean(expected_combined_fleet)
+        elif constraint_config['measure'] == 'total':
+            fleet_usage = np.sum(expected_combined_fleet)
+
+        expected_violation = fleet_usage - fleet_limit
+
+        print(f"   Expected violation: {expected_violation}")
+        print(f"   Calculated violation: {combined_violations[0]}")
+
+        # Verify the violation calculation is correct
+        assert abs(combined_violations[0] - expected_violation) < 1e-6, \
+            f"Violation calculation incorrect: expected {expected_violation}, got {combined_violations[0]}"
+
+        # ===== TEST ERROR HANDLING =====
+        print("⚠️ Testing error handling...")
+
+        # Test that DRT-enabled constraint requires proper solution format
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            # Pass PT matrix directly when DRT is enabled - should fail
+            constraint.evaluate(pt_solution)
+
+        # Test missing keys in solution dict
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            incomplete_solution = {'pt': pt_solution}  # Missing 'drt' key
+            constraint.evaluate(incomplete_solution)
+
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            incomplete_solution = {'drt': drt_solution}  # Missing 'pt' key
+            constraint.evaluate(incomplete_solution)
+
+        # ===== VERIFY PERFORMANCE CHARACTERISTICS =====
+        print("📈 Verifying constraint behavior...")
+
+        # Test that combined constraint is more restrictive than PT-only
+        # (same baseline limit, but now includes DRT fleet in calculation)
+
+        # Create zero-DRT solution for comparison
+        zero_drt_solution = np.zeros_like(drt_solution)
+        minimal_combined_solution = {
+            'pt': pt_solution,
+            'drt': zero_drt_solution
+        }
+
+        minimal_violations = constraint.evaluate(minimal_combined_solution)
+
+        # Combined solution with DRT should have higher violation (more restrictive)
+        # assuming DRT adds fleet
+        if np.sum(drt_solution) > 0:  # If DRT solution has any vehicles
+            assert combined_violations[0] >= minimal_violations[0], \
+                "Adding DRT fleet should not decrease violation (make constraint less restrictive)"
+
+        print("✅ All PT+DRT constraint integration tests passed!")
+        print("   • Constraint correctly handles PT+DRT combined fleet")
+        print(f"   • DRT fleet calculation: {np.sum(expected_drt_fleet)} total DRT vehicles")
+        print(f"   • Combined peak fleet: {np.max(expected_combined_fleet)} vehicles")
+        print(f"   • Constraint violation: {combined_violations[0]:.3f}")
+        print(f"   • Constraint {'satisfied' if combined_violations[0] <= 0 else 'violated'}")
+
+
+    def test_fleet_total_constraint_drt_disabled_compatibility(self):
+        """Test that FleetTotalConstraintHandler works correctly when DRT is disabled."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create PT-only optimization data (DRT disabled)
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60, 120]
+
+        # Extract PT-only data (no DRT config)
+        opt_data = preparator.extract_optimization_data(allowed_headways)
+
+        # Verify DRT is disabled
+        assert opt_data.get('drt_enabled', False) is False
+
+        # Create constraint handler
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.20,
+            'measure': 'peak'
+        }
+
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # Create PT solution matrix
+        pt_solution = np.array([
+            [1, 2, 1, 0],  # Route 1
+            [0, 1, 2, 1],  # Route 2
+        ])
+
+        # Test 1: Standard matrix format (PT-only legacy)
+        violations_matrix = constraint.evaluate(pt_solution)
+        assert len(violations_matrix) == 1
+
+        # Test 2: Dict format with 'pt' key (should work even when DRT disabled)
+        solution_dict = {'pt': pt_solution}
+        violations_dict = constraint.evaluate(solution_dict)
+        assert len(violations_dict) == 1
+
+        # Both should give same result
+        np.testing.assert_array_almost_equal(violations_matrix, violations_dict)
+
+        print("✅ PT-only constraint compatibility verified!")
+        print(f"   • Matrix format violation: {violations_matrix[0]:.3f}")
+        print(f"   • Dict format violation: {violations_dict[0]:.3f}")
+        print("   • Both formats work correctly when DRT is disabled")
 
 
 class FleetPerIntervalConstraintHandler(BaseConstraintHandler):

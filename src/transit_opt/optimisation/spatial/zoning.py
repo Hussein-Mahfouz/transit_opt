@@ -631,22 +631,37 @@ class HexagonalZoneSystem:
         self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray]
     ) -> dict[str, np.ndarray]:
         """
-        Combine PT and DRT vehicle data consistently.
+        Combine PT and DRT vehicle data with temporally consistent peak calculation.
         
-        Args:
-            pt_data: PT vehicles data with all aggregation types
-            drt_data: DRT vehicles data with all aggregation types
-            
-        Returns:
-            Combined vehicles data with same structure
+        Peak Calculation Logic:
+        - Identifies the interval with highest total system demand (PT + DRT combined)
+        - Returns vehicle counts from that specific interval for temporal consistency
+        - Ensures PT and DRT peak values represent the SAME interval/time period
+        
         """
+        # Combine interval data first
+        combined_intervals = pt_data['intervals'] + drt_data['intervals']  # [intervals, zones]
+
+        # Find system-wide peak interval (when total vehicles needed is highest)
+        total_vehicles_by_interval = np.sum(combined_intervals, axis=1)  # [intervals]
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+
+        print("🔍 System peak analysis:")
+        print(f"   Peak interval: {peak_interval_idx} ({pt_data['interval_labels'][peak_interval_idx]})")
+        print(f"   Peak total vehicles: {total_vehicles_by_interval[peak_interval_idx]:.1f}")
+
+        # Peak = vehicles needed during system peak interval (temporally consistent)
+        peak_combined = combined_intervals[peak_interval_idx, :]
+
         return {
-            'intervals': pt_data['intervals'] + drt_data['intervals'],  # Element-wise addition
-            'average': pt_data['average'] + drt_data['average'],        # Element-wise addition
-            'peak': np.maximum(pt_data['peak'], drt_data['peak']),      # Element-wise maximum
-            'sum': pt_data['sum'] + drt_data['sum'],                    # Element-wise addition
-            'interval_labels': pt_data['interval_labels']              # Same labels
+            'intervals': combined_intervals,                           # [intervals, zones]
+            'average': np.mean(combined_intervals, axis=0),           # [zones] - time-averaged
+            'peak': peak_combined,                                    # [zones] - from peak interval
+            'sum': np.sum(combined_intervals, axis=0),               # [zones] - total across time
+            'interval_labels': pt_data['interval_labels']            # Same labels
         }
+
+
 
     def set_drt_zone_mappings(self, opt_data: dict):
         """Set DRT zone mappings from optimization data using efficient spatial operations."""
