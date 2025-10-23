@@ -4,11 +4,9 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-    validate_population_config,
-)
+from ..utils.population import (calculate_population_weighted_variance,
+                                interpolate_population_to_zones,
+                                validate_population_config)
 from .base import BaseSpatialObjective
 
 
@@ -131,11 +129,18 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
 
     def _create_spatial_system(self):
         """Use your existing HexagonalZoneSystem."""
+
+        # Extract DRT config if available
+        drt_config = None
+        if self.opt_data.get('drt_enabled', False):
+            drt_config = self.opt_data.get('drt_config')
+
         return HexagonalZoneSystem(
             gtfs_feed=self.gtfs_feed,
             hex_size_km=self.spatial_resolution,
             crs=self.crs,
             boundary=self.boundary,
+            drt_config=drt_config,
         )
 
     def _get_spatial_summary(self) -> str:
@@ -146,8 +151,18 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             features.append("population weighted [PLACEHOLDER]")
         return ", ".join(features)
 
-    def evaluate(self, solution_matrix: np.ndarray) -> float:
-        """Minimize variance in vehicle distribution across hexagons."""
+    def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
+        """
+        Minimize variance in vehicle distribution across hexagons.
+        
+        Args:
+                solution_matrix: 
+                - PT-only: Decision matrix (n_routes × n_intervals)
+                - PT+DRT: Dict with 'pt' and 'drt' keys
+                
+            Returns:
+                Objective value (lower is better)
+        """
         vehicles_data = self.spatial_system._vehicles_per_zone(
             solution_matrix, self.opt_data
         )
@@ -261,3 +276,70 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             )
 
         return analysis
+
+    def visualize(
+        self,
+        solution_matrix: np.ndarray,
+        aggregation: str = "average",
+        interval_idx: int | None = None,
+        figsize=(15, 12),
+        show_stops=True,
+        show_drt_zones=None,
+        ax=None,
+        vmin=None,
+        vmax=None,
+    ):
+        """
+        Visualize spatial coverage (vehicle distribution).
+        
+        Args:
+            solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
+            aggregation: 'average', 'peak', or 'intervals'
+            interval_idx: Specific interval index (only used when aggregation='intervals')
+            figsize: Figure size (only used if ax is None)
+            show_stops: Whether to show transit stops
+            show_drt_zones: Whether to show DRT service areas (auto-detects if None)
+            ax: Optional matplotlib axis to plot on
+            vmin: Minimum value for color scale (auto-calculated if None)
+            vmax: Maximum value for color scale (auto-calculated if None)
+            
+        Returns:
+            Tuple of (figure, axis) objects
+        """
+        # Calculate vehicles per zone using objective's data
+        vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
+
+        if aggregation == "intervals" and interval_idx is not None:
+            data_per_zone = vehicles_data["intervals"][interval_idx, :]
+            interval_labels = vehicles_data["interval_labels"]
+            title_suffix = f"(Interval {interval_idx}: {interval_labels[interval_idx]})"
+        else:
+            data_per_zone = vehicles_data[aggregation]
+            title_suffix = f"({aggregation.capitalize()} Coverage)"
+
+        # Use generic visualization infrastructure
+        return self.spatial_system._visualize_with_data(
+            data_per_zone=data_per_zone,
+            data_column_name="vehicles",
+            data_label="Vehicles per Zone",
+            colormap="YlOrRd",
+            optimization_data=self.opt_data,
+            title_suffix=title_suffix,
+            figsize=figsize,
+            show_stops=show_stops,
+            show_drt_zones=show_drt_zones,
+            ax=ax,
+            vmin=vmin,
+            vmax=vmax
+        )
+
+    # Keep the old method for backward compatibility
+    def visualize_spatial_coverage(self, *args, **kwargs):
+        """Deprecated: Use visualize() instead."""
+        import warnings
+        warnings.warn(
+            "visualize_spatial_coverage() is deprecated. Use visualize() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return self.visualize(*args, **kwargs)

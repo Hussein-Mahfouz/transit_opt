@@ -85,11 +85,16 @@ class HexagonalZoneSystem:
         hex_size_km: float = 2.0,
         crs: str = "EPSG:3857",
         boundary: Optional["StudyAreaBoundary"] = None,
+        drt_config: dict | None = None,
     ):
         self.gtfs_feed = gtfs_feed
         self.hex_size_km = hex_size_km
         self.crs = crs
         self.boundary = boundary
+
+        # Add evaluation counter for debug print management
+        self._evaluation_count = 0
+        self._print_frequency = 50  # Print every N evaluations (TODO: make configurable)
 
         # Validate that CRS is metric
         self._validate_metric_crs()
@@ -118,6 +123,10 @@ class HexagonalZoneSystem:
 
         # OPTIMIZED: Use spatial join instead of nested loops
         self.stop_zone_mapping = self._fast_map_stops_to_zones()
+
+        # DRT zone mappings (if provided) - AFTER boundary filtering
+        if drt_config is not None and drt_config.get('enabled', False):
+            self._set_drt_zone_mappings(drt_config)
 
         # OPTIMIZED: Pre-compute route-stop mappings
         self._precompute_route_stop_mappings()
@@ -411,13 +420,15 @@ class HexagonalZoneSystem:
         raise NotImplementedError("Zone population analysis coming in next update.")
 
     def _vehicles_per_zone(
-        self, solution_matrix: np.ndarray, optimization_data: dict[str, Any]
+        self, solution_matrix: np.ndarray | dict, optimization_data: dict[str, Any]
     ) -> dict[str, np.ndarray]:
         """
-        Calculate vehicles per zone with all aggregation types.
+         Calculate vehicles per zone with all aggregation types (PT + DRT).
 
         Args:
-            solution_matrix: Decision matrix (n_routes × n_intervals)
+            solution_matrix: 
+                - PT-only: Decision matrix (n_routes × n_intervals)
+                - PT+DRT: Dict with 'pt' and 'drt' keys
             optimization_data: Optimization data structure from GTFSDataPreparator
 
         Returns:
@@ -426,6 +437,50 @@ class HexagonalZoneSystem:
             - 'peak': Array of max vehicles per zone across time intervals
             - 'intervals': 2D array (n_zones × n_intervals) with vehicles per zone per interval
             - 'interval_labels': List of time interval labels from preparator
+        """
+        # Increment counter for this evaluation
+        self._evaluation_count += 1
+
+         # Determine if DRT is enabled
+        drt_enabled = optimization_data.get('drt_enabled', False)
+
+        # Only print debug info every N evaluations
+        should_print = (self._evaluation_count % self._print_frequency == 0 or
+                    self._evaluation_count == 1)  # Always print first evaluation
+
+        # PT + DRT case
+        if drt_enabled and isinstance(solution_matrix, dict):
+            if should_print:
+                print(f"📊 Calculating PT+DRT vehicles per zone... (eval #{self._evaluation_count})")
+            # Calculate PT vehicles
+            pt_vehicles_data = self._calculate_pt_vehicles_by_interval(
+                solution_matrix['pt'], optimization_data
+            )
+
+            # Calculate DRT vehicles
+            drt_vehicles_data = self._calculate_drt_vehicles_by_interval(
+                solution_matrix['drt'], optimization_data
+            )
+
+            # Combine PT and DRT data
+            return self._combine_vehicle_data(pt_vehicles_data, drt_vehicles_data, should_print)
+        # PT only case
+        else:
+            if should_print:
+                print(f"📊 Calculating PT-only vehicles per zone... (eval #{self._evaluation_count})")
+            if isinstance(solution_matrix, dict):
+                # Extract PT part if dict format used
+                solution_matrix = solution_matrix['pt']
+
+            return self._calculate_pt_vehicles_by_interval(solution_matrix, optimization_data)
+
+
+    def _calculate_pt_vehicles_by_interval(
+        self, pt_solution_matrix: np.ndarray, optimization_data: dict[str, Any]
+    ) -> dict[str, np.ndarray]:
+        """
+        Calculate PT vehicles per zone for each interval.
+        
         """
         n_zones = len(self.hex_grid)
         n_intervals = optimization_data["n_intervals"]
@@ -437,8 +492,8 @@ class HexagonalZoneSystem:
         no_service_index = optimization_data["no_service_index"]
         interval_labels = optimization_data["intervals"]["labels"]
 
-        # Calculate vehicles per zone for each interval
-        vehicles_by_intervals = np.zeros((n_zones, n_intervals))
+        # Calculate vehicles per zone for each interval (existing logic unchanged)
+        vehicles_by_intervals = np.zeros((n_intervals, n_zones))
 
         for interval_idx in range(n_intervals):
             zone_counts = {zone_id: 0 for zone_id in self.hex_grid["zone_id"]}
@@ -448,11 +503,8 @@ class HexagonalZoneSystem:
                     continue
 
                 service_stops = self.route_stops_cache[service_id]
+                choice_idx = pt_solution_matrix[route_idx, interval_idx]
 
-                # Get choice for this specific interval
-                choice_idx = solution_matrix[route_idx, interval_idx]
-
-                # Skip no-service choices
                 if choice_idx == no_service_index:
                     continue
 
@@ -462,7 +514,6 @@ class HexagonalZoneSystem:
                     round_trip = round_trip_times[route_idx]
                     vehicles_in_interval = max(1, int(np.ceil(round_trip / headway)))
 
-                    # Add vehicles to all zones served by this route
                     zones_served = {
                         self.stop_zone_mapping[stop_id]
                         for stop_id in service_stops
@@ -472,16 +523,212 @@ class HexagonalZoneSystem:
                     for zone_id in zones_served:
                         zone_counts[zone_id] += vehicles_in_interval
 
-            # Store results for this interval
-            vehicles_by_intervals[:, interval_idx] = list(zone_counts.values())
+            vehicles_by_intervals[interval_idx, :] = list(zone_counts.values())
 
         # Return all aggregation types
         return {
-            "average": np.mean(vehicles_by_intervals, axis=1),
-            "peak": np.max(vehicles_by_intervals, axis=1),
-            "intervals": vehicles_by_intervals,
+            "intervals": vehicles_by_intervals,  # [n_intervals, n_zones]
+            "average": np.mean(vehicles_by_intervals, axis=0),  # [n_zones]
+            "peak": np.max(vehicles_by_intervals, axis=0),      # [n_zones]
+            "sum": np.sum(vehicles_by_intervals, axis=0),       # [n_zones]
             "interval_labels": interval_labels,
         }
+
+    def _calculate_drt_vehicles_by_interval(
+        self, drt_solution_matrix: np.ndarray, optimization_data: dict[str, Any]
+    ) -> dict[str, np.ndarray]:
+        """
+        Calculate DRT vehicles per zone for each interval
+
+        Step 1:Calculate Time to Cross a zone (zone: STUDY AREA zone, not DRT zone):
+        - time = diameter / speed
+        - This provides a basic estimate of how long a vehicle might spend traversing
+          a zone. Using the diameter is a simple way to capture the zone's spatial 
+          scale. Assuming a constant speed is a necessary simplification without network details.
+
+        Step 2: Calculate Coverage (Average Vehicles per Zone): 
+        - Coverage = Total Fleet Size / Number of Zones in Service Area
+        - This distributes the total fleet across the service area, 
+          giving an average vehicle density per zone at any moment in time. 
+          It assumes uniform distribution, which is a simplification but a 
+          sensible starting point without demand data.
+
+        Step 3: Calculate Vehicle Activity per Zone per Interval:
+        - Vehicles per Zone = (Interval Length / Time to Cross Zone) * Coverage
+        - This step combines the spatial density (Coverage) with the temporal aspect 
+          (how many times a zone could be crossed in the interval).
+        - Interpretation: The result isn't strictly the number of unique vehicles passing 
+          through, nor the number simultaneously present. It's better interpreted as a measure of 
+          total vehicle activity or vehicle-presence-time within that zone during the interval. 
+          For example, a result of '12' could mean 1 vehicle spending 12 times the crossing duration in the zone, 
+          or 12 different vehicles each crossing once, or some combination. It represents the equivalent number 
+          of full zone crossings occurring during the interval, scaled by the average vehicle density.
+        
+        Args:
+            drt_solution_matrix: DRT fleet decisions (n_drt_zones × n_intervals)
+            optimization_data: Complete optimization data
+            
+        Returns:
+            Dictionary with same structure as PT vehicles data:
+            - 'intervals': Array of shape (n_intervals, n_hex_zones) 
+            - 'average': Array of shape (n_hex_zones,) 
+            - 'peak': Array of shape (n_hex_zones,)
+            - 'sum': Array of shape (n_hex_zones,)
+            - 'interval_labels': List of interval labels
+        """
+        if not optimization_data.get('drt_enabled', False):
+            n_intervals = optimization_data['n_intervals']
+            n_hex_zones = len(self.hex_grid)
+            return {
+                'intervals': np.zeros((n_intervals, n_hex_zones)),
+                'average': np.zeros(n_hex_zones),
+                'peak': np.zeros(n_hex_zones),
+                'sum': np.zeros(n_hex_zones),
+                'interval_labels': optimization_data['intervals']['labels']
+            }
+
+        drt_zones = optimization_data['drt_config']['zones']
+        n_intervals = optimization_data['n_intervals']
+        n_hex_zones = len(self.hex_grid)
+
+        # Use study area grid zone diameter (from spatial resolution)
+        study_area_zone_diameter_km = self.hex_size_km  # This matches the hex grid size
+
+        # Initialize: [intervals, hex_zones] - SAME structure as PT
+        drt_vehicles_by_interval = np.zeros((n_intervals, n_hex_zones))
+
+        # Process each DRT zone and interval
+        for drt_zone_idx, drt_zone in enumerate(drt_zones):
+            # Get DRT speed for this zone
+            drt_speed_kmh = drt_zone['drt_speed_kmh']
+
+            for interval_idx in range(n_intervals):
+                # Get fleet size for this DRT zone and interval
+                fleet_choice_idx = drt_solution_matrix[drt_zone_idx, interval_idx]
+                fleet_size = drt_zone['allowed_fleet_sizes'][fleet_choice_idx]
+
+                if fleet_size == 0:
+                    continue
+
+                # Calculate vehicle activity
+                interval_length_minutes = optimization_data['intervals']['duration_minutes']
+
+                # Time to cross a STUDY AREA zone (not DRT service area)
+                time_to_cross_hours = study_area_zone_diameter_km / drt_speed_kmh
+                time_to_cross_minutes = time_to_cross_hours * 60
+
+                n_zones_in_drt_area = len(drt_zone.get('affected_hex_zones', []))
+                if n_zones_in_drt_area == 0:
+                    continue
+
+                coverage = fleet_size / n_zones_in_drt_area
+                vehicle_activity = (interval_length_minutes / time_to_cross_minutes) * coverage
+
+                # Add to affected hexagonal zones for this interval
+                affected_hex_zones = drt_zone.get('affected_hex_zones', [])
+                for hex_zone_idx in affected_hex_zones:
+                    drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
+
+        # CONSISTENT: Apply same aggregations as PT
+        return {
+            'intervals': drt_vehicles_by_interval,
+            'average': np.mean(drt_vehicles_by_interval, axis=0),
+            'peak': np.max(drt_vehicles_by_interval, axis=0),
+            'sum': np.sum(drt_vehicles_by_interval, axis=0),
+            'interval_labels': optimization_data['intervals']['labels']
+        }
+
+    def _combine_vehicle_data(
+        self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray],
+        should_print: bool = False
+    ) -> dict[str, np.ndarray]:
+        """
+        Combine PT and DRT vehicle data with temporally consistent peak calculation.
+        
+        Peak Calculation Logic:
+        - Identifies the interval with highest total system demand (PT + DRT combined)
+        - Returns vehicle counts from that specific interval for temporal consistency
+        - Ensures PT and DRT peak values represent the SAME interval/time period
+        
+        """
+        # Combine interval data first
+        combined_intervals = pt_data['intervals'] + drt_data['intervals']  # [intervals, zones]
+
+        # Find system-wide peak interval (when total vehicles needed is highest)
+        total_vehicles_by_interval = np.sum(combined_intervals, axis=1)  # [intervals]
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        if should_print:
+            print("🔍 System peak analysis:")
+            print(f"   Peak interval: {peak_interval_idx} ({pt_data['interval_labels'][peak_interval_idx]})")
+            print(f"   Peak total vehicles: {total_vehicles_by_interval[peak_interval_idx]:.1f}")
+
+        # Peak = vehicles needed during system peak interval (temporally consistent)
+        peak_combined = combined_intervals[peak_interval_idx, :]
+
+        return {
+            'intervals': combined_intervals,                           # [intervals, zones]
+            'average': np.mean(combined_intervals, axis=0),           # [zones] - time-averaged
+            'peak': peak_combined,                                    # [zones] - from peak interval
+            'sum': np.sum(combined_intervals, axis=0),               # [zones] - total across time
+            'interval_labels': pt_data['interval_labels']            # Same labels
+        }
+
+
+
+    def set_drt_zone_mappings(self, opt_data: dict):
+        """Set DRT zone mappings from optimization data using efficient spatial operations."""
+        if not opt_data.get('drt_enabled', False):
+            return
+
+        # Access DRT zones from existing location
+        drt_zones = opt_data['drt_config']['zones']
+
+        print(f"🗺️ Computing spatial intersections for {len(drt_zones)} DRT zones...")
+
+        for drt_zone in drt_zones:
+            # Use vectorized spatial operations instead of loops
+            drt_geometry = drt_zone['geometry']  # Already in correct CRS
+
+            # Efficient spatial intersection using GeoPandas
+            mask = self.hex_grid.geometry.intersects(drt_geometry)
+            affected_hex_indices = self.hex_grid.index[mask].tolist()
+
+            drt_zone['affected_hex_zones'] = affected_hex_indices
+            print(f"   DRT zone {drt_zone['zone_id']} affects {len(affected_hex_indices)} hexagonal zones")
+
+    def _set_drt_zone_mappings(self, drt_config: dict):
+        """Set DRT zone mappings from config during initialization (after boundary filtering)."""
+        if not drt_config.get('enabled', False):
+            return
+
+        drt_zones = drt_config['zones']
+        print(f"🗺️ Computing DRT spatial intersections for {len(drt_zones)} zones...")
+        print(f"   Hexagonal grid size: {len(self.hex_grid)} zones")
+
+        for drt_zone in drt_zones:
+            drt_geometry = drt_zone['geometry']  # Already in correct CRS
+
+            # Find intersections with the CURRENT (filtered) hexagonal grid
+            mask = self.hex_grid.geometry.intersects(drt_geometry)
+
+            # Use positional indices (0-based sequential)
+            affected_positions = np.where(mask)[0].tolist()
+
+            drt_zone['affected_hex_zones'] = affected_positions
+
+            # Validation check
+            if affected_positions:
+                max_pos = max(affected_positions)
+                if max_pos >= len(self.hex_grid):
+                    print(f"   ❌ ERROR: Position {max_pos} exceeds grid size {len(self.hex_grid)}")
+                    # Filter out invalid positions as safety net
+                    drt_zone['affected_hex_zones'] = [
+                        pos for pos in affected_positions
+                        if 0 <= pos < len(self.hex_grid)
+                    ]
+
+            print(f"   Zone {drt_zone['zone_id']}: affects {len(drt_zone['affected_hex_zones'])} hexagonal zones")
+
 
     def get_zone_statistics(
         self,
@@ -575,50 +822,91 @@ class HexagonalZoneSystem:
         plt.tight_layout()
         return fig, ax
 
-    def visualize_spatial_coverage(
+
+    def _visualize_with_data(
         self,
-        solution_matrix: np.ndarray,
+        data_per_zone: np.ndarray,
+        data_column_name: str,
+        data_label: str,
+        colormap: str,
         optimization_data: dict[str, Any],
-        aggregation: str = "average",
-        interval_idx: int | None = None,
+        title_suffix: str = "",
         figsize=(15, 12),
         show_stops=True,
+        show_drt_zones=None,
         ax=None,
-        vmin=None,  # Add this parameter
-        vmax=None,  # Add this parameter
+        vmin=None,
+        vmax=None,
     ):
         """
-        Create spatial visualization showing zones colored by vehicle count.
-
+        Generic method to visualize any per-zone data as a choropleth map.
+        
+        This is the core visualization infrastructure used by both vehicle coverage
+        and waiting time visualizations. It provides consistent styling, legends,
+        and geographic handling across all objective types.
+        
+        **Technical Implementation**:
+        1. **Data Preparation**: Attaches data to hexagonal grid GeoDataFrame
+        2. **CRS Conversion**: Converts from metric CRS to EPSG:4326 for plotting
+        3. **Choropleth Rendering**: Uses GeoPandas plot() with specified colormap
+        4. **Overlay Addition**: Adds transit stops and DRT zones if requested
+        5. **Annotation**: Adds statistics text box and legends
+        
+        **Geographic Workflow**:
+        - Analysis CRS (metric): Used for distance calculations and spatial operations
+        - Display CRS (EPSG:4326): Used for final map visualization
+        - Automatic conversion ensures accuracy without user intervention
+        
+        **Color Scale Handling**:
+        - If vmin/vmax provided: Uses fixed scale (good for comparisons)
+        - If None: Auto-scales to data range (good for single maps)
+        - Consistent color bars with proper labeling
+        
+        **DRT Zone Display Logic**:
+        - show_drt_zones=None: Auto-detect from optimization_data['drt_enabled']
+        - show_drt_zones=True: Force display DRT zones
+        - show_drt_zones=False: Hide DRT zones even if available
+        - DRT zones shown as dashed colored boundaries with legend
+        
+        **Legend Management**:
+        - Color bar: Shows data scale and units
+        - Point legend: Transit stops (if enabled)
+        - Line legend: DRT zones (if available and enabled)
+        - Combined legend positioned to avoid overlap
+        
         Args:
-            solution_matrix: Decision matrix
-            optimization_data: Optimization data
-            aggregation: 'average', 'peak', or 'intervals'
-            interval_idx: Specific interval index (only used when aggregation='intervals')
+            data_per_zone: Array of data values for each hexagonal zone
+            data_column_name: Column name for the data in GeoDataFrame
+            data_label: Human-readable label for color bar legend
+            colormap: Matplotlib colormap name (e.g., 'YlOrRd', 'RdYlBu_r')
+            optimization_data: Complete optimization data structure
+            title_suffix: Additional text for plot title
             figsize: Figure size (only used if ax is None)
-            show_stops: Whether to show transit stops
+            show_stops: Whether to overlay transit stops
+            show_drt_zones: DRT zone display setting (None=auto, True/False=force)
             ax: Optional matplotlib axis to plot on
-            vmin: Minimum value for color scale (auto-calculated if None)
-            vmax: Maximum value for color scale (auto-calculated if None)
+            vmin: Minimum value for color scale
+            vmax: Maximum value for color scale
+            
+        Returns:
+            Tuple of (figure, axis) objects
+            
+        **Used By**:
+        - visualize_spatial_coverage(): Vehicle density maps
+        - visualize_waiting_times(): Waiting time choropleth
+        - Future objectives: Can reuse this infrastructure
+        
         """
-        vehicles_data = self._vehicles_per_zone(solution_matrix, optimization_data)
+        # Auto-detect DRT visualization if not specified
+        if show_drt_zones is None:
+            show_drt_zones = optimization_data.get('drt_enabled', False)
 
-        if aggregation == "intervals" and interval_idx is not None:
-            # Show specific interval
-            vehicles_per_zone = vehicles_data["intervals"][:, interval_idx]
-            interval_labels = vehicles_data["interval_labels"]
-            title_suffix = f"(Interval {interval_idx}: {interval_labels[interval_idx]})"
-        else:
-            # Show aggregated data
-            vehicles_per_zone = vehicles_data[aggregation]
-            title_suffix = f"({aggregation.capitalize()} Service)"
-
-        # Create a copy of hex_grid with vehicle counts
-        zones_with_vehicles = self.hex_grid.copy()
-        zones_with_vehicles["vehicles"] = vehicles_per_zone
+        # Create zones with data
+        zones_with_data = self.hex_grid.copy()
+        zones_with_data[data_column_name] = data_per_zone
 
         # Convert to geographic CRS for plotting
-        zones_geo = zones_with_vehicles.to_crs("EPSG:4326")
+        zones_geo = zones_with_data.to_crs("EPSG:4326")
         stops_geo = self.stops_gdf.to_crs("EPSG:4326")
 
         # Create the plot
@@ -629,109 +917,139 @@ class HexagonalZoneSystem:
             fig = ax.figure
             created_figure = False
 
-        # Plot zones with vehicle-based coloring
-        if vehicles_per_zone.max() > 0:
+        # Plot zones with data coloring
+        if data_per_zone.max() > 0:
             zones_geo.plot(
                 ax=ax,
-                column="vehicles",
-                cmap="YlOrRd",  # Yellow to red colormap
+                column=data_column_name,
+                cmap=colormap,
                 alpha=0.7,
                 edgecolor="black",
                 linewidth=0.5,
                 legend=True,
-                vmin=vmin,  # Set consistent minimum
-                vmax=vmax,  # Set consistent maximum
+                vmin=vmin,
+                vmax=vmax,
                 legend_kwds={
-                    "label": "Vehicles per Zone",
+                    "label": data_label,
                     "orientation": "vertical",
                     "shrink": 0.6,
                     "pad": 0.1,
                 },
             )
         else:
-            # If no vehicles, plot in gray
             zones_geo.plot(
                 ax=ax, color="lightgray", alpha=0.5, edgecolor="black", linewidth=0.5
             )
 
+        # Add DRT zones (reuse existing logic from visualize_spatial_coverage)
+        self._add_drt_zones_to_plot(ax, optimization_data, show_drt_zones)
+
         # Add transit stops
         if show_stops:
-            stops_geo.plot(
-                ax=ax, color="blue", markersize=0.8, alpha=0.6, label="Transit Stops"
-            )
+            stops_geo.plot(ax=ax, color="blue", markersize=0.8, alpha=0.6)
 
-        # Customize the plot (don't set title here - let caller do it)
-        ax.set_xlabel("Longitude", fontsize=12)
-        ax.set_ylabel("Latitude", fontsize=12)
-
-        # Add statistics text box
-        stats_text = self._create_stats_text(vehicles_per_zone)
+        # Add statistics text
+        stats_text = self._create_data_stats_text(data_per_zone, data_label, optimization_data)
         ax.text(
-            0.02,
-            0.98,
-            stats_text,
+            0.02, 0.98, stats_text,
             transform=ax.transAxes,
             verticalalignment="top",
             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
         )
 
-        # Add legend for stops if shown
-        if show_stops:
-            from matplotlib.lines import Line2D
-
-            legend_elements = [
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    color="w",
-                    markerfacecolor="blue",
-                    markersize=5,
-                    label="Transit Stops",
-                    alpha=0.6,
-                )
-            ]
-            ax.legend(handles=legend_elements, loc="upper right")
-
-        # Set equal aspect ratio
+        ax.set_xlabel("Longitude", fontsize=12)
+        ax.set_ylabel("Latitude", fontsize=12)
         ax.set_aspect("equal")
 
-        # Only show plot if we created the figure
         if created_figure:
             plt.tight_layout()
             plt.show()
 
         return fig, ax
 
-    def _create_stats_text(self, vehicles_per_zone):
-        """Create statistics text for the map."""
-        total_zones = len(vehicles_per_zone)
-        zones_with_service = np.sum(vehicles_per_zone > 0)
-        zones_without_service = total_zones - zones_with_service
+    def _add_drt_zones_to_plot(self, ax, optimization_data, show_drt_zones):
+        """Add DRT zones to existing plot."""
+        drt_legend_elements = []
 
-        # Calculate means and standard deviations
-        mean_all_zones = np.mean(vehicles_per_zone)
-        std_all_zones = np.std(vehicles_per_zone)
-        if zones_with_service > 0:
-            # Mean and standard deviation only for zones that have service
-            zones_with_service_values = vehicles_per_zone[vehicles_per_zone > 0]
-            mean_served_zones = np.mean(zones_with_service_values)
-            std_served_zones = np.std(zones_with_service_values)
+        if show_drt_zones and optimization_data.get('drt_enabled', False):
+            drt_zones = optimization_data.get('drt_config', {}).get('zones', [])
+
+            if drt_zones:
+                # Define colors for DRT zones
+                drt_colors = ['purple', 'cyan', 'green', 'orange', 'magenta', 'yellow']
+
+                for i, drt_zone in enumerate(drt_zones):
+                    if 'geometry' in drt_zone:
+                        drt_gdf = gpd.GeoDataFrame(
+                            [{'zone_id': drt_zone['zone_id']}],
+                            geometry=[drt_zone['geometry']],
+                            crs=optimization_data['drt_config']['target_crs']
+                        )
+                        drt_geo = drt_gdf.to_crs("EPSG:4326")
+
+                        color = drt_colors[i % len(drt_colors)]
+                        drt_geo.plot(
+                            ax=ax,
+                            facecolor='none',
+                            edgecolor=color,
+                            linewidth=2.5,
+                            linestyle='--',
+                            alpha=0.8
+                        )
+
+                        # Add to legend
+                        from matplotlib.lines import Line2D
+                        drt_legend_elements.append(
+                            Line2D([0], [0], color=color, linewidth=2.5, linestyle='--',
+                                label=f"DRT: {drt_zone.get('zone_name', drt_zone['zone_id'])}")
+                        )
+
+        # Add combined legend if we have DRT zones
+        if drt_legend_elements:
+            ax.legend(handles=drt_legend_elements, loc="upper right")
+
+    def _create_data_stats_text(self, data_per_zone, data_label, optimization_data):
+        """Create statistics text for generic data visualization."""
+        total_zones = len(data_per_zone)
+
+        # Basic statistics
+        zones_with_data = np.sum(data_per_zone > 0)
+        zones_without_data = total_zones - zones_with_data
+
+        if zones_with_data > 0:
+            mean_value = np.mean(data_per_zone[data_per_zone > 0])
+            min_value = np.min(data_per_zone[data_per_zone > 0])
+            max_value = np.max(data_per_zone[data_per_zone > 0])
         else:
-            mean_served_zones = 0.0
+            mean_value = 0.0
+            min_value = 0.0
+            max_value = 0.0
 
+        overall_mean = np.mean(data_per_zone)
+        std_value = np.std(data_per_zone)
+
+        # Build statistics text
         stats = [
-            "📊 ZONE STATISTICS:",
+            f"📊 {data_label.upper()} STATISTICS:",
             f"Total Zones: {total_zones}",
-            f"Zones with Service: {zones_with_service}",
-            f"Zones without Service: {zones_without_service}",
+            f"Zones with Data: {zones_with_data}",
+            f"Zones without Data: {zones_without_data}",
             "",
-            "🚌 VEHICLE DISTRIBUTION:",
-            f"Mean per Zone (All Zones): {mean_all_zones:.1f}",
-            f"Mean per Zone (Served Zones): {mean_served_zones:.1f}",
-            f"Max in Zone: {np.max(vehicles_per_zone):.0f}",
-            f"Std Dev (All Zones): {std_all_zones:.1f}",
-            f"Std Dev (Served Zones): {std_served_zones:.1f}",
+            "📈 VALUES:",
+            f"Mean (All Zones): {overall_mean:.2f}",
+            f"Mean (With Data): {mean_value:.2f}",
+            f"Min Value: {min_value:.2f}",
+            f"Max Value: {max_value:.2f}",
+            f"Standard Deviation: {std_value:.2f}",
         ]
+
+        # Add service type indicator
+        is_drt_enabled = optimization_data.get('drt_enabled', False)
+        if is_drt_enabled:
+            stats.append("")
+            stats.append("🚁 SERVICE TYPE: PT + DRT")
+        else:
+            stats.append("")
+            stats.append("🚌 SERVICE TYPE: PT Only")
 
         return "\n".join(stats)

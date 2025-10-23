@@ -420,3 +420,215 @@ class TestGTFSDataPreparator:
         print(
             f"   📊 Efficiency vs naive: {expected_efficiency} vehicles saved ({(expected_efficiency/naive_sum)*100:.1f}% reduction)"
         )
+
+    # ---------------------------
+    # DRT functionality
+    # ---------------------------
+
+    def test_extract_optimization_data_with_drt(self, sample_gtfs_path):
+        """Test DRT-enabled optimization data extraction with real spatial layers."""
+        from pathlib import Path
+
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)  # 4 periods per day
+        allowed_headways = [15, 30, 60, 120]
+
+        # DRT configuration using test shapefiles
+        test_data_dir = Path(__file__).parent / "data/drt"
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',  # Web Mercator for area calculations
+            'default_drt_speed_kmh': 25.0,
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 5, 10, 20, 30],
+                    'zone_name': 'Duke Area 1',
+                    'drt_speed_kmh': 20.0  # Zone-specific speed
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 3, 8, 15, 25],
+                    'zone_name': 'Duke Area 2'
+                    # Will use default_drt_speed_kmh
+                }
+            ]
+        }
+
+        # Test DRT-enabled extraction
+        opt_data = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
+
+        # ===== TEST DRT-ENABLED STRUCTURE =====
+
+        # DRT flags and dimensions
+        assert opt_data['drt_enabled'] is True
+        assert opt_data['n_drt_zones'] == 2
+        assert opt_data['drt_max_choices'] == 5  # Max of [5, 5] choices per zone
+
+        # Variable dimensions
+        pt_vars = opt_data['n_routes'] * opt_data['n_intervals']
+        drt_vars = 2 * opt_data['n_intervals']  # 2 zones × 4 intervals
+        assert opt_data['pt_decision_variables'] == pt_vars
+        assert opt_data['drt_decision_variables'] == drt_vars
+        assert opt_data['total_decision_variables'] == pt_vars + drt_vars
+
+        # Combined variable bounds structure
+        combined_bounds = opt_data['combined_variable_bounds']
+        assert len(combined_bounds) == pt_vars + drt_vars
+        assert all(bound == len(allowed_headways) for bound in combined_bounds[:pt_vars])  # PT bounds
+        assert combined_bounds[pt_vars:pt_vars + opt_data['n_intervals']] == [5] * opt_data['n_intervals']  # Zone 1 bounds
+        assert combined_bounds[pt_vars + opt_data['n_intervals']:] == [5] * opt_data['n_intervals']  # Zone 2 bounds
+
+        # ===== TEST DRT CONFIGURATION WITH SPATIAL DATA =====
+
+        drt_config_loaded = opt_data['drt_config']
+        assert drt_config_loaded['enabled'] is True
+        assert drt_config_loaded['target_crs'] == 'EPSG:3857'
+        assert len(drt_config_loaded['zones']) == 2
+
+        # Test spatial data loading
+        zone1 = drt_config_loaded['zones'][0]
+        zone2 = drt_config_loaded['zones'][1]
+
+        # Check spatial fields were added
+        for zone in [zone1, zone2]:
+            assert 'geometry' in zone  # Shapefile geometry loaded
+            assert 'area_km2' in zone  # Area calculated
+            assert 'crs' in zone       # CRS tracked
+            assert zone['crs'] == 'EPSG:3857'
+            assert zone['area_km2'] > 0.0  # Positive area
+
+        # Check speed configuration
+        assert zone1['drt_speed_kmh'] == 20.0  # Zone-specific
+        assert zone2['drt_speed_kmh'] == 25.0  # Default from config
+
+        # Check fleet size options preserved
+        assert zone1['allowed_fleet_sizes'] == [0, 5, 10, 20, 30]
+        assert zone2['allowed_fleet_sizes'] == [0, 3, 8, 15, 25]
+
+        # Test total service area calculation
+        expected_total_area = zone1['area_km2'] + zone2['area_km2']
+        assert abs(drt_config_loaded['total_service_area'] - expected_total_area) < 0.001
+
+        # ===== TEST COMBINED INITIAL SOLUTION =====
+
+        initial_solution = opt_data['initial_solution']
+        assert len(initial_solution) == pt_vars + drt_vars
+
+        # PT part should be integers in valid range
+        pt_part = initial_solution[:pt_vars]
+        assert all(isinstance(x, (int, np.integer)) for x in pt_part)
+        assert all(0 <= x < opt_data["n_choices"] for x in pt_part)
+
+        # DRT part should be integers in valid range
+        drt_part = initial_solution[pt_vars:]
+        assert all(isinstance(x, (int, np.integer)) for x in drt_part)
+
+        # Check DRT bounds are respected per zone
+        drt_zone1_part = drt_part[:opt_data['n_intervals']]
+        drt_zone2_part = drt_part[opt_data['n_intervals']:]
+        assert all(0 <= x < 5 for x in drt_zone1_part)  # Zone 1: 5 choices
+        assert all(0 <= x < 5 for x in drt_zone2_part)  # Zone 2: 5 choices
+
+        # ===== TEST BACKWARD COMPATIBILITY FIELDS =====
+
+        # Original PT fields should still exist and be valid
+        assert opt_data['problem_type'] == 'discrete_headway_optimization'
+        assert opt_data['n_routes'] > 0
+        assert opt_data['n_intervals'] == 4  # 24/6 = 4
+        assert opt_data['n_choices'] == 5    # 4 headways + no-service
+
+        # PT-specific data should be unchanged from non-DRT version
+        assert len(opt_data['routes']['ids']) == opt_data['n_routes']
+        assert opt_data['routes']['round_trip_times'].shape == (opt_data['n_routes'],)
+
+        # Fleet analysis should still work
+        fleet_analysis = opt_data['constraints']['fleet_analysis']
+        assert 'current_fleet_per_route' in fleet_analysis
+        assert 'total_current_fleet_peak' in fleet_analysis
+
+
+    def test_extract_optimization_data_with_drt_pt_only_mode(self, sample_gtfs_path):
+        """Test that PT-only mode works when DRT config is None or disabled."""
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60, 120]
+
+        # Test 1: No DRT config (None)
+        opt_data_none = preparator.extract_optimization_data_with_drt(allowed_headways, None)
+
+        assert opt_data_none['drt_enabled'] is False
+        assert opt_data_none['n_drt_zones'] == 0
+        assert opt_data_none['drt_config'] is None
+        assert opt_data_none['drt_decision_variables'] == 0
+
+        # Should match regular extract_optimization_data output structure
+        pt_vars = opt_data_none['n_routes'] * opt_data_none['n_intervals']
+        assert opt_data_none['total_decision_variables'] == pt_vars
+        assert opt_data_none['pt_decision_variables'] == pt_vars
+
+        # Test 2: DRT config with enabled=False
+        drt_config_disabled = {'enabled': False}
+        opt_data_disabled = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config_disabled)
+
+        assert opt_data_disabled['drt_enabled'] is False
+        assert opt_data_disabled['n_drt_zones'] == 0
+
+
+    def test_extract_optimization_data_with_drt_validation(self, sample_gtfs_path):
+        """Test DRT configuration validation with various error cases."""
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60]
+
+        # Test missing target_crs
+        with pytest.raises(ValueError, match="must specify a valid target_crs"):
+            bad_config = {'enabled': True, 'zones': []}
+            preparator.extract_optimization_data_with_drt(allowed_headways, bad_config)
+
+        # Test empty zones
+        with pytest.raises(ValueError, match="must specify at least one zone"):
+            bad_config = {'enabled': True, 'target_crs': 'EPSG:3857', 'zones': []}
+            preparator.extract_optimization_data_with_drt(allowed_headways, bad_config)
+
+        # Test missing zone fields
+        with pytest.raises(ValueError, match="missing required field"):
+            bad_config = {
+                'enabled': True,
+                'target_crs': 'EPSG:3857',
+                'zones': [{'zone_id': 'test'}]  # Missing required fields
+            }
+            preparator.extract_optimization_data_with_drt(allowed_headways, bad_config)
+
+        # Test invalid fleet sizes
+        with pytest.raises(ValueError, match="must be a non-negative integer"):
+            bad_config = {
+                'enabled': True,
+                'target_crs': 'EPSG:3857',
+                'zones': [{
+                    'zone_id': 'test',
+                    'service_area_path': '/fake/path.shp',
+                    'allowed_fleet_sizes': [-5, 10],  # Negative fleet size
+                    'zone_name': 'Test'
+                }]
+            }
+            preparator.extract_optimization_data_with_drt(allowed_headways, bad_config)
+
+
+    def test_extract_optimization_data_with_drt_missing_shapefile(self, sample_gtfs_path):
+        """Test error handling for missing DRT shapefile."""
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60]
+
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'zones': [{
+                'zone_id': 'missing_zone',
+                'service_area_path': '/nonexistent/path.shp',  # File doesn't exist
+                'allowed_fleet_sizes': [0, 5, 10],
+                'zone_name': 'Missing Zone'
+            }]
+        }
+
+        with pytest.raises(FileNotFoundError, match="DRT service area file not found"):
+            preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)

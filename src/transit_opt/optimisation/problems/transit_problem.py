@@ -12,7 +12,8 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler
+from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
+                   FleetTotalConstraintHandler)
 
 
 class TransitOptimizationProblem(Problem):
@@ -130,13 +131,33 @@ class TransitOptimizationProblem(Problem):
         self.n_intervals = optimization_data["n_intervals"]
         self.n_choices = optimization_data["n_choices"]
 
-        print("   📊 Problem dimensions:")
-        print(f"      Routes: {self.n_routes}")
-        print(f"      Time intervals: {self.n_intervals}")
-        print(f"      Headway choices: {self.n_choices}")
+        # Check if DRT is enabled
+        self.drt_enabled = optimization_data.get('drt_enabled', False)
 
-        # Calculate pymoo problem parameters
-        n_var = self.n_routes * self.n_intervals  # Total decision variables
+        if self.drt_enabled:
+            self.n_drt_zones = optimization_data["n_drt_zones"]
+            self.var_structure = optimization_data["variable_structure"]
+
+            print("   📊 Problem dimensions (PT+DRT):")
+            print(f"      PT Routes: {self.n_routes}")
+            print(f"      DRT Zones: {self.n_drt_zones}")
+            print(f"      Time intervals: {self.n_intervals}")
+            print(f"      PT Headway choices: {self.n_choices}")
+
+            n_var = optimization_data["total_decision_variables"]
+        else:
+            self.n_drt_zones = 0
+            self.var_structure = None
+
+            print("   📊 Problem dimensions (PT-only):")
+            print(f"      Routes: {self.n_routes}")
+            print(f"      Time intervals: {self.n_intervals}")
+            print(f"      Headway choices: {self.n_choices}")
+
+            # PT-only logic
+            n_var = self.n_routes * self.n_intervals
+
+        # Calculate rest of pymoo problem parameters
         n_obj = 1  # Single objective optimization
         n_constr = sum(c.n_constraints for c in self.constraints)  # Total constraints
 
@@ -145,9 +166,29 @@ class TransitOptimizationProblem(Problem):
         print(f"      Objectives: {n_obj}")
         print(f"      Constraints: {n_constr}")
 
-        # Define variable bounds (indices into allowed_headways)
+        # Define variable bounds (the indices of the minimum and maximum choices)
         xl = np.zeros(n_var, dtype=int)  # Lower bounds (index 0)
-        xu = np.full(n_var, self.n_choices - 1, dtype=int)  # Upper bounds (max index)
+
+        # xu depends on whether DRT is enabled (combined bounds) or PT-only
+        # if DRT is enabled and PT headway choices are not the same length as DRT fleet size
+        # choices, then we need to use the combined variable bounds
+        # e.g.:
+            # allowed_headways = [0, 10, 20, 30]  # 4 choices (0-indexed 0-3)
+            # allowed_fleet_sizes = [0, 5, 10]    # 3 choices (0-indexed 0-2)
+            # combined_variable_bounds = [4, 4, 4, ..., 2, 2, 2]
+            # first n_var_pt are headway choices, last n_var_drt are fleet size choices
+            # note: the reason for the '4' in combined_variable_bounds for headways is that
+            # we have an extra index for no_service
+        if self.drt_enabled:
+            # Use combined variable bounds for DRT+PT
+            combined_bounds = optimization_data['combined_variable_bounds']
+            xu = np.array(combined_bounds, dtype=int) - 1  # Convert choices to max indices
+            print(f"      Total variables: {n_var}")
+            print(f"      PT variables: {optimization_data['pt_decision_variables']}")
+            print(f"      DRT variables: {optimization_data['drt_decision_variables']}")
+        else:
+            # Original PT-only bounds
+            xu = np.full(n_var, self.n_choices - 1, dtype=int)  # Upper bounds (max index)
 
         #  Penalty method configuration
         self.penalty_config = penalty_config or {"enabled": False}
@@ -239,18 +280,28 @@ class TransitOptimizationProblem(Problem):
             G = np.zeros((pop_size, self.n_constr)) if self.n_constr > 0 else None
 
         for i in range(pop_size):
-            # Decode solution
-            solution_matrix = self.decode_solution(X[i])
+            # 1. Decode solution
+            solution = self.decode_solution(X[i])
 
-            # Evaluate base objective
-            base_objective = self.objective.evaluate(solution_matrix)
+            # 2. Evaluate base objective for this solution
+            base_objective = self.objective.evaluate(solution)
 
+            # 3. Handle constraints for this solution
             if self.use_penalty_method and self.constraints:
                 # 🔧 PENALTY METHOD: Add constraint violations to objective
                 total_penalty = 0.0
 
                 for j, constraint in enumerate(self.constraints):
-                    violations = constraint.evaluate(solution_matrix)
+                    # Smart constraint handling based on type and DRT status (same as hard constraints)
+                    if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                        # FleetTotalConstraintHandler can handle full PT+DRT solution
+                        violations = constraint.evaluate(solution)
+                    elif self.drt_enabled:
+                        # Other constraints only handle PT part when DRT enabled
+                        violations = constraint.evaluate(solution['pt'])
+                    else:
+                        # PT-only case: pass solution directly
+                        violations = constraint.evaluate(solution)
 
                     # Get constraint-specific penalty weight
                     constraint_name = self.constraint_names[j]
@@ -277,8 +328,16 @@ class TransitOptimizationProblem(Problem):
 
                     for constraint in self.constraints:
                         try:
-                            violations = constraint.evaluate(solution_matrix)
-
+                            # Smart constraint handling based on type and DRT status
+                            if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                                # FleetTotalConstraintHandler can handle full PT+DRT solution
+                                violations = constraint.evaluate(solution)
+                            elif self.drt_enabled:
+                                # Other constraints only handle PT part when DRT enabled
+                                violations = constraint.evaluate(solution['pt'])
+                            else:
+                                # PT-only case: pass solution directly
+                                violations = constraint.evaluate(solution)
                             # Store violations in correct positions
                             constraint_end_idx = constraint_start_idx + len(violations)
                             G[i, constraint_start_idx:constraint_end_idx] = violations
@@ -380,7 +439,18 @@ class TransitOptimizationProblem(Problem):
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
                         constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
-                        violations = constraint.evaluate(solution_matrix)
+                          # Apply smart constraint handling here (FleetTotal works on full solution,
+                          # others on PT only)
+                        if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                            # FleetTotalConstraintHandler can handle full PT+DRT solution
+                            violations = constraint.evaluate(solution_matrix)
+                        elif self.drt_enabled:
+                            # Other constraints only handle PT part when DRT enabled
+                            violations = constraint.evaluate(solution_matrix['pt'])
+                        else:
+                            # PT-only case: pass solution directly
+                            violations = constraint.evaluate(solution_matrix)
+
 
                         # Check overall constraint feasibility
                         constraint_satisfied = np.all(violations <= 1e-6)
@@ -460,7 +530,8 @@ class TransitOptimizationProblem(Problem):
             x_flat: Flat solution vector of length (n_routes × n_intervals)
 
         Returns:
-            Solution matrix of shape (n_routes, n_intervals) with integer indices
+            For PT only: Solution matrix of shape (n_routes, n_intervals) with integer indices
+            For PT+DRT: Solution matrix of shape: dict with 'pt' and 'drt' keys
 
         Example:
             >>> x_flat = np.array([0, 1, 2, 3, 1, 0])  # 2 routes, 3 intervals
@@ -470,18 +541,42 @@ class TransitOptimizationProblem(Problem):
              [3 1 0]]
         """
 
-        # 1. Clip to bounds (PSO can generate out-of-bounds values). Probably redundant
-        # as Pymoo should handle this (but just in case)
-        x_bounded = np.clip(x_flat, 0, self.n_choices - 1)
+        if not self.drt_enabled:
+            # 1. Clip to bounds (PSO can generate out-of-bounds values). Probably redundant
+            # as Pymoo should handle this (but just in case)
+            x_bounded = np.clip(x_flat, 0, self.n_choices - 1)
+            # 2. Round and convert to integers
+            x_int = np.round(x_bounded).astype(int)
 
-        # 2. Round and convert to integers
-        x_int = np.round(x_bounded).astype(int)
+            return x_int.reshape(self.n_routes, self.n_intervals)
 
-        return x_int.reshape(self.n_routes, self.n_intervals)
+        # DRT-enabled case: use proper variable-specific bounds
+        pt_size = self.var_structure['pt_size']
+        pt_shape = self.var_structure['pt_shape']
+        drt_shape = self.var_structure['drt_shape']
 
-    def _encode_solution(self, solution_matrix: np.ndarray) -> np.ndarray:
+        # split the flat vector first
+        pt_flat = x_flat[:pt_size]
+        drt_flat = x_flat[pt_size:]
+        # Apply correct bounds to each part
+        pt_bounded = np.clip(pt_flat, 0, self.n_choices - 1) # Pt uses headway bounds
+        # DRT uses fleet size bounds from combined_variable_bounds
+        drt_bounds = self.optimization_data['combined_variable_bounds'][pt_size:]
+        drt_bounded = np.clip(drt_flat, 0, np.array(drt_bounds) - 1)
+
+        # Convert to matrices and reshape
+        pt_matrix = np.round(pt_bounded).astype(int).reshape(pt_shape)
+        drt_matrix = np.round(drt_bounded).astype(int).reshape(drt_shape)
+
+        return {
+            'pt': pt_matrix,
+            'drt': drt_matrix
+        }
+
+
+    def _encode_solution(self, solution: np.ndarray) -> np.ndarray:
         """
-        Convert route×interval matrix to flat solution vector.
+        Convert route×interval matrix or PT+DRT dict to flat solution vector.
 
         This is the inverse operation of _decode_solution(). Useful for:
         - Converting initial GTFS solution to pymoo format
@@ -489,7 +584,10 @@ class TransitOptimizationProblem(Problem):
         - Debugging and validation
 
         Args:
-            solution_matrix: Solution matrix of shape (n_routes, n_intervals)
+            solution: 
+                - PT only: Solution matrix of shape (n_routes, n_intervals)
+                - PT+DRT: dict with 'pt'/'drt' keys
+
 
         Returns:
             Flat solution vector of length (n_routes × n_intervals)
@@ -500,7 +598,21 @@ class TransitOptimizationProblem(Problem):
             >>> print(x_flat)
             [0 1 2 3 1 0]
         """
-        return solution_matrix.flatten()
+        if not self.drt_enabled:
+            # PT-only: solution should be a matrix
+            if isinstance(solution, dict):
+                # Handle case where PT-only solution is passed as dict
+                return solution['pt'].flatten()
+            else:
+                return solution.flatten()
+        else:
+            # DRT-enabled: solution is a dict
+            if not isinstance(solution, dict) or 'pt' not in solution or 'drt' not in solution:
+                raise ValueError("DRT-enabled problems require solution dict with 'pt' and 'drt' keys")
+
+            pt_flat = solution['pt'].flatten()
+            drt_flat = solution['drt'].flatten()
+            return np.concatenate([pt_flat, drt_flat])
 
     def decode_solution(self, x_flat: np.ndarray) -> np.ndarray:
         """
@@ -574,24 +686,32 @@ class TransitOptimizationProblem(Problem):
         """
 
         print("\n🔍 EVALUATING SINGLE SOLUTION:")
-        print(f"   Solution shape: {solution_matrix.shape}")
-
-        # Validate solution shape
-        expected_shape = (self.n_routes, self.n_intervals)
-        if solution_matrix.shape != expected_shape:
-            print(
-                f"   ❌ Invalid solution shape: expected {expected_shape}, got {solution_matrix.shape}"
-            )
-            return {
-                "objective": np.inf,
-                "constraints": np.array([]),
-                "feasible": False,
-                "constraint_details": [],
-                "solution_matrix": solution_matrix.copy(),
-            }
+        # Handle different solution formats
+        if self.drt_enabled:
+            if isinstance(solution_matrix, dict):
+                print(f"   PT solution shape: {solution_matrix['pt'].shape}")
+                print(f"   DRT solution shape: {solution_matrix['drt'].shape}")
+                # Validate PT shape
+                expected_pt_shape = (self.n_routes, self.n_intervals)
+                if solution_matrix['pt'].shape != expected_pt_shape:
+                    print(f"   ❌ Invalid PT shape: expected {expected_pt_shape}, got {solution_matrix['pt'].shape}")
+                    return {"objective": np.inf, "constraints": np.array([]), "feasible": False, "constraint_details": []}
+            else:
+                print(f"   ❌ DRT-enabled problem expects dict format, got {type(solution_matrix)}")
+                return {"objective": np.inf, "constraints": np.array([]), "feasible": False, "constraint_details": []}
+        else:
+            print(f"   Solution shape: {solution_matrix.shape}")
+            # Validate solution shape for PT-only
+            expected_shape = (self.n_routes, self.n_intervals)
+            if solution_matrix.shape != expected_shape:
+                print(f"   ❌ Invalid solution shape: expected {expected_shape}, got {solution_matrix.shape}")
+                return {"objective": np.inf, "constraints": np.array([]), "feasible": False, "constraint_details": []}
 
         # Evaluate objective
         try:
+            if self.drt_enabled:
+                if not isinstance(solution_matrix, dict):
+                    raise ValueError("DRT-enabled problems expect dict solution format")
             objective_value = self.objective.evaluate(solution_matrix)
             print(f"   📊 Objective value: {objective_value:.4f}")
         except Exception as e:
@@ -607,7 +727,11 @@ class TransitOptimizationProblem(Problem):
 
             for i, constraint in enumerate(self.constraints):
                 try:
-                    violations = constraint.evaluate(solution_matrix)
+                    # For now, constraints only handle PT part TODO: extend for DRT
+                    if self.drt_enabled:
+                        violations = constraint.evaluate(solution_matrix['pt'])
+                    else:
+                        violations = constraint.evaluate(solution_matrix)
                     constraint_info = constraint.get_constraint_info()
 
                     constraint_violations.extend(violations)

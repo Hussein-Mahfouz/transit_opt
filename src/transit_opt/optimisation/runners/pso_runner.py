@@ -979,7 +979,7 @@ class PSORuntimeCallback(Callback):
                         is_feasible = np.all(individual_violations <= 1e-6)
                         violation_count = np.sum(individual_violations > 1e-6)
                     try:
-                        solution_matrix = self.problem.decode_solution(decision_vars[i])
+                        solution_matrix = algorithm.problem.decode_solution(decision_vars[i])
                     except Exception:
                         solution_matrix = None
 
@@ -1106,10 +1106,37 @@ class BestFeasibleSolutionsTracker:
         for i in range(len(objectives)):
             if not feasibles[i]:
                 continue
-            if not np.isfinite(objectives[i]) or solution_matrices[i] is None or solution_matrices[i].size == 0:
+            # Check for valid solution based on type
+            if not np.isfinite(objectives[i]) or solution_matrices[i] is None:
                 continue
+
+            # Handle both dict (DRT-enabled) and array (PT-only) solution formats
+            if isinstance(solution_matrices[i], dict):
+                # DRT-enabled case: check if dict has required keys and valid data
+                if 'pt' not in solution_matrices[i] or 'drt' not in solution_matrices[i]:
+                    continue
+                if solution_matrices[i]['pt'] is None or solution_matrices[i]['drt'] is None:
+                    continue
+                if solution_matrices[i]['pt'].size == 0 or solution_matrices[i]['drt'].size == 0:
+                    continue
+            else:
+                # PT-only case: check numpy array
+                if solution_matrices[i].size == 0:
+                    continue
+
+            # Create solution record with proper copying for both formats
+            if isinstance(solution_matrices[i], dict):
+                # DRT-enabled: deep copy the dictionary structure
+                solution_copy = {
+                    'pt': solution_matrices[i]['pt'].copy(),
+                    'drt': solution_matrices[i]['drt'].copy()
+                }
+            else:
+                # PT-only: direct copy
+                solution_copy = solution_matrices[i].copy()
+
             gen_solutions.append({
-                'solution': solution_matrices[i].copy(),
+                'solution': solution_copy,
                 'objective': float(objectives[i]),
                 'generation_found': generations[i],
                 'feasible': True,
@@ -1124,7 +1151,17 @@ class BestFeasibleSolutionsTracker:
         for new_sol in gen_solutions:
             is_duplicate = False
             for existing in self.best_solutions:
-                if np.array_equal(existing['solution'], new_sol['solution']) and existing['objective'] == new_sol['objective']:
+                # Handle comparison for both dict and array formats
+                solutions_equal = False
+                if isinstance(existing['solution'], dict) and isinstance(new_sol['solution'], dict):
+                    # Both are DRT format: compare both PT and DRT parts
+                    solutions_equal = (np.array_equal(existing['solution']['pt'], new_sol['solution']['pt']) and
+                                    np.array_equal(existing['solution']['drt'], new_sol['solution']['drt']))
+                elif isinstance(existing['solution'], np.ndarray) and isinstance(new_sol['solution'], np.ndarray):
+                    # Both are PT-only format: direct comparison
+                    solutions_equal = np.array_equal(existing['solution'], new_sol['solution'])
+
+                if solutions_equal and existing['objective'] == new_sol['objective']:
                     is_duplicate = True
                     break
             if not is_duplicate:
@@ -1397,7 +1434,7 @@ class PSORunner:
 
         # Add runtime monitoring callback
         runtime_callback = PSORuntimeCallback(track_best_n=track_best_n)
-        runtime_callback.problem = self.problem  # Provide problem reference for decoding
+        #runtime_callback.problem = self.problem  # Provide problem reference for decoding
         callbacks.append(runtime_callback)
 
         # Add penalty scheduling callback if using penalty method with adaptive penalties
@@ -1600,6 +1637,8 @@ class PSORunner:
                 # Collect results as they complete
                 for future in as_completed(future_to_run):
                     run_idx = future_to_run[future]
+                    result = None  # ← INITIALIZE result to None each iteration
+
                     try:
                         result = future.result()
                        # Create lightweight summary
@@ -1631,15 +1670,21 @@ class PSORunner:
 
 
                         # Show clean progress update
-                        violations = result.constraint_violations
-                        feasible_status = "✅ Feasible" if violations['feasible'] else "❌ Infeasible"
+                        violations_text = f"Violations={run_summary['violations']}" if not run_summary['feasible'] else f"FeasibleSols={run_summary['best_feasible_solutions_count']}"
+                        feasible_status = "✅ Feasible" if run_summary['feasible'] else "❌ Infeasible"
+
                         print(f"[{completed_runs:2d}/{runs_to_perform}] Run {run_idx:2d}: "
-                              f"Objective={result.best_objective:.6f}, "
-                              f"Gens={result.generations_completed:2d}, "
-                              f"Time={result.optimization_time:5.1f}s, "
-                              f"FeasibleSols={len(result.best_feasible_solutions)}, {feasible_status}")
+                            f"Objective={run_summary['objective']:.6f}, "
+                            f"Gens={run_summary['generations']:2d}, "
+                            f"Time={run_summary['time']:5.1f}s, "
+                            f"{violations_text}, {feasible_status}")
+
                     except Exception as e:
-                        print(f"[{completed_runs+1:2d}/{runs_to_perform}] ❌ Run {run_idx:2d}: FAILED - {str(e)}")
+                        print(f"❌ Run {run_idx:2d}: FAILED - {str(e)}")
+
+                        # Clean up result
+                        if result is not None:
+                            del result
                         continue
             # Clean up environment variable
             os.environ.pop('PARALLEL_EXECUTION', None)

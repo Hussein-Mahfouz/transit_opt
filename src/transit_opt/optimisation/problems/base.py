@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+import pytest
 
 
 class BaseConstraintHandler(ABC):
@@ -139,6 +140,44 @@ class BaseConstraintHandler(ABC):
 
         return fleet_results["fleet_per_interval"]
 
+    def _calculate_drt_fleet_from_solution(self, drt_solution_matrix: np.ndarray) -> np.ndarray:
+        """
+        Calculate DRT fleet requirements from DRT solution matrix.
+        
+        Args:
+            drt_solution_matrix: DRT decision matrix (n_drt_zones × n_intervals) with
+                            fleet size choice indices
+        
+        Returns:
+            Array of DRT fleet per interval (length n_intervals)
+        """
+        if not self.opt_data.get('drt_enabled', False):
+            # Return zeros if DRT not enabled
+            return np.zeros(self.n_intervals)
+
+        # Get DRT configuration
+        drt_zones = self.opt_data['drt_config']['zones']
+        n_intervals = self.n_intervals
+
+        # Initialize fleet per interval
+        drt_fleet_per_interval = np.zeros(n_intervals)
+
+        # Sum fleet across all DRT zones for each interval
+        for zone_idx, zone_config in enumerate(drt_zones):
+            allowed_fleet_sizes = zone_config['allowed_fleet_sizes']
+
+            for interval_idx in range(n_intervals):
+                # Get fleet choice index for this zone and interval
+                fleet_choice_idx = drt_solution_matrix[zone_idx, interval_idx]
+
+                # Convert choice index to actual fleet size
+                fleet_size = allowed_fleet_sizes[fleet_choice_idx]
+
+                # Add to total for this interval
+                drt_fleet_per_interval[interval_idx] += fleet_size
+
+        return drt_fleet_per_interval
+
     def get_constraint_info(self) -> dict[str, Any]:
         """
         Get human-readable information about this constraint.
@@ -155,11 +194,11 @@ class BaseConstraintHandler(ABC):
 
 class FleetTotalConstraintHandler(BaseConstraintHandler):
     """
-    Constraint handler for total system fleet size limits.
+    Constraint handler for total system fleet size limits including PT and DRT.
 
-    This constraint ensures that the total number of vehicles across all routes
-    and time intervals does not exceed a specified limit. Useful for budget
-    constraints or when you have a fixed total fleet size.
+    This constraint ensures that the total number of vehicles across all PT routes
+    and DRT zones and time intervals does not exceed a specified limit. When DRT is
+    enabled, it automatically includes both PT and DRT fleet in the total count.
 
     Configuration Parameters:
         baseline (str): How to determine baseline fleet
@@ -173,19 +212,30 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             - 'average': Constrain average across intervals
             - 'total': Constrain sum across all intervals (default)
 
-    Example Configuration:
-        **Budget Constraint (20% increase allowed):**
+    DRT Integration:
+        When DRT is enabled (opt_data['drt_enabled'] = True):
+        - Automatically includes DRT fleet in total calculations
+        - Baseline includes initial DRT fleet allocation
+        - All measures (peak/average/total) include both PT and DRT
+        - Solution format expects dict with 'pt' and 'drt' keys
+
+        When DRT is disabled:
+        - Operates as PT-only constraint (backward compatible)
+        - Solution format can be matrix or dict with 'pt' key
+
+    Example Configuration with DRT:
         ```python
-        # Allow up to 20% more vehicles than current peak
+        # Total system fleet limit including PT + DRT
         config = {
             'baseline': 'current_peak',
-            'tolerance': 0.20,
+            'tolerance': 0.20,  # 20% increase allowed
             'measure': 'peak'
         }
 
         # If current GTFS needs 100 vehicles at peak:
         # - Constraint limit = 100 * (1 + 0.20) = 120 vehicles
         # - Any solution requiring > 120 vehicles violates constraint
+        # - Note that initial DRT fleet is always 0, so we do not need to calculate or add it to constraint limit
         handler = FleetTotalConstraintHandler(config, optimization_data)
         ```
 
@@ -200,15 +250,13 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
         }
         handler = FleetTotalConstraintHandler(config, optimization_data)
 
-        # Test with a candidate solution
-        solution_matrix = np.array([
-            [1, 2, 1, 3],  # Route 0: headway choices by interval
-            [2, 1, 2, 4],  # Route 1: index 4 = no service
-            [0, 1, 1, 2]   # Route 2: index 0 = shortest headway
-        ])
-
-        violations = handler.evaluate(solution_matrix)
-        # violations = [fleet_usage - 80]
+        # Test PT+DRT solution
+        solution = {
+            'pt': np.array([[1, 2, 1], [0, 1, 2]]),  # PT headway choices  
+            'drt': np.array([[2, 1, 3], [1, 2, 0]])  # DRT fleet choices
+        }
+        violations = handler.evaluate(solution)
+        # violations = [total_pt_fleet + total_drt_fleet - 156]
         # If violations[0] <= 0: constraint satisfied
         # If violations[0] > 0: need to reduce fleet by violations[0] vehicles
         ```
@@ -224,6 +272,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
 
         # If current GTFS averages 60 vehicles across time periods:
         # - Limit = 60 * 1.10 = 66 vehicles average
+        # - Example solution (without DRT calculation)
         # - Solution with intervals [50, 70, 80, 60] = 65 avg ✓ (satisfied)
         # - Solution with intervals [70, 80, 90, 60] = 75 avg ✗ (violation = 9)
         ```
@@ -275,24 +324,50 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
 
     def evaluate(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
-        Evaluate total fleet constraint.
+        Evaluate total fleet constraint including both PT and DRT fleet when applicable.
 
         Args:
-            solution_matrix: Decision matrix (n_routes × n_intervals)
+            solution_matrix: For PT-only: (n_routes × n_intervals) matrix
+                            For PT+DRT: dict with 'pt' and 'drt' keys
 
         Returns:
-            Single-element array: [fleet_usage - fleet_limit]
+            Single-element array: [total_fleet_usage - fleet_limit]
             Negative values indicate constraint satisfaction
         """
-        # Calculate fleet usage based on configured measure
-        fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
+        # Check if DRT is enabled
+        drt_enabled = self.opt_data.get('drt_enabled', False)
 
+        if drt_enabled:
+            # Handle PT+DRT case
+            if not isinstance(solution_matrix, dict) or 'pt' not in solution_matrix or 'drt' not in solution_matrix:
+                raise ValueError("DRT-enabled problems require solution dict with 'pt' and 'drt' keys")
+
+            # Calculate PT fleet requirements
+            pt_fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix['pt'])
+
+            # Calculate DRT fleet requirements
+            drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix['drt'])
+
+            # Combine PT and DRT fleet
+            total_fleet_per_interval = pt_fleet_per_interval + drt_fleet_per_interval
+
+        else:
+            # Handle PT-only case (existing logic)
+            if isinstance(solution_matrix, dict):
+                # If dict format but DRT not enabled, extract PT part
+                pt_solution = solution_matrix.get('pt', solution_matrix)
+                total_fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
+            else:
+                # Standard PT-only matrix
+                total_fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
+
+        # Calculate fleet usage based on configured measure (same logic as before)
         if self.config["measure"] == "peak":
-            fleet_usage = np.max(fleet_per_interval)
+            fleet_usage = np.max(total_fleet_per_interval)
         elif self.config["measure"] == "average":
-            fleet_usage = np.mean(fleet_per_interval)
+            fleet_usage = np.mean(total_fleet_per_interval)
         elif self.config["measure"] == "total":
-            fleet_usage = np.sum(fleet_per_interval)
+            fleet_usage = np.sum(total_fleet_per_interval)
         else:
             raise ValueError(f"Unknown measure: {self.config['measure']}")
 
@@ -305,7 +380,11 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
         return np.array([violation])
 
     def _get_fleet_limit(self) -> float:
-        """Calculate the fleet limit based on baseline and tolerance."""
+        """
+        Calculate the fleet limit based on baseline and tolerance.
+        Baseline is based on PT fleet size only (as DRT does not
+        exist in baseline scenario)
+        """
         if self.config["baseline"] == "manual":
             baseline = self.config["baseline_value"]
         else:
@@ -313,9 +392,9 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
 
             if self.config["baseline"] == "current_peak":
-                baseline = fleet_analysis.get("total_current_fleet_peak", 100)
+                baseline = fleet_analysis.get("total_current_fleet_peak")
             elif self.config["baseline"] == "current_average":
-                baseline = fleet_analysis.get("total_current_fleet_average", 80)
+                baseline = fleet_analysis.get("total_current_fleet_average")
             else:
                 raise ValueError(f"Unknown baseline: {self.config['baseline']}")
 
@@ -326,13 +405,242 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
         return fleet_limit
 
 
+    def test_fleet_total_constraint_with_drt_integration(self):
+        """Test FleetTotalConstraintHandler with PT+DRT combined fleet calculation."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create DRT-enabled optimization data
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)  # 4 intervals
+        allowed_headways = [15, 30, 60, 120]
+
+        # DRT configuration with test shapefiles
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'default_drt_speed_kmh': 25.0,
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 10, 20, 30],  # 4 choices
+                    'zone_name': 'Duke Area 1',
+                    'drt_speed_kmh': 20.0
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 5, 15, 25],   # 4 choices
+                    'zone_name': 'Duke Area 2'
+                }
+            ]
+        }
+
+        # Extract PT+DRT optimization data
+        opt_data = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
+
+        # Verify DRT is enabled
+        assert opt_data['drt_enabled'] is True
+        assert opt_data['n_drt_zones'] == 2
+
+        # Create constraint handler with PT baseline (DRT baseline is always 0)
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.30,  # 30% increase allowed
+            'measure': 'peak'
+        }
+
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # ===== TEST PT-ONLY SOLUTION (backward compatibility) =====
+        print("\n🚌 Testing PT-only solution handling...")
+
+        # Create PT-only solution matrix
+        pt_solution = np.array([
+            [1, 2, 1, 0],  # Route 1: moderate service
+            [0, 1, 2, 1],  # Route 2: different pattern
+        ])
+
+        # Test that PT-only solution works when DRT is enabled
+        pt_violations = constraint.evaluate(pt_solution)
+        assert len(pt_violations) == 1, "Should return single constraint violation value"
+
+        # ===== TEST PT+DRT COMBINED SOLUTION =====
+        print("🚁 Testing PT+DRT combined solution...")
+
+        # Create PT+DRT combined solution
+        drt_solution = np.array([
+            [2, 1, 3, 1],  # Zone 1: [20, 10, 30, 10] vehicles
+            [1, 2, 1, 0],  # Zone 2: [5, 15, 5, 0] vehicles
+        ])
+
+        combined_solution = {
+            'pt': pt_solution,
+            'drt': drt_solution
+        }
+
+        # Test combined solution evaluation
+        combined_violations = constraint.evaluate(combined_solution)
+        assert len(combined_violations) == 1, "Should return single constraint violation value"
+
+        # ===== VERIFY CONSTRAINT LOGIC =====
+        print("🔍 Verifying constraint calculations...")
+
+        # Calculate expected PT fleet (using constraint's internal method)
+        pt_fleet_per_interval = constraint._calculate_fleet_from_solution(pt_solution)
+
+        # Calculate expected DRT fleet (using constraint's internal method)
+        drt_fleet_per_interval = constraint._calculate_drt_fleet_from_solution(drt_solution)
+
+        # Expected DRT fleet calculation:
+        # Zone 1: [20, 10, 30, 10] vehicles per interval
+        # Zone 2: [5, 15, 5, 0] vehicles per interval
+        # Total: [25, 25, 35, 10] vehicles per interval
+        zone1_fleet = [20, 10, 30, 10]  # From allowed_fleet_sizes[choice_idx]
+        zone2_fleet = [5, 15, 5, 0]     # From allowed_fleet_sizes[choice_idx]
+        expected_drt_fleet = np.array([25, 25, 35, 10])
+
+        print(f"   Expected DRT fleet by interval: {expected_drt_fleet}")
+        print(f"   Calculated DRT fleet by interval: {drt_fleet_per_interval}")
+        np.testing.assert_array_equal(drt_fleet_per_interval, expected_drt_fleet)
+
+        # Combined fleet should be PT + DRT
+        expected_combined_fleet = pt_fleet_per_interval + drt_fleet_per_interval
+
+        # Get baseline fleet limit (PT-only, as DRT doesn't exist in baseline)
+        baseline_pt_peak = opt_data['constraints']['fleet_analysis']['total_current_fleet_peak']
+        fleet_limit = baseline_pt_peak * (1 + constraint_config['tolerance'])
+
+        print(f"   PT baseline peak: {baseline_pt_peak}")
+        print(f"   Fleet limit (with tolerance): {fleet_limit}")
+        print(f"   Combined peak fleet: {np.max(expected_combined_fleet)}")
+
+        # Verify violation calculation
+        if constraint_config['measure'] == 'peak':
+            fleet_usage = np.max(expected_combined_fleet)
+        elif constraint_config['measure'] == 'average':
+            fleet_usage = np.mean(expected_combined_fleet)
+        elif constraint_config['measure'] == 'total':
+            fleet_usage = np.sum(expected_combined_fleet)
+
+        expected_violation = fleet_usage - fleet_limit
+
+        print(f"   Expected violation: {expected_violation}")
+        print(f"   Calculated violation: {combined_violations[0]}")
+
+        # Verify the violation calculation is correct
+        assert abs(combined_violations[0] - expected_violation) < 1e-6, \
+            f"Violation calculation incorrect: expected {expected_violation}, got {combined_violations[0]}"
+
+        # ===== TEST ERROR HANDLING =====
+        print("⚠️ Testing error handling...")
+
+        # Test that DRT-enabled constraint requires proper solution format
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            # Pass PT matrix directly when DRT is enabled - should fail
+            constraint.evaluate(pt_solution)
+
+        # Test missing keys in solution dict
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            incomplete_solution = {'pt': pt_solution}  # Missing 'drt' key
+            constraint.evaluate(incomplete_solution)
+
+        with pytest.raises(ValueError, match="DRT-enabled problems require solution dict"):
+            incomplete_solution = {'drt': drt_solution}  # Missing 'pt' key
+            constraint.evaluate(incomplete_solution)
+
+        # ===== VERIFY PERFORMANCE CHARACTERISTICS =====
+        print("📈 Verifying constraint behavior...")
+
+        # Test that combined constraint is more restrictive than PT-only
+        # (same baseline limit, but now includes DRT fleet in calculation)
+
+        # Create zero-DRT solution for comparison
+        zero_drt_solution = np.zeros_like(drt_solution)
+        minimal_combined_solution = {
+            'pt': pt_solution,
+            'drt': zero_drt_solution
+        }
+
+        minimal_violations = constraint.evaluate(minimal_combined_solution)
+
+        # Combined solution with DRT should have higher violation (more restrictive)
+        # assuming DRT adds fleet
+        if np.sum(drt_solution) > 0:  # If DRT solution has any vehicles
+            assert combined_violations[0] >= minimal_violations[0], \
+                "Adding DRT fleet should not decrease violation (make constraint less restrictive)"
+
+        print("✅ All PT+DRT constraint integration tests passed!")
+        print("   • Constraint correctly handles PT+DRT combined fleet")
+        print(f"   • DRT fleet calculation: {np.sum(expected_drt_fleet)} total DRT vehicles")
+        print(f"   • Combined peak fleet: {np.max(expected_combined_fleet)} vehicles")
+        print(f"   • Constraint violation: {combined_violations[0]:.3f}")
+        print(f"   • Constraint {'satisfied' if combined_violations[0] <= 0 else 'violated'}")
+
+
+    def test_fleet_total_constraint_drt_disabled_compatibility(self):
+        """Test that FleetTotalConstraintHandler works correctly when DRT is disabled."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create PT-only optimization data (DRT disabled)
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60, 120]
+
+        # Extract PT-only data (no DRT config)
+        opt_data = preparator.extract_optimization_data(allowed_headways)
+
+        # Verify DRT is disabled
+        assert opt_data.get('drt_enabled', False) is False
+
+        # Create constraint handler
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.20,
+            'measure': 'peak'
+        }
+
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # Create PT solution matrix
+        pt_solution = np.array([
+            [1, 2, 1, 0],  # Route 1
+            [0, 1, 2, 1],  # Route 2
+        ])
+
+        # Test 1: Standard matrix format (PT-only legacy)
+        violations_matrix = constraint.evaluate(pt_solution)
+        assert len(violations_matrix) == 1
+
+        # Test 2: Dict format with 'pt' key (should work even when DRT disabled)
+        solution_dict = {'pt': pt_solution}
+        violations_dict = constraint.evaluate(solution_dict)
+        assert len(violations_dict) == 1
+
+        # Both should give same result
+        np.testing.assert_array_almost_equal(violations_matrix, violations_dict)
+
+        print("✅ PT-only constraint compatibility verified!")
+        print(f"   • Matrix format violation: {violations_matrix[0]:.3f}")
+        print(f"   • Dict format violation: {violations_dict[0]:.3f}")
+        print("   • Both formats work correctly when DRT is disabled")
+
+
 class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
     """
     Constraint handler for per-interval fleet size limits.
 
     This constraint ensures that fleet requirements for each time interval
-    individually do not exceed specified limits. Useful for scenarios where
-    you have different capacity constraints by time of day.
+    individually do not exceed specified limits and/or stay above minimum levels. 
+    Useful for scenarios where you have different capacity constraints by time of day.
 
     Configuration Parameters:
         baseline (str): How to determine baseline fleet per interval
@@ -341,6 +649,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             - 'manual': Use manually specified values
         baseline_values (List[float], optional): Manual values per interval
         tolerance (float): Allowed increase above baseline per interval
+        min_fraction (float): Allowed reduction below baseline per interval
         allow_borrowing (bool, optional): Whether intervals can borrow unused
                                         capacity from other intervals
 
@@ -438,12 +747,30 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
     """
 
     def _calculate_n_constraints(self) -> int:
-        """One constraint per time interval."""
-        return self.n_intervals
+        """Calculate constraints: intervals × (ceiling + floor constraints)."""
+        n_ceiling = self.n_intervals if self.config.get('tolerance') is not None else 0
+        n_floor = self.n_intervals if self.config.get('min_fraction') is not None else 0
+        return n_ceiling + n_floor
 
     def _validate_config(self) -> None:
         """Validate per-interval fleet constraint configuration."""
         super()._validate_config()
+
+        tolerance = self.config.get('tolerance', None)
+        min_fraction = self.config.get('min_fraction', None)
+
+        # At least one constraint must be specified
+        if tolerance is None and min_fraction is None:
+            raise ValueError(
+                "FleetPerIntervalConstraintHandler must specify either 'tolerance' "
+                "or 'min_fraction' or both"
+            )
+        # Validate parameter ranges
+        if tolerance is not None and tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
+
+        if min_fraction is not None and not (0.0 <= min_fraction <= 1.0):
+            raise ValueError("min_fraction must be between 0.0 and 1.0")
 
         if "baseline" not in self.config:
             raise ValueError("Per-interval fleet constraint requires 'baseline'")
@@ -456,34 +783,111 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             raise ValueError("Manual baseline requires 'baseline_values'")
 
         # Set defaults
-        self.config.setdefault("tolerance", 0.1)
         self.config.setdefault("allow_borrowing", False)
 
     def evaluate(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
-        Evaluate per-interval fleet constraints.
+        Evaluate both ceiling and floor constraints for fleet per interval.
 
         Args:
-            solution_matrix: Decision matrix (n_routes × n_intervals)
+            solution_matrix: Decision matrix (n_routes × n_intervals) - PT only
 
         Returns:
-            Array of constraint violations, one per interval:
-            [interval_0_usage - limit_0, ..., interval_n_usage - limit_n]
+            Array of constraint violations where <= 0 means satisfied.
+            Order: [ceiling_violations_per_interval..., floor_violations_per_interval...]
         """
         # Calculate fleet requirements by interval
         fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
 
-        # Get limits for each interval
-        fleet_limits = self._get_interval_limits()
+        violations = []
 
-        # Calculate constraint violations
-        violations = fleet_per_interval - fleet_limits
+        # Check ceiling constraints
+        tolerance = self.config.get('tolerance', None)
+        if tolerance is not None:
+            ceiling_violations = self._check_ceiling_violations(fleet_per_interval)
+            violations.extend(ceiling_violations)
 
-        # Handle borrowing if enabled
-        if self.config["allow_borrowing"]:
-            violations = self._apply_borrowing_logic(violations, fleet_limits)
+        # Check floor constraints
+        min_fraction = self.config.get('min_fraction', None)
+        if min_fraction is not None:
+            floor_violations = self._check_floor_violations(fleet_per_interval)
+            violations.extend(floor_violations)
+
+        return np.array(violations)
+
+
+    def _check_ceiling_violations(self, fleet_per_interval: np.ndarray) -> list[float]:
+        """Check ceiling constraint violations"""
+        violations = []
+        baseline_fleet = self._get_interval_baselines()
+        tolerance = self.config['tolerance']
+
+        for interval_idx in range(self.n_intervals):
+            current_fleet = fleet_per_interval[interval_idx]
+            max_allowed = baseline_fleet[interval_idx] * (1 + tolerance)
+
+            # Positive violation means constraint is violated
+            violation = current_fleet - max_allowed
+            violations.append(violation)
 
         return violations
+
+    def _check_floor_violations(self, fleet_per_interval: np.ndarray) -> list[float]:
+        """Check floor constraint violations"""
+        violations = []
+        baseline_fleet = self._get_interval_baselines()
+        min_fraction = self.config['min_fraction']
+
+        for interval_idx in range(self.n_intervals):
+            current_fleet = fleet_per_interval[interval_idx]
+            min_required = baseline_fleet[interval_idx] * min_fraction
+
+            # Positive violation means constraint is violated (current < required)
+            violation = min_required - current_fleet
+            violations.append(violation)
+
+        return violations
+
+    def _get_interval_baselines(self) -> np.ndarray:
+        """Get baseline fleet values for each interval (shared by ceiling/floor logic)."""
+        if self.config["baseline"] == "manual":
+            baseline_values = np.array(self.config["baseline_values"])
+            if len(baseline_values) != self.n_intervals:
+                raise ValueError(f"Manual baseline must have {self.n_intervals} values")
+            return baseline_values
+        else:
+            # Extract from fleet analysis (existing logic)
+            fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
+
+            if self.config["baseline"] == "current_by_interval":
+                baseline_values = fleet_analysis.get("current_fleet_by_interval")
+                return np.array(baseline_values)
+            elif self.config["baseline"] == "current_peak":
+                peak_fleet = fleet_analysis.get("total_current_fleet_peak")
+                return np.full(self.n_intervals, peak_fleet)
+            else:
+                raise ValueError(f"Unknown baseline: {self.config['baseline']}")
+
+    def get_constraint_info(self) -> dict[str, Any]:
+        """Get information about this constraint handler."""
+        constraint_types = []
+        if self.config.get('tolerance') is not None:
+            constraint_types.append(f"ceiling (tolerance: {self.config['tolerance']})")
+        if self.config.get('min_fraction') is not None:
+            constraint_types.append(f"floor (min_fraction: {self.config['min_fraction']})")
+
+        return {
+            "handler_type": f"FleetPerInterval ({', '.join(constraint_types)})",
+            "n_constraints": self.n_constraints,
+            "baseline": self.config['baseline'],
+            "constraint_details": {
+                "tolerance": self.config.get('tolerance'),
+                "min_fraction": self.config.get('min_fraction'),
+                "allow_borrowing": self.config.get('allow_borrowing', False)
+            }
+        }
+
+
 
     def _get_interval_limits(self) -> np.ndarray:
         """Get fleet limits for each time interval."""
@@ -499,12 +903,12 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
                 # Try to get per-interval data, fall back to peak
                 baseline_values = fleet_analysis.get(
                     "current_fleet_by_interval",
-                    [fleet_analysis.get("total_current_fleet_peak", 100)]
+                    [fleet_analysis.get("total_current_fleet_peak")]
                     * self.n_intervals,
                 )
                 baseline_values = np.array(baseline_values)
             elif self.config["baseline"] == "current_peak":
-                peak_fleet = fleet_analysis.get("total_current_fleet_peak", 100)
+                peak_fleet = fleet_analysis.get("total_current_fleet_peak")
                 baseline_values = np.full(self.n_intervals, peak_fleet)
             else:
                 raise ValueError(f"Unknown baseline: {self.config['baseline']}")

@@ -4,11 +4,9 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_total,
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-)
+from ..utils.population import (calculate_population_weighted_total,
+                                calculate_population_weighted_variance,
+                                interpolate_population_to_zones)
 from .base import BaseSpatialObjective
 
 
@@ -75,19 +73,28 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
     def _create_spatial_system(self):
         """Create hexagonal zoning system."""
+
+        # Extract DRT config if available
+        drt_config = None
+        if self.opt_data.get('drt_enabled', False):
+            drt_config = self.opt_data.get('drt_config')
+
         return HexagonalZoneSystem(
             gtfs_feed=self.gtfs_feed,
             hex_size_km=self.spatial_resolution,
             crs=self.crs,
             boundary=self.boundary,
+            drt_config=drt_config,
         )
 
-    def evaluate(self, solution_matrix: np.ndarray) -> float:
+    def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
         """
             Evaluate waiting time objective for given solution.
             
             Args:
-                solution_matrix: Decision matrix (n_routes × n_intervals)
+                solution_matrix: 
+                - PT-only: Decision matrix (n_routes × n_intervals)
+                - PT+DRT: Dict with 'pt' and 'drt' keys
                 
             Returns:
                 Objective value (lower is better)
@@ -142,15 +149,27 @@ class WaitingTimeObjective(BaseSpatialObjective):
         self, vehicles_per_zone: np.ndarray, solution_matrix: np.ndarray, interval_idx: int
     ) -> np.ndarray:
         """Calculate waiting times using vehicle counts."""
-        # Get interval length ONCE per interval, not once per zone
+        # Get interval length ONCE per call, not once per zone
         interval_length_minutes = self._get_interval_length_minutes()
 
-        # Apply the same conversion to all zones - this handles zero vehicles correctly
-        # Pass the interval length to avoid repeated calls
-        return np.array([
-            self._convert_vehicle_count_to_waiting_time(vehicle_count, interval_length_minutes)
-            for vehicle_count in vehicles_per_zone
-        ])
+        # Vectorized conversion for all zones at once
+        # Create result array
+        waiting_times = np.zeros_like(vehicles_per_zone, dtype=float)
+
+        # Handle zones with no vehicles (penalty)
+        no_vehicle_mask = vehicles_per_zone <= 0
+        waiting_times[no_vehicle_mask] = interval_length_minutes
+
+        # Handle zones with vehicles (inverse relationship)
+        has_vehicle_mask = vehicles_per_zone > 0
+        vehicles_with_service = vehicles_per_zone[has_vehicle_mask]
+
+        # Convert to vehicles per hour and then to waiting time
+        vehicles_per_hour = vehicles_with_service * (60 / interval_length_minutes)
+        effective_headway = 60 / vehicles_per_hour
+        waiting_times[has_vehicle_mask] = effective_headway / 2.0
+
+        return waiting_times
 
     def _convert_vehicle_count_to_waiting_time(
         self, vehicle_count: float, interval_length_minutes: float
@@ -192,7 +211,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Return cached value if already computed
         if self._interval_length_minutes is not None:
-            print(f"⏱️ Interval length: {self._interval_length_minutes:.0f} minutes (cached)")
+            #print(f"⏱️ Interval length: {self._interval_length_minutes:.0f} minutes (cached)")
             return self._interval_length_minutes
 
         shape = self.opt_data.get('decision_matrix_shape')
@@ -281,3 +300,101 @@ class WaitingTimeObjective(BaseSpatialObjective):
         features.append(f"metric: {self.metric}")
         features.append(f"time aggregation: {self.time_aggregation}")
         return ", ".join(features)
+
+    def get_waiting_times_per_zone(
+        self,
+        solution_matrix: np.ndarray,
+        aggregation: str = "average"
+    ) -> np.ndarray:
+        """
+        Get waiting times per zone for visualization and analysis.
+        
+        This method converts vehicle counts to waiting times using the standard 
+        transit formula: waiting_time = headway / 2, where headway = interval_length / vehicles.
+        
+        Args:
+            solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
+            aggregation: How to aggregate across time intervals:
+                        - 'average': Mean vehicle count across intervals
+                        - 'peak': Maximum vehicle count across intervals  
+                        - str(interval_idx): Specific interval by index
+            
+        Returns:
+            Array of waiting times per zone in minutes. Higher values = worse service.
+        """
+        # Get vehicles per zone first
+        vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
+
+        # Get interval length
+        interval_length = self._get_interval_length_minutes()
+
+        # Convert to waiting times using existing method
+        if aggregation == "average":
+            vehicle_counts = vehicles_data['average']
+        elif aggregation == "peak":
+            vehicle_counts = vehicles_data['peak']
+        else:
+            # Assume it's an interval index
+            interval_idx = int(aggregation)
+            vehicle_counts = vehicles_data['intervals'][interval_idx, :]
+
+        # Use existing conversion method
+        waiting_times = np.array([
+            self._convert_vehicle_count_to_waiting_time(v, interval_length)
+            for v in vehicle_counts
+        ])
+
+        return waiting_times
+
+    def visualize(
+        self,
+        solution_matrix: np.ndarray,
+        aggregation: str = "average",
+        interval_idx: int | None = None,
+        figsize=(15, 12),
+        show_stops=True,
+        show_drt_zones=None,
+        ax=None,
+        vmin=None,
+        vmax=None,
+    ):
+        """
+        Visualize waiting times spatially.
+        
+        Args:
+            solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
+            aggregation: Time aggregation method ('average', 'peak', 'intervals')
+            interval_idx: Specific interval index (only used when aggregation='intervals')
+            figsize: Figure size (only used if ax is None)
+            show_stops: Whether to show transit stops as blue dots
+            show_drt_zones: Whether to show DRT service areas (auto-detects if None)
+            ax: Optional matplotlib axis to plot on
+            vmin: Minimum value for color scale (auto-calculated if None)
+            vmax: Maximum value for color scale (auto-calculated if None)
+            
+        Returns:
+            Tuple of (figure, axis) objects
+        """
+        # Get waiting times using existing methods
+        if aggregation == "intervals" and interval_idx is not None:
+            waiting_times_per_zone = self.get_waiting_times_per_zone(solution_matrix, str(interval_idx))
+            title_suffix = f"(Interval {interval_idx})"
+        else:
+            waiting_times_per_zone = self.get_waiting_times_per_zone(solution_matrix, aggregation)
+            title_suffix = f"({aggregation.capitalize()} Waiting Times)"
+
+        # Use the spatial system's visualization capabilities
+        return self.spatial_system._visualize_with_data(
+            data_per_zone=waiting_times_per_zone,
+            data_column_name="waiting_time",
+            data_label="Waiting Time (minutes)",
+            colormap="RdYlBu_r",  # Red=high waiting, blue=low waiting
+            optimization_data=self.opt_data,
+            title_suffix=title_suffix,
+            figsize=figsize,
+            show_stops=show_stops,
+            show_drt_zones=show_drt_zones,
+            ax=ax,
+            vmin=vmin,
+            vmax=vmax
+        )
