@@ -12,7 +12,8 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
+from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
+                   FleetTotalConstraintHandler)
 
 
 class TransitOptimizationProblem(Problem):
@@ -296,10 +297,15 @@ class TransitOptimizationProblem(Problem):
                 total_penalty = 0.0
 
                 for j, constraint in enumerate(self.constraints):
-                    # For now, constraints only handle PT part TODO: extend for DRT
-                    if self.drt_enabled:
+                    # Smart constraint handling based on type and DRT status (same as hard constraints)
+                    if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                        # FleetTotalConstraintHandler can handle full PT+DRT solution
+                        violations = constraint.evaluate(solution)
+                    elif self.drt_enabled:
+                        # Other constraints only handle PT part when DRT enabled
                         violations = constraint.evaluate(solution['pt'])
                     else:
+                        # PT-only case: pass solution directly
                         violations = constraint.evaluate(solution)
 
                     # Get constraint-specific penalty weight
@@ -438,7 +444,18 @@ class TransitOptimizationProblem(Problem):
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
                         constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
-                        violations = constraint.evaluate(solution_matrix)
+                          # Apply smart constraint handling here (FleetTotal works on full solution,
+                          # others on PT only)
+                        if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
+                            # FleetTotalConstraintHandler can handle full PT+DRT solution
+                            violations = constraint.evaluate(solution_matrix)
+                        elif self.drt_enabled:
+                            # Other constraints only handle PT part when DRT enabled
+                            violations = constraint.evaluate(solution_matrix['pt'])
+                        else:
+                            # PT-only case: pass solution directly
+                            violations = constraint.evaluate(solution_matrix)
+
 
                         # Check overall constraint feasibility
                         constraint_satisfied = np.all(violations <= 1e-6)
