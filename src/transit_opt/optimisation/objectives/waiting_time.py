@@ -4,11 +4,9 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_total,
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-)
+from ..utils.population import (calculate_population_weighted_total,
+                                calculate_population_weighted_variance,
+                                interpolate_population_to_zones)
 from .base import BaseSpatialObjective
 
 
@@ -89,12 +87,14 @@ class WaitingTimeObjective(BaseSpatialObjective):
             drt_config=drt_config,
         )
 
-    def evaluate(self, solution_matrix: np.ndarray) -> float:
+    def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
         """
             Evaluate waiting time objective for given solution.
             
             Args:
-                solution_matrix: Decision matrix (n_routes × n_intervals)
+                solution_matrix: 
+                - PT-only: Decision matrix (n_routes × n_intervals)
+                - PT+DRT: Dict with 'pt' and 'drt' keys
                 
             Returns:
                 Objective value (lower is better)

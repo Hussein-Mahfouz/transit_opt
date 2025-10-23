@@ -280,18 +280,13 @@ class TransitOptimizationProblem(Problem):
             G = np.zeros((pop_size, self.n_constr)) if self.n_constr > 0 else None
 
         for i in range(pop_size):
-            # Decode solution
+            # 1. Decode solution
             solution = self.decode_solution(X[i])
 
-            # Evaluate base objective (PT-only for now) #TODO: extend for DRT
-            if self.drt_enabled:
-                # For now, only pass PT part to objective functions
-                base_objective = self.objective.evaluate(solution['pt'])
-            else:
-                # PT-only case unchanged
-                base_objective = self.objective.evaluate(solution)
+            # 2. Evaluate base objective for this solution
+            base_objective = self.objective.evaluate(solution)
 
-
+            # 3. Handle constraints for this solution
             if self.use_penalty_method and self.constraints:
                 # 🔧 PENALTY METHOD: Add constraint violations to objective
                 total_penalty = 0.0
@@ -714,13 +709,10 @@ class TransitOptimizationProblem(Problem):
 
         # Evaluate objective
         try:
-            # For now, objectives only handle PT part #TODO: extend for DRT
             if self.drt_enabled:
                 if not isinstance(solution_matrix, dict):
                     raise ValueError("DRT-enabled problems expect dict solution format")
-                objective_value = self.objective.evaluate(solution_matrix['pt'])
-            else:
-                objective_value = self.objective.evaluate(solution_matrix)
+            objective_value = self.objective.evaluate(solution_matrix)
             print(f"   📊 Objective value: {objective_value:.4f}")
         except Exception as e:
             print(f"   ❌ Objective evaluation failed: {e}")

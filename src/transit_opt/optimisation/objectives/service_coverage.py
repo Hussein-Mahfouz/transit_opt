@@ -4,11 +4,9 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-    validate_population_config,
-)
+from ..utils.population import (calculate_population_weighted_variance,
+                                interpolate_population_to_zones,
+                                validate_population_config)
 from .base import BaseSpatialObjective
 
 
@@ -153,8 +151,18 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             features.append("population weighted [PLACEHOLDER]")
         return ", ".join(features)
 
-    def evaluate(self, solution_matrix: np.ndarray) -> float:
-        """Minimize variance in vehicle distribution across hexagons."""
+    def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
+        """
+        Minimize variance in vehicle distribution across hexagons.
+        
+        Args:
+                solution_matrix: 
+                - PT-only: Decision matrix (n_routes × n_intervals)
+                - PT+DRT: Dict with 'pt' and 'drt' keys
+                
+            Returns:
+                Objective value (lower is better)
+        """
         vehicles_data = self.spatial_system._vehicles_per_zone(
             solution_matrix, self.opt_data
         )

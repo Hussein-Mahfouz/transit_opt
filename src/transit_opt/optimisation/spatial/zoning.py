@@ -92,6 +92,10 @@ class HexagonalZoneSystem:
         self.crs = crs
         self.boundary = boundary
 
+        # Add evaluation counter for debug print management
+        self._evaluation_count = 0
+        self._print_frequency = 50  # Print every N evaluations (TODO: make configurable)
+
         # Validate that CRS is metric
         self._validate_metric_crs()
 
@@ -416,7 +420,7 @@ class HexagonalZoneSystem:
         raise NotImplementedError("Zone population analysis coming in next update.")
 
     def _vehicles_per_zone(
-        self, solution_matrix: np.ndarray, optimization_data: dict[str, Any]
+        self, solution_matrix: np.ndarray | dict, optimization_data: dict[str, Any]
     ) -> dict[str, np.ndarray]:
         """
          Calculate vehicles per zone with all aggregation types (PT + DRT).
@@ -434,13 +438,20 @@ class HexagonalZoneSystem:
             - 'intervals': 2D array (n_zones × n_intervals) with vehicles per zone per interval
             - 'interval_labels': List of time interval labels from preparator
         """
+        # Increment counter for this evaluation
+        self._evaluation_count += 1
+
          # Determine if DRT is enabled
         drt_enabled = optimization_data.get('drt_enabled', False)
 
-        if drt_enabled and isinstance(solution_matrix, dict):
-            # PT+DRT case: calculate both and combine
-            print("📊 Calculating PT + DRT vehicles per zone...")
+        # Only print debug info every N evaluations
+        should_print = (self._evaluation_count % self._print_frequency == 0 or
+                    self._evaluation_count == 1)  # Always print first evaluation
 
+        # PT + DRT case
+        if drt_enabled and isinstance(solution_matrix, dict):
+            if should_print:
+                print(f"📊 Calculating PT+DRT vehicles per zone... (eval #{self._evaluation_count})")
             # Calculate PT vehicles
             pt_vehicles_data = self._calculate_pt_vehicles_by_interval(
                 solution_matrix['pt'], optimization_data
@@ -452,11 +463,11 @@ class HexagonalZoneSystem:
             )
 
             # Combine PT and DRT data
-            return self._combine_vehicle_data(pt_vehicles_data, drt_vehicles_data)
-
+            return self._combine_vehicle_data(pt_vehicles_data, drt_vehicles_data, should_print)
+        # PT only case
         else:
-            # PT-only case: use existing logic
-            print("📊 Calculating PT-only vehicles per zone...")
+            if should_print:
+                print(f"📊 Calculating PT-only vehicles per zone... (eval #{self._evaluation_count})")
             if isinstance(solution_matrix, dict):
                 # Extract PT part if dict format used
                 solution_matrix = solution_matrix['pt']
@@ -628,7 +639,8 @@ class HexagonalZoneSystem:
         }
 
     def _combine_vehicle_data(
-        self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray]
+        self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray],
+        should_print: bool = False
     ) -> dict[str, np.ndarray]:
         """
         Combine PT and DRT vehicle data with temporally consistent peak calculation.
@@ -645,10 +657,10 @@ class HexagonalZoneSystem:
         # Find system-wide peak interval (when total vehicles needed is highest)
         total_vehicles_by_interval = np.sum(combined_intervals, axis=1)  # [intervals]
         peak_interval_idx = np.argmax(total_vehicles_by_interval)
-
-        print("🔍 System peak analysis:")
-        print(f"   Peak interval: {peak_interval_idx} ({pt_data['interval_labels'][peak_interval_idx]})")
-        print(f"   Peak total vehicles: {total_vehicles_by_interval[peak_interval_idx]:.1f}")
+        if should_print:
+            print("🔍 System peak analysis:")
+            print(f"   Peak interval: {peak_interval_idx} ({pt_data['interval_labels'][peak_interval_idx]})")
+            print(f"   Peak total vehicles: {total_vehicles_by_interval[peak_interval_idx]:.1f}")
 
         # Peak = vehicles needed during system peak interval (temporally consistent)
         peak_combined = combined_intervals[peak_interval_idx, :]
