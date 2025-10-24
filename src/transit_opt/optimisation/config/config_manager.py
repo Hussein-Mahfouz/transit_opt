@@ -687,6 +687,43 @@ class MultiRunConfig:
                             f"Parameter sweep for '{param}' must have at least 2 values"
                         )
 
+@dataclass
+class SamplingConfig:
+    """
+    Configuration for custom sampling in PSO optimization.
+    Attributes:
+        enabled: Whether custom sampling is enabled
+        base_solutions: List of base solutions or 'from_data' to sample from
+        frac_gaussian_pert: Fraction of new solutions from Gaussian perturbation around base solutions
+        frac_sampled: Fraction of new solutions from sampling the solution space using Latin Hypercube Sampling
+        gaussian_sigma_frac: Standard deviation fraction for Gaussian perturbation
+        seed: Random seed for reproducibility
+"""
+    enabled: bool = False
+    base_solutions: list | str = field(default_factory=list)  # List of solutions or 'from_data'
+    frac_gaussian_pert: float = 0.7
+    frac_sampled: float = 0.3
+    gaussian_sigma_frac: float = 0.1
+    seed: int | None = None
+
+    def __post_init__(self):
+        """Validate sampling configuration after initialization."""
+        if self.enabled:
+            # Validate fractions sum to 1.0
+            total_frac = self.frac_gaussian_pert + self.frac_sampled
+            if abs(total_frac - 1.0) > 1e-6:
+                raise ValueError(f"frac_gaussian_pert + frac_sampled must equal 1.0, got {total_frac}")
+
+            # Validate individual fractions
+            if not (0.0 <= self.frac_gaussian_pert <= 1.0):
+                raise ValueError(f"frac_gaussian_pert must be in [0,1], got {self.frac_gaussian_pert}")
+            if not (0.0 <= self.frac_sampled <= 1.0):
+                raise ValueError(f"frac_sampled must be in [0,1], got {self.frac_sampled}")
+
+            # Validate gaussian sigma
+            if not (0.0 < self.gaussian_sigma_frac <= 1.0):
+                raise ValueError(f"gaussian_sigma_frac must be in (0,1], got {self.gaussian_sigma_frac}")
+
 
 class OptimizationConfigManager:
     """
@@ -847,6 +884,17 @@ class OptimizationConfigManager:
             penalty_increase_rate=alg_config.get("penalty_increase_rate", 2.0),
         )
 
+        # Setup sampling configuration - all optional with defaults
+        sampling_config = self.config.get("problem", {}).get("sampling", {})
+        self.sampling_config = SamplingConfig(
+            enabled=sampling_config.get("enabled", False),
+            base_solutions=sampling_config.get("base_solutions", []),
+            frac_gaussian_pert=sampling_config.get("frac_gaussian_pert", 0.3),
+            frac_sampled=sampling_config.get("frac_sampled", 0.7),
+            gaussian_sigma_frac=sampling_config.get("gaussian_sigma_frac", 0.1),
+            seed=sampling_config.get("seed", None)
+        )
+
         # Setup termination configuration - check required parameters
         term_config = opt_config.get("termination", {})
 
@@ -894,6 +942,10 @@ class OptimizationConfigManager:
     def get_pso_config(self) -> PSOConfig:
         """Get PSO algorithm configuration."""
         return self.pso_config
+
+    def get_sampling_config(self) -> SamplingConfig:
+        """Get sampling configuration for custom PSO initialization."""
+        return self.sampling_config
 
     def get_termination_config(self) -> TerminationConfig:
         """Get termination criteria configuration."""
