@@ -1,0 +1,32 @@
+{
+    "solution_metadata": {
+        "created_at": "2024-10-24T10:30:00",
+        "optimization_type": "PT+DRT"
+    },
+    "drt_solutions": {
+        "drt_duke_1": {
+            "zone_info": {
+                "zone_id": "drt_duke_1",
+                "zone_name": "Duke Area 1"
+            },
+            "fleet_deployment": {
+                "00-06h": {"fleet_choice_idx": 1, "fleet_size": 5},
+                "06-12h": {"fleet_choice_idx": 3, "fleet_size": 15},
+                "12-18h": {"fleet_choice_idx": 4, "fleet_size": 20},
+                "18-24h": {"fleet_choice_idx": 2, "fleet_size": 10}
+            }
+        },
+        "drt_duke_2": {
+            "zone_info": {
+                "zone_id": "drt_duke_2",
+                "zone_name": "Duke Area 2"
+            },
+            "fleet_deployment": {
+                "00-06h": {"fleet_choice_idx": 0, "fleet_size": 0},
+                "06-12h": {"fleet_choice_idx": 2, "fleet_size": 16},
+                "12-18h": {"fleet_choice_idx": 3, "fleet_size": 24},
+                "18-24h": {"fleet_choice_idx": 1, "fleet_size": 8}
+            }
+        }
+    }
+}
