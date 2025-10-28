@@ -409,437 +409,6 @@ class MultiRunResult:
 
 
 
-class AdaptivePSO(PSO):
-    """
-    Particle Swarm Optimization with adaptive inertia weight scheduling.
-    
-    This class extends pymoo's standard PSO implementation to support adaptive
-    inertia weight that automatically balances exploration and exploitation during
-    optimization. 
-    
-    ADAPTIVE INERTIA WEIGHT STRATEGY:
-    
-    Standard PSO uses fixed inertia weight throughout optimization:
-    - High values (0.9): Emphasize exploration, particles move more freely
-    - Low values (0.4): Emphasize exploitation, particles focus on local search
-    - Fixed values require manual tuning for each problem
-    
-    Adaptive PSO automatically adjusts inertia weight over generations:
-    - **Early generations**: High inertia weight for global exploration
-    - **Later generations**: Low inertia weight for local exploitation
-    - **Automatic tuning**: No manual parameter adjustment needed
-    
-    MATHEMATICAL FORMULATION:
-    
-    **Standard PSO velocity update:**
-    ```
-    v(t+1) = w * v(t) + c1 * r1 * (pbest - x(t)) + c2 * r2 * (gbest - x(t))
-    ```
-    **Adaptive inertia weight schedule:**
-    ```
-    w(t) = w_initial - (w_initial - w_final) * t / (T - 1)
-    ```
-    
-    Where:
-    - w(t): Inertia weight at generation t
-    - w_initial: Starting inertia weight (typically 0.9)
-    - w_final: Ending inertia weight (typically 0.4)
-    - t: Current generation (0-based)
-    - T: Total number of generations
-    
-    **Example weight evolution (100 generations, 0.9 → 0.4):**
-    - Generation 0: w = 0.900 (maximum exploration)
-    - Generation 25: w = 0.775 (balanced)
-    - Generation 50: w = 0.650 (transitioning)
-    - Generation 75: w = 0.525 (focusing)
-    - Generation 99: w = 0.400 (maximum exploitation)
-    
-    BENEFITS FOR DISCRETE OPTIMIZATION:
-    
-    **Traditional fixed weight issues:**
-    - High weight: Good exploration but poor convergence
-    - Low weight: Fast convergence but may miss global optimum
-    - Medium weight: Compromise that may be suboptimal for both phases
-    
-    **Adaptive weight advantages:**
-    - **Automatic exploration**: Early generations search widely
-    - **Automatic exploitation**: Later generations refine solutions
-    - **Better convergence**: Systematic transition between phases
-    - **Reduced tuning**: One less parameter to tune manually
-    - **Problem adaptivity**: Works well across different problem types
-    
-    INTEGRATION WITH PYMOO FRAMEWORK:
-    
-    This class seamlessly integrates with pymoo's optimization infrastructure:
-    - Compatible with all pymoo termination criteria
-    - Works with pymoo's callback system
-    - Supports pymoo's result format and history tracking
-    - Can be used with pymoo's multi-objective extensions (future)
-    
-    ```python
-    # Drop-in replacement for standard PSO
-    from pymoo.optimize import minimize
-    
-    # Standard PSO
-    standard_pso = PSO(pop_size=40, w=0.7, c1=2.0, c2=2.0)
-    
-    # Adaptive PSO (recommended)
-    adaptive_pso = AdaptivePSO(
-        pop_size=40, 
-        inertia_weight=0.9,           # Start high for exploration
-        inertia_weight_final=0.4,     # End low for exploitation
-        cognitive_coeff=2.0,
-        social_coeff=2.0
-    )
-    
-    # Both work identically with pymoo.minimize()
-    result = minimize(problem, adaptive_pso, termination)
-    ```
-    
-    PARAMETER SELECTION GUIDELINES:
-    
-    **Population Size (pop_size):**
-    - Small problems (< 100 variables): 20-40 particles
-    - Medium problems (100-500 variables): 40-80 particles  
-    - Large problems (> 500 variables): 80-150 particles
-    - Transit problems: 40-60 particles typically sufficient
-    
-    **Inertia Weight Range:**
-    - **Conservative**: 0.9 → 0.5 (gradual transition)
-    - **Standard**: 0.9 → 0.4 (recommended default)
-    - **Aggressive**: 0.9 → 0.2 (fast exploitation)
-    
-    **Cognitive/Social Coefficients:**
-    - **Balanced**: c1 = c2 = 2.0 (recommended)
-    - **Individualistic**: c1 > c2 (particles trust personal experience)
-    - **Social**: c1 < c2 (particles follow swarm)
-    
-    PERFORMANCE CHARACTERISTICS:
-    
-    **Computational Overhead:**
-    - Minimal: Only one additional calculation per generation
-    - Weight update: O(1) time complexity
-    - Memory overhead: Negligible (few additional instance variables)
-    
-    **Convergence Properties:**
-    - **Exploration phase**: Broad search, slow convergence
-    - **Transition phase**: Gradual focusing on promising regions
-    - **Exploitation phase**: Rapid convergence to local optima
-    - **Overall**: Better global optimum approximation than fixed weight
-
-    """
-
-    def __init__(self, pop_size: int = 50,
-                 inertia_weight: float = 0.9,
-                 inertia_weight_final: float | None = None,
-                 cognitive_coeff: float = 2.0,
-                 social_coeff: float = 2.0,
-                 **kwargs):
-        """
-        Initialize adaptive PSO with configurable inertia weight scheduling.
-        
-        Creates a PSO algorithm that can operate in either fixed inertia weight mode
-        (traditional PSO) or adaptive inertia weight mode (recommended for most problems).
-        The adaptive mode provides automatic exploration-exploitation balance without
-        manual parameter tuning.
-        
-        Args:
-            pop_size (int, optional): Number of particles in the swarm.
-                                    More particles provide better exploration but increase
-                                    computational cost. Typical range: 20-100.
-                                    Defaults to 50.
-                                    
-            inertia_weight (float, optional): Initial inertia weight (or fixed weight if final is None).
-                                            Controls particle momentum and exploration tendency.
-                                            Higher values emphasize exploration (0.7-1.2).
-                                            Lower values emphasize exploitation (0.2-0.6).
-                                            Defaults to 0.9.
-                                            
-            inertia_weight_final (float | None, optional): Final inertia weight for adaptive scheduling.
-                                                         If None, uses fixed inertia weight mode.
-                                                         If specified, enables adaptive mode with linear
-                                                         decay from initial to final weight.
-                                                         Must be less than inertia_weight.
-                                                         Defaults to None.
-                                                         
-            cognitive_coeff (float, optional): Cognitive coefficient (c1 parameter).
-                                             Controls attraction to particle's personal best position.
-                                             Higher values increase individual particle learning.
-                                             Typical range: 0.5-4.0, recommended: 2.0.
-                                             Defaults to 2.0.
-                                             
-            social_coeff (float, optional): Social coefficient (c2 parameter).
-                                          Controls attraction to global best position.
-                                          Higher values increase swarm coordination.
-                                          Typical range: 0.5-4.0, recommended: 2.0.
-                                          Defaults to 2.0.
-                                          
-            **kwargs: Additional keyword arguments passed to parent PSO class.
-                     May include boundary handling, variant selection, etc.
-                     See pymoo.algorithms.soo.nonconvex.pso.PSO for details.
-        
-        Examples:
-            ```python
-            # Fixed inertia weight PSO (traditional)
-            fixed_pso = AdaptivePSO(
-                pop_size=40,
-                inertia_weight=0.7,          # Fixed weight
-                inertia_weight_final=None,   # No adaptation
-                cognitive_coeff=2.0,
-                social_coeff=2.0
-            )
-            
-            # Adaptive inertia weight PSO (recommended)
-            adaptive_pso = AdaptivePSO(
-                pop_size=60,
-                inertia_weight=0.9,          # High initial weight (exploration)
-                inertia_weight_final=0.4,    # Low final weight (exploitation)
-                cognitive_coeff=2.0,
-                social_coeff=2.0
-            )
-            
-            # Conservative adaptive schedule
-            conservative_pso = AdaptivePSO(
-                pop_size=40,
-                inertia_weight=0.8,          # Lower initial weight
-                inertia_weight_final=0.6,    # Higher final weight
-                cognitive_coeff=1.5,         # Reduced coefficients
-                social_coeff=1.5
-            )
-            
-            # Aggressive adaptive schedule  
-            aggressive_pso = AdaptivePSO(
-                pop_size=80,
-                inertia_weight=0.95,         # Very high initial weight
-                inertia_weight_final=0.2,    # Very low final weight
-                cognitive_coeff=2.5,         # Increased coefficients
-                social_coeff=2.5
-            )
-            ```
-            
-        Notes:
-            - The algorithm automatically detects termination criteria to enable adaptive scheduling
-            - If max_generations cannot be determined, falls back to fixed inertia weight
-            - All parameters are validated during setup phase
-            - Adaptive mode requires generation-based termination (not just time-based)
-        """
-
-        # Initialize parent PSO with initial inertia weight
-        # Note: pymoo PSO uses 'w' for inertia weight parameter
-        super().__init__(
-            pop_size=pop_size,          # Number of particles
-            w=inertia_weight,           # Initial inertia weight
-            c1=cognitive_coeff,         # Cognitive coefficient (attraction to personal best)
-            c2=social_coeff,           # Social coefficient (attraction to global best)
-            **kwargs                    # Additional parameters (boundary handling, etc.)
-        )
-
-        # Store adaptive weight parameters for scheduling
-        self.initial_inertia_weight = inertia_weight      # Starting weight value
-        self.final_inertia_weight = inertia_weight_final  # Ending weight value (None = fixed mode)
-        self.is_adaptive = inertia_weight_final is not None  # Whether adaptive mode is enabled
-
-        # Generation tracking for adaptive scheduling
-        # Will be set during setup phase by analyzing termination criteria
-        self.max_generations = None
-
-    def setup(self, problem, **kwargs):
-        """
-        Setup PSO algorithm and extract termination information for adaptive scheduling.
-        
-        This method is called by pymoo before optimization begins. It performs standard
-        PSO setup and additionally extracts maximum generation information needed for
-        adaptive inertia weight scheduling.
-        
-        TERMINATION ANALYSIS:
-        The method analyzes termination criteria to determine maximum generations:
-        - Single criterion: Extracts n_max_gen directly
-        - Multiple criteria: Searches for generation-based criterion
-        - Time-only termination: Falls back to fixed inertia weight mode
-        
-        This information is essential for calculating the linear decay schedule
-        of the adaptive inertia weight.
-        
-        Args:
-            problem: Optimization problem instance (from pymoo)
-            **kwargs: Additional setup arguments, including 'termination' criteria
-            
-        Returns:
-            Setup result from parent PSO class (typically None)
-            
-        Side Effects:
-            - Calls parent PSO setup method
-            - Sets self.max_generations for adaptive weight calculation
-            - Logs warnings if adaptive mode cannot be enabled
-        """
-        # Perform standard PSO setup
-        result = super().setup(problem, **kwargs)
-
-        # Extract maximum generations from termination criteria for adaptive scheduling
-        # This is crucial for calculating the inertia weight decay schedule
-        termination = kwargs.get('termination')
-        if termination is not None:
-            # Handle single termination criterion
-            if hasattr(termination, 'n_max_gen'):
-                self.max_generations = termination.n_max_gen
-            # Handle multiple termination criteria (TerminationCollection)
-            elif hasattr(termination, 'criteria') and termination.criteria:
-                for criterion in termination.criteria:
-                    if hasattr(criterion, 'n_max_gen'):
-                        self.max_generations = criterion.n_max_gen
-                        break  # Use first generation-based criterion found
-
-        # Log warning if adaptive mode requested but cannot be enabled
-        if self.is_adaptive and self.max_generations is None:
-            print("⚠️  Warning: Adaptive inertia weight requires generation-based termination")
-            print("   Falling back to fixed inertia weight mode")
-
-        return result
-
-    def _next(self):
-        """
-        Execute one PSO generation with adaptive inertia weight update.
-        
-        This method overrides the parent class to add adaptive inertia weight
-        scheduling before each generation. The inertia weight is updated based
-        on the current generation and total generations, then standard PSO
-        operations are performed.
-        
-        EXECUTION SEQUENCE:
-        1. **Weight Update**: Calculate new inertia weight for current generation
-        2. **Parameter Application**: Update PSO internal weight parameter
-        3. **Standard PSO**: Execute normal PSO generation (parent method)
-        
-        The adaptive weight calculation uses the current generation (self.n_gen)
-        and maximum generations (self.max_generations) to determine progress
-        and apply the linear decay schedule.
-        
-        GENERATION COUNTING:
-        - pymoo uses 0-based generation counting
-        - Generation 0: Initial population evaluation
-        - Generation 1+: Evolution and selection operations
-        - self.n_gen tracks current generation automatically
-        
-        WEIGHT UPDATE TIMING:
-        The weight is updated at the beginning of each generation, ensuring:
-        - Generation 0 uses initial_inertia_weight
-        - Final generation uses inertia_weight_final (if adaptive)
-        - Intermediate generations use linearly interpolated weights
-        
-        Side Effects:
-            - Updates self.w (pymoo's inertia weight parameter)
-            - Calls parent _next() method for standard PSO operations
-            - May print debugging information about weight updates
-        """
-
-        # Update inertia weight adaptively before generation execution
-        if self.is_adaptive and self.max_generations is not None:
-            # Calculate appropriate weight for current generation
-            current_w = self._calculate_adaptive_weight(self.n_gen, self.max_generations)
-            # Update pymoo's internal inertia weight parameter
-            self.w = current_w
-
-        # Execute standard PSO generation with updated inertia weight
-        super()._next()
-
-    def _calculate_adaptive_weight(self, generation: int, max_generations: int) -> float:
-        """
-        Calculate adaptive inertia weight for current generation using linear decay.
-        
-        This method implements the core adaptive inertia weight strategy using
-        linear interpolation between initial and final weights. The linear decay
-        provides smooth transition from exploration to exploitation phases.
-        
-        MATHEMATICAL FORMULA:
-        ```
-        w(t) = w_initial - (w_initial - w_final) * t / (T - 1)
-        ```
-        
-        Where:
-        - w(t): Inertia weight at generation t
-        - w_initial: Starting weight (typically 0.9)
-        - w_final: Ending weight (typically 0.4)
-        - t: Current generation (0 to T-1)
-        - T: Total generations
-        
-        BOUNDARY CONDITIONS:
-        - **Generation 0**: Returns initial_inertia_weight exactly
-        - **Final generation**: Returns final_inertia_weight exactly  
-        - **Invalid inputs**: Returns initial_inertia_weight safely
-        - **Non-adaptive mode**: Returns initial_inertia_weight
-        
-        EXAMPLE CALCULATIONS:
-        ```
-        # Configuration: initial=0.9, final=0.4, max_gen=100
-        generation=0:   w = 0.900 (full exploration)
-        generation=25:  w = 0.775 (75% exploration, 25% exploitation)
-        generation=50:  w = 0.650 (50% exploration, 50% exploitation)
-        generation=75:  w = 0.525 (25% exploration, 75% exploitation)
-        generation=99:  w = 0.400 (full exploitation)
-        ```
-        
-        Args:
-            generation (int): Current generation number (0-based).
-                            Must be in range [0, max_generations-1].
-                            Represents optimization progress.
-                            
-            max_generations (int): Total number of generations planned.
-                                 Must be > 1 for meaningful adaptation.
-                                 Determines the decay rate.
-        
-        Returns:
-            float: Inertia weight for the specified generation.
-                   Guaranteed to be in range [min(initial, final), max(initial, final)].
-                   Returns initial_inertia_weight for edge cases and invalid inputs.
-        
-        Examples:
-            ```python
-            pso = AdaptivePSO(inertia_weight=0.9, inertia_weight_final=0.4)
-            
-            # Early generation - high exploration
-            w_early = pso._calculate_adaptive_weight(5, 100)   # Returns ~0.875
-            
-            # Mid generation - balanced
-            w_mid = pso._calculate_adaptive_weight(50, 100)    # Returns 0.650
-            
-            # Late generation - high exploitation  
-            w_late = pso._calculate_adaptive_weight(95, 100)   # Returns ~0.425
-            
-            # Boundary cases
-            w_first = pso._calculate_adaptive_weight(0, 100)   # Returns 0.900 exactly
-            w_last = pso._calculate_adaptive_weight(99, 100)   # Returns 0.400 exactly
-            ```
-            
-        Implementation Notes:
-            - Uses floating-point arithmetic for smooth weight transitions
-            - Handles edge cases gracefully without exceptions
-            - Optimized for repeated calls during optimization
-            - Thread-safe (no shared state modifications)
-        """
-        # Safety check: fall back to initial weight for invalid configurations
-        if not self.is_adaptive or max_generations <= 1:
-            return self.initial_inertia_weight
-
-        # Boundary condition: first generation uses initial weight exactly
-        if generation <= 0:
-            return self.initial_inertia_weight
-
-        # Boundary condition: final generation uses final weight exactly
-        if generation >= max_generations - 1:
-            return self.final_inertia_weight
-
-        # Linear decay calculation for intermediate generations
-        # Progress ranges from 0.0 (start) to 1.0 (end)
-        progress = generation / (max_generations - 1)
-
-        # Linear interpolation: w(t) = w_start + progress * (w_end - w_start)
-        # Rearranged as: w(t) = w_start - progress * (w_start - w_end)
-        weight = self.initial_inertia_weight - (
-            self.initial_inertia_weight - self.final_inertia_weight
-        ) * progress
-
-        return weight
-
 
 class PSORuntimeCallback(Callback):
     """
@@ -867,8 +436,6 @@ class PSORuntimeCallback(Callback):
     
     # Access tracked information
     print(f"Total generations: {len(callback.generation_times)}")
-    if callback.inertia_weights:
-        print(f"Weight evolution: {callback.inertia_weights[0]:.3f} → {callback.inertia_weights[-1]:.3f}")
     ```
     
     Attributes:
@@ -879,9 +446,6 @@ class PSORuntimeCallback(Callback):
                                        Index 0 is always 0.0 (start), subsequent entries
                                        show cumulative time elapsed since optimization began.
                                        
-        inertia_weights (list[float]): Inertia weight values for each generation.
-                                     Only populated when using AdaptivePSO algorithm.
-                                     Shows weight evolution throughout optimization.
     
     Notes:
         - Timing uses wall-clock time, not CPU time
@@ -901,7 +465,6 @@ class PSORuntimeCallback(Callback):
         super().__init__()
         self.start_time = None              # Will be set on first notify() call
         self.generation_times = []          # Cumulative timing for each generation
-        self.inertia_weights = []          # Weight values (only for AdaptivePSO)
 
         # Track best feasible solutions during optimization
         self.feasible_tracker = BestFeasibleSolutionsTracker(track_best_n)
@@ -934,7 +497,6 @@ class PSORuntimeCallback(Callback):
                       
         Side Effects:
             - Updates generation_times with current elapsed time
-            - Updates inertia_weights if algorithm is AdaptivePSO
             - Sets start_time on first call
         """
 
@@ -951,9 +513,6 @@ class PSORuntimeCallback(Callback):
         # Store timing
         self.generation_times.append(elapsed)
 
-        # Track inertia weight for adaptive PSO
-        if hasattr(algorithm, 'w') and algorithm.w is not None:
-            self.inertia_weights.append(float(algorithm.w))
 
         # Track feasible solutions
         if hasattr(algorithm, 'pop') and algorithm.pop is not None:
@@ -1323,12 +882,6 @@ class PSORunner:
         if term_config.max_generations < 1:
             raise ValueError("PSO requires max_generations >= 1")
 
-        # Validate adaptive inertia weight parameters if enabled
-        if pso_config.is_adaptive():
-            if pso_config.inertia_weight_final >= pso_config.inertia_weight:
-                raise ValueError(
-                    "Final inertia weight must be less than initial weight for adaptive PSO"
-                )
 
     def optimize(self, optimization_data, track_best_n: int = 5) -> OptimizationResult:
         """
@@ -1915,7 +1468,8 @@ class PSORunner:
             objective_type = objective_config.get('type')
 
             if objective_type == 'HexagonalCoverageObjective':
-                from ..objectives.service_coverage import HexagonalCoverageObjective
+                from ..objectives.service_coverage import \
+                    HexagonalCoverageObjective
 
                 # Build kwargs with only explicitly configured values
                 objective_kwargs = {'optimization_data': self.optimization_data}
@@ -1992,7 +1546,8 @@ class PSORunner:
                     print(f"         ✓ FleetTotal: {constraint.n_constraints} constraint(s)")
 
                 elif constraint_type == 'FleetPerIntervalConstraintHandler':
-                    from ..problems.base import FleetPerIntervalConstraintHandler
+                    from ..problems.base import \
+                        FleetPerIntervalConstraintHandler
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     print(f"         ✓ FleetPerInterval: {constraint.n_constraints} constraint(s)")
@@ -2055,32 +1610,63 @@ class PSORunner:
 
         return penalty_weights
 
-    def _create_algorithm(self) -> AdaptivePSO:
+    def _create_algorithm(self) -> PSO:
         """
-        Create configured AdaptivePSO algorithm instance.
-        
-        Instantiates an AdaptivePSO algorithm with parameters from the configuration
+        Create configured PSO algorithm instance.
+
+        Instantiates a PSO algorithm with parameters from the configuration
         manager. The returned algorithm is ready for use with pymoo's minimize function.
         
         Returns:
-            AdaptivePSO: Configured PSO algorithm instance with all parameters
-                        set according to configuration (population size, inertia
+            PSO: Configured PSO algorithm instance with all parameters
+                 set according to configuration (population size, inertia
                         weights, coefficients, etc.)
                         
         Notes:
-            - Always returns AdaptivePSO (can operate in fixed-weight mode)
             - Parameters are validated during PSORunner initialization
             - Algorithm is stateless until used in optimization
         """
         pso_config = self.config_manager.get_pso_config()
+        sampling_config = self.config_manager.get_sampling_config()
 
-        algorithm = AdaptivePSO(
-            pop_size=pso_config.pop_size,                           # Number of particles
-            inertia_weight=pso_config.inertia_weight,              # Initial/fixed weight
-            inertia_weight_final=pso_config.inertia_weight_final,  # Final weight (None = fixed)
-            cognitive_coeff=pso_config.cognitive_coeff,            # c1 coefficient
-            social_coeff=pso_config.social_coeff                  # c2 coefficient
+
+        # Create PSO algorithm with pymoo's native adaptive support
+        algorithm = PSO(
+            pop_size=pso_config.pop_size,
+            w=pso_config.inertia_weight,           # Initial inertia weight
+            c1=pso_config.cognitive_coeff,         # Initial cognitive coefficient
+            c2=pso_config.social_coeff,            # Initial social coefficient
+            adaptive=pso_config.adaptive,          # Whether to use pymoo's adaptive algorithm
+            # TODO: Other pymoo parameters we might want to expose:
+            # initial_velocity='random',           # or 'zero'
+            # max_velocity_rate=0.20,             # velocity clamping
+            # pertube_best=True                   # mutate global best
         )
+
+        # Add custom sampling if enabled
+        if sampling_config.enabled:
+            print("🔧 Creating custom initial population...")
+
+            from ..utils.population_builder import PopulationBuilder
+            from ..utils.solution_loader import SolutionLoader
+
+            solution_loader = SolutionLoader()
+            population_builder = PopulationBuilder(solution_loader)
+
+            initial_population = population_builder.build_initial_population(
+                problem=self.problem,
+                pop_size=pso_config.pop_size,
+                optimization_data=self.optimization_data,
+                base_solutions=sampling_config.base_solutions,
+                frac_gaussian_pert=sampling_config.frac_gaussian_pert,
+                gaussian_sigma=sampling_config.gaussian_sigma,
+                random_seed=sampling_config.random_seed
+            )
+
+            algorithm.initialization.sampling = initial_population
+            print(f"✅ Custom population set: shape {initial_population.shape}")
+            print(f"   📊 Gaussian fraction: {sampling_config.frac_gaussian_pert:.1%}")
+            print(f"   📊 LHS fraction: {sampling_config.frac_lhs:.1%} (calculated)")
 
         return algorithm
 
@@ -2144,16 +1730,16 @@ class PSORunner:
         term_config = self.config_manager.get_termination_config()
 
         print("\n📋 OPTIMIZATION CONFIGURATION:")
-        print(f"   Algorithm: PSO ({'adaptive' if pso_config.is_adaptive() else 'canonical'})")
+        print(f"   Algorithm: PSO ({'adaptive' if pso_config.adaptive else 'canonical'})")
         print(f"   Population size: {pso_config.pop_size}")
 
         # Display inertia weight information
-        if pso_config.is_adaptive():
-            print(f"   Inertia weight: {pso_config.inertia_weight:.3f} → {pso_config.inertia_weight_final:.3f}")
+        if pso_config.adaptive:
+            print(f"   Initial parameters: w={pso_config.inertia_weight:.1f}, c1={pso_config.cognitive_coeff:.1f}, c2={pso_config.social_coeff:.1f}")
+            print("   Adaptation: PyMOO adjusts parameters based on swarm diversity")
         else:
-            print(f"   Inertia weight: {pso_config.inertia_weight:.3f} (fixed)")
+            print(f"   Fixed parameters: w={pso_config.inertia_weight:.1f}, c1={pso_config.cognitive_coeff:.1f}, c2={pso_config.social_coeff:.1f}")
 
-        print(f"   Cognitive/Social coeffs: {pso_config.cognitive_coeff:.1f}/{pso_config.social_coeff:.1f}")
         print(f"   Max generations: {term_config.max_generations}")
 
         # Display time limit if configured
@@ -2222,10 +1808,9 @@ class PSORunner:
         algorithm_config = {
             'pop_size': pso_config.pop_size,
             'inertia_weight': pso_config.inertia_weight,
-            'inertia_weight_final': pso_config.inertia_weight_final,
             'cognitive_coeff': pso_config.cognitive_coeff,
             'social_coeff': pso_config.social_coeff,
-            'variant': pso_config.variant
+            'adaptive': pso_config.adaptive
         }
 
         # === CONVERGENCE ANALYSIS ===
@@ -2375,12 +1960,6 @@ class PSORunner:
             'avg_time_per_generation': total_time / max(1, num_generations),
             'generations_per_second': num_generations / max(0.001, total_time)
         }
-
-        # Add inertia weight evolution if available (adaptive PSO)
-        if callback.inertia_weights:
-            stats['inertia_weight_schedule'] = callback.inertia_weights.copy()
-            stats['initial_inertia_weight'] = callback.inertia_weights[0] if callback.inertia_weights else None
-            stats['final_inertia_weight'] = callback.inertia_weights[-1] if callback.inertia_weights else None
 
         return stats
 
