@@ -11,7 +11,7 @@ CRITICAL INTEGRATION POINTS TESTED:
 1. Problem initialization and pymoo compatibility
 2. Solution format conversion (domain matrices ↔ pymoo flat vectors)
 3. Population-based evaluation for metaheuristics (PSO, GA, etc.)
-4. Real component integration (HexagonalCoverageObjective, constraint handlers)
+4. Real component integration (StopCoverageObjective, constraint handlers)
 5. Error handling and edge cases
 
 TEST DATA FLOW:
@@ -33,9 +33,7 @@ import numpy as np
 import pytest
 from pymoo.core.problem import Problem
 
-from transit_opt.optimisation.objectives.service_coverage import (
-    HexagonalCoverageObjective,
-)
+from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
 from transit_opt.optimisation.problems.base import FleetTotalConstraintHandler
 from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
@@ -72,7 +70,7 @@ class TestTransitProblemCreation:
         Test creating problem with only objective function, no constraints.
 
         WHAT THIS TEST DOES:
-        - Creates HexagonalCoverageObjective with real GTFS data
+        - Creates StopCoverageObjective with real GTFS data
         - Initializes TransitOptimizationProblem without constraints
         - Validates pymoo Problem interface compliance
         - Checks problem dimensions match GTFS data
@@ -94,7 +92,7 @@ class TestTransitProblemCreation:
         print("\n🏗️  TESTING PROBLEM CREATION (OBJECTIVE ONLY):")
 
         # Create spatial equity objective using your existing component
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=2.0,
             crs="EPSG:3857",
@@ -176,7 +174,7 @@ class TestTransitProblemCreation:
         print("\n🏗️  TESTING PROBLEM CREATION (WITH CONSTRAINTS):")
 
         # Create spatial equity objective
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -249,7 +247,7 @@ class TestTransitProblemCreation:
         """
         print("\n🔍 TESTING PROBLEM DIMENSIONS:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -347,7 +345,7 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING SOLUTION ENCODING/DECODING ROUNDTRIP:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -412,7 +410,7 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING DECODING WITH FLAT VECTORS:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -473,7 +471,7 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING INITIAL SOLUTION COMPATIBILITY:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -575,7 +573,7 @@ class TestSingleSolutionEvaluation:
         print("\n🔍 TESTING SINGLE SOLUTION EVALUATION (OBJECTIVE ONLY):")
 
         # Create unconstrained spatial equity problem
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -662,7 +660,7 @@ class TestSingleSolutionEvaluation:
         """
         print("\n🔍 TESTING SINGLE SOLUTION EVALUATION (WITH CONSTRAINTS):")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -754,7 +752,7 @@ class TestSingleSolutionEvaluation:
         """
         print("\n🔍 TESTING MULTIPLE SOLUTION EVALUATION:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -873,7 +871,7 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING POPULATION EVALUATION (OBJECTIVE ONLY):")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -975,7 +973,7 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING POPULATION EVALUATION (WITH CONSTRAINTS):")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -1087,7 +1085,7 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING EMPTY POPULATION HANDLING:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -1142,7 +1140,7 @@ class TestRealDataIntegration:
     optimization results will be meaningful and match expected calculations.
 
     INTEGRATION POINTS TESTED:
-    - HexagonalCoverageObjective with real Duke University GTFS data
+    - StopCoverageObjective with real Duke University GTFS data
     - Fleet constraint handlers with precalculated expected values
     - Solution evaluation pipeline with deterministic validation
     - Problem introspection and debugging methods
@@ -1205,7 +1203,7 @@ class TestRealDataIntegration:
         print("\n🎯 TESTING INTEGRATION WITH PRECALCULATED DATA:")
 
         # Create realistic constrained optimization problem
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -1299,7 +1297,7 @@ class TestRealDataIntegration:
         """
         print("\n🔍 TESTING PROBLEM INFO METHOD:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -1339,7 +1337,7 @@ class TestRealDataIntegration:
             info["dimensions"]["n_intervals"] == sample_optimization_data["n_intervals"]
         ), "Interval count should match"
         assert (
-            info["objective"]["type"] == "HexagonalCoverageObjective"
+            info["objective"]["type"] == "StopCoverageObjective"
         ), "Should identify objective type"
         assert len(info["constraints"]) == 1, "Should report 1 constraint handler"
         assert (
@@ -1430,7 +1428,7 @@ class TestErrorHandling:
         """
         print("\n⚠️  TESTING INVALID SOLUTION MATRIX SIZE:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 
@@ -1506,7 +1504,7 @@ class TestErrorHandling:
         """
         print("\n🔍 TESTING SOLUTION BOUNDS VALIDATION:")
 
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data, spatial_resolution_km=2.0
         )
 

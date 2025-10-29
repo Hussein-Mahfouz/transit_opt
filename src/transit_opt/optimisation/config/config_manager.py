@@ -18,7 +18,7 @@ Example YAML Configuration:
 ```yaml
 problem:
   objective:
-    type: "HexagonalCoverageObjective"
+    type: "StopCoverageObjective"
     spatial_resolution_km: 2.0
     crs: "EPSG:3857"
   constraints:

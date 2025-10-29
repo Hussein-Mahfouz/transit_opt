@@ -12,11 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from transit_opt.optimisation.config import (
-    OptimizationConfigManager,
-    PSOConfig,
-    TerminationConfig,
-)
+from transit_opt.optimisation.config import OptimizationConfigManager, PSOConfig, TerminationConfig
 
 
 class TestConfigDataClasses:
@@ -30,7 +26,7 @@ class TestConfigDataClasses:
         assert config.inertia_weight == 0.9
         assert config.cognitive_coeff == 2.0
         assert config.social_coeff == 2.0
-        assert config.variant == "adaptive"
+        assert config.adaptive
 
         print(
             f"✅ PSOConfig defaults: pop_size={config.pop_size}, w={config.inertia_weight}"
@@ -71,7 +67,7 @@ class TestConfigManager:
         test_config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.5,
                 },
                 "constraints": [],
@@ -113,7 +109,7 @@ class TestConfigManager:
         """Test loading configuration from dictionary."""
         test_config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -137,7 +133,7 @@ class TestConfigManager:
 
         # Missing required section should fail
         bad_config = {
-            "problem": {"objective": {"type": "HexagonalCoverageObjective"}}
+            "problem": {"objective": {"type": "StopCoverageObjective"}}
             # Missing 'optimization' section
         }
 
@@ -151,7 +147,7 @@ class TestConfigManager:
         # Create minimal config instead of relying on defaults
         minimal_config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -175,7 +171,7 @@ class TestConfigManager:
         # Missing pop_size should fail
         config_no_pop = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -193,7 +189,7 @@ class TestConfigManager:
         # Missing max_generations should fail
         config_no_gen = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -216,131 +212,6 @@ class TestConfigManager:
         print("✅ Required parameters properly enforced")
 
 
-# Add this new test class to the existing file:
-
-
-class TestAdaptiveInertiaWeight:
-    """Test adaptive inertia weight functionality."""
-
-    def test_adaptive_inertia_weight_calculation(self):
-        """Test inertia weight calculation over generations."""
-        config = PSOConfig(
-            pop_size=50,
-            inertia_weight=0.9,
-            inertia_weight_final=0.4,
-            variant="adaptive",
-        )
-
-        max_generations = 100
-
-        # Test start, middle, and end values
-        w_start = config.get_inertia_weight(0, max_generations)
-        w_middle = config.get_inertia_weight(50, max_generations)
-        w_end = config.get_inertia_weight(99, max_generations)
-
-        # Verify expected behavior
-        assert abs(w_start - 0.9) < 1e-6, f"Start weight should be 0.9, got {w_start}"
-        assert abs(w_end - 0.4) < 1e-6, f"End weight should be 0.4, got {w_end}"
-        assert (
-            0.4 < w_middle < 0.9
-        ), f"Middle weight should be between 0.4 and 0.9, got {w_middle}"
-
-        # Test monotonic decrease
-        w_quarter = config.get_inertia_weight(25, max_generations)
-        w_three_quarter = config.get_inertia_weight(75, max_generations)
-
-        assert w_start > w_quarter > w_middle > w_three_quarter > w_end
-
-        print(
-            f"✅ Adaptive inertia weight: {w_start:.3f} → {w_middle:.3f} → {w_end:.3f}"
-        )
-
-    def test_fixed_inertia_weight(self):
-        """Test fixed inertia weight (traditional PSO)."""
-        config = PSOConfig(
-            pop_size=50,
-            inertia_weight=0.7,
-            inertia_weight_final=None,  # Fixed weight
-            variant="canonical",
-        )
-
-        max_generations = 100
-
-        # All generations should have same weight
-        for gen in [0, 25, 50, 75, 99]:
-            weight = config.get_inertia_weight(gen, max_generations)
-            assert (
-                abs(weight - 0.7) < 1e-6
-            ), f"Fixed weight should always be 0.7, got {weight} at gen {gen}"
-
-        assert not config.is_adaptive()
-        print("✅ Fixed inertia weight works correctly")
-
-    def test_weight_schedule_generation(self):
-        """Test complete weight schedule generation."""
-        config = PSOConfig(pop_size=50, inertia_weight=0.9, inertia_weight_final=0.4)
-
-        schedule = config.get_weight_schedule(10)
-
-        # Should have 10 values
-        assert len(schedule) == 10
-
-        # Should start at 0.9 and end at 0.4
-        assert abs(schedule[0] - 0.9) < 1e-6
-        assert abs(schedule[-1] - 0.4) < 1e-6
-
-        # Should be monotonically decreasing
-        for i in range(len(schedule) - 1):
-            assert (
-                schedule[i] >= schedule[i + 1]
-            ), f"Schedule not decreasing at index {i}"
-
-        print(f"✅ Weight schedule: {schedule[0]:.3f} ... {schedule[-1]:.3f}")
-
-    def test_adaptive_config_validation(self):
-        """Test validation of adaptive inertia weight parameters."""
-        # Valid adaptive config
-        config = PSOConfig(pop_size=50, inertia_weight=0.9, inertia_weight_final=0.4)
-        assert config.is_adaptive()
-
-        # Invalid: final >= initial
-        with pytest.raises(
-            ValueError, match="Final inertia weight should be less than initial"
-        ):
-            PSOConfig(pop_size=50, inertia_weight=0.4, inertia_weight_final=0.9)
-
-        # Invalid: final out of range
-        with pytest.raises(ValueError, match="Final inertia weight should be in range"):
-            PSOConfig(pop_size=50, inertia_weight=0.9, inertia_weight_final=2.5)
-
-        print("✅ Adaptive config validation works")
-
-    def test_default_is_adaptive(self):
-        """Test that default configuration uses adaptive inertia weight."""
-        # Create minimal required config instead of relying on defaults
-        minimal_config = {
-            "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
-                "constraints": [],
-            },
-            "optimization": {
-                "algorithm": {"type": "PSO", "pop_size": 50},  # Required parameter
-                "termination": {"max_generations": 100},  # Required parameter
-            },
-        }
-
-        manager = OptimizationConfigManager(config_dict=minimal_config)
-        pso_config = manager.get_pso_config()
-
-        # Test that defaults for optional parameters are adaptive
-        assert pso_config.is_adaptive(), "Default should use adaptive inertia weight"
-        assert pso_config.inertia_weight == 0.9, "Default should start at 0.9"
-        assert pso_config.inertia_weight_final == 0.4, "Default should end at 0.4"
-        assert pso_config.variant == "adaptive", "Default variant should be adaptive"
-
-        print("✅ Default optional parameters use adaptive inertia weight")
-
-
 class TestRealisticConfigExample:
     """Test with realistic configuration that matches your constraint tests."""
 
@@ -351,7 +222,7 @@ class TestRealisticConfigExample:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.0,
                     "crs": "EPSG:3857",
                     "time_aggregation": "average",

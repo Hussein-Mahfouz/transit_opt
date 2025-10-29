@@ -64,7 +64,7 @@ class BaseSpatialObjective(BaseObjective):
     Example:
         ```python
         # Create a hexagonal coverage objective with 1.5km resolution
-        spatial_obj = HexagonalCoverageObjective(
+        spatial_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=1.5,
             crs="EPSG:3857"

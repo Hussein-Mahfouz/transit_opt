@@ -12,8 +12,7 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
-                   FleetTotalConstraintHandler)
+from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
 
 
 class TransitOptimizationProblem(Problem):
@@ -63,11 +62,11 @@ class TransitOptimizationProblem(Problem):
 
     Example:
         ```python
-        from transit_opt.optimisation.objectives.service_coverage import HexagonalCoverageObjective
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
         from transit_opt.optimisation.problems.base import FleetTotalConstraintHandler
 
         # Create objective
-        spatial_equity = HexagonalCoverageObjective(
+        spatial_equity = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0
         )

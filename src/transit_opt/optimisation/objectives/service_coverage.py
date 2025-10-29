@@ -12,7 +12,7 @@ from ..utils.population import (
 from .base import BaseSpatialObjective
 
 
-class HexagonalCoverageObjective(BaseSpatialObjective):
+class StopCoverageObjective(BaseSpatialObjective):
     """
     Spatial equity objective using hexagonal zones with optional spatial lag analysis.
 
@@ -71,13 +71,13 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
     Example:
         ```python
         # Standard equity objective
-        equity_obj = HexagonalCoverageObjective(
+        equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=3.0
         )
 
         # With spatial lag and boundary filtering
-        spatial_equity_obj = HexagonalCoverageObjective(
+        spatial_equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0,
             boundary=study_boundary,
@@ -85,7 +85,7 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             alpha=0.15  # 15% neighbor influence
         )
         # With population weighting 
-        pop_equity_obj = HexagonalCoverageObjective(
+        pop_equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0,
             boundary=study_boundary,
