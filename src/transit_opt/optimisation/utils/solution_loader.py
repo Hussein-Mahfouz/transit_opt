@@ -65,6 +65,12 @@ class SolutionLoader:
             raise ValueError("optimization_data missing 'initial_solution' key")
 
         initial_solution = optimization_data['initial_solution']
+        # Handle flat solutions by decoding them first (same logic as _load_from_list)
+        if isinstance(initial_solution, np.ndarray) and initial_solution.ndim == 1:
+            # This is a flat solution vector from extract_optimization_data_with_drt()
+            # Decode to domain format (handles both PT-only and PT+DRT)
+            initial_solution = self._decode_flat_solution(initial_solution, optimization_data)
+
         validated_solution = self._validate_solution(initial_solution, optimization_data)
 
         return [validated_solution]
@@ -77,12 +83,42 @@ class SolutionLoader:
         validated_solutions = []
         for i, solution in enumerate(solution_list):
             try:
+                # Handle flat solutions by decoding them first
+                if isinstance(solution, np.ndarray) and solution.ndim == 1:
+                    # This is a flat solution vector (e.g., from extract_multiple_gtfs_solutions)
+                    # Decode to domain format
+                    solution = self._decode_flat_solution(solution, optimization_data)
+
+                # Now validate the solution (existing logic)
                 validated = self._validate_solution(solution, optimization_data)
                 validated_solutions.append(validated)
             except Exception as e:
                 raise ValueError(f"Solution {i} is invalid: {e}") from e
 
         return validated_solutions
+
+    def _decode_flat_solution(self, flat_solution: np.ndarray, optimization_data: dict[str, Any]):
+        """Decode flat solution to domain format using optimization data structure."""
+        drt_enabled = optimization_data.get('drt_enabled', False)
+
+        if not drt_enabled:
+            # PT-only: reshape to matrix
+            shape = optimization_data['decision_matrix_shape']
+            return flat_solution.reshape(shape)
+        else:
+            # PT+DRT: split and reshape using variable structure
+            var_structure = optimization_data['variable_structure']
+            pt_size = var_structure['pt_size']
+            pt_shape = var_structure['pt_shape']
+            drt_shape = var_structure['drt_shape']
+
+            pt_flat = flat_solution[:pt_size]
+            drt_flat = flat_solution[pt_size:]
+
+            return {
+                'pt': pt_flat.reshape(pt_shape),
+                'drt': drt_flat.reshape(drt_shape)
+            }
 
     def _validate_solution(self, solution: np.ndarray | dict[str, np.ndarray],
                           optimization_data: dict[str, Any]) -> np.ndarray | dict[str, np.ndarray]:
