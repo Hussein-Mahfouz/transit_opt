@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from datetime import datetime
@@ -1560,3 +1561,314 @@ class GTFSDataPreparator:
         print(f"      Total variables: {len(combined_solution)}")
 
         return combined_solution
+
+    #########################
+    ## Functions for reading multiple GTFS + DRT solutions from file
+    ## (For seeding PSO with multiple initial solutions)
+    #########################
+
+    def extract_multiple_gtfs_solutions(
+        self,
+        gtfs_paths: list[str],
+        allowed_headways: list[int],
+        drt_config: dict[str, Any] = None,
+        drt_solution_paths: list[str] = None
+    ) -> list[dict[str, Any]]:
+        """
+        Extract optimization data from multiple GTFS feeds with optional DRT solutions.
+        
+        This method is designed for seeding PSO runs with multiple initial solutions from different
+        GTFS feeds (typically results from previous optimization runs saved to disk).
+        
+        **Data Flow**:
+        1. Load each GTFS feed → Extract complete optimization data structure
+        2. If DRT enabled: Create combined PT+DRT problem with flat initial solution
+        3. If DRT solution file provided: Replace DRT portion of initial solution with loaded values
+        4. Return list of complete opt_data dictionaries ready for optimization
+        
+        **Why Return Complete opt_data**:
+        - Optimization algorithms need full problem structure (bounds, constraints, metadata)
+        - Fleet analysis and constraints are feed-specific and needed for optimization
+        - Reconstruction data is required for solution interpretation
+        
+        Args:
+            gtfs_paths: List of paths to GTFS feed files
+            allowed_headways: List of allowed headway values in minutes  
+            drt_config: Optional DRT configuration for PT+DRT problems
+            drt_solution_paths: Optional list of DRT solution JSON files (one per GTFS)
+            
+        Returns:
+            List of optimization data dictionaries, each containing:
+            - Complete problem structure (bounds, constraints, metadata)
+            - Modified initial_solution with loaded DRT values (if provided)
+            - All fields needed for optimization algorithms
+            
+        Raises:
+            ValueError: If drt_solution_paths length doesn't match gtfs_paths length
+            
+        Example:
+            ```python
+            # Load multiple solutions for PSO seeding
+            opt_data_list = preparator.extract_multiple_gtfs_solutions(
+                gtfs_paths=['solution1.zip', 'solution2.zip'],
+                allowed_headways=[15, 30, 60],
+                drt_config=drt_config,
+                drt_solution_paths=['drt1.json', 'drt2.json']
+            )
+            
+            # Each opt_data can be used directly in optimization
+            for i, opt_data in enumerate(opt_data_list):
+                print(f"Solution {i}: {opt_data['n_routes']} routes, "
+                    f"{len(opt_data['initial_solution'])} variables")
+                
+                # Ready for PSO
+                pso_runner.run(opt_data)
+            ```
+        """
+        # Validate inputs
+        if drt_solution_paths and len(drt_solution_paths) != len(gtfs_paths):
+            raise ValueError("drt_solution_paths length must match gtfs_paths length")
+
+        optimization_data_list = []
+
+        for i, gtfs_path in enumerate(gtfs_paths):
+            print(f"Processing GTFS feed {i+1}/{len(gtfs_paths)}: {gtfs_path}")
+
+            # Create fresh preparator for this GTFS feed
+            preparator = GTFSDataPreparator(
+                gtfs_path=gtfs_path,
+                interval_hours=self.interval_hours,
+                date=None,
+                turnaround_buffer=self.turnaround_buffer,
+                max_round_trip_minutes=self.max_round_trip_minutes,
+                no_service_threshold_minutes=self.no_service_threshold_minutes,
+                log_level="WARNING"
+            )
+
+            # Extract complete optimization data structure
+            if drt_config:
+                opt_data = preparator.extract_optimization_data_with_drt(
+                    allowed_headways=allowed_headways,
+                    drt_config=drt_config
+                )
+            else:
+                opt_data = preparator.extract_optimization_data(
+                    allowed_headways=allowed_headways
+                )
+
+            print(f"  📊 Base optimization data: {opt_data['n_routes']} routes, "
+                f"{len(opt_data['initial_solution'])} variables")
+
+            # If DRT solution file is provided AND this is a DRT-enabled problem, load and apply it
+            if (drt_solution_paths and
+                drt_solution_paths[i] and
+                drt_config and
+                opt_data.get('drt_enabled', False)):
+
+                print(f"  🚁 Loading DRT solution from: {drt_solution_paths[i]}")
+
+                # Load DRT matrix from JSON file (zones × intervals)
+                drt_matrix = self._load_drt_solution_from_file(
+                    drt_solution_paths[i],
+                    opt_data
+                )
+
+                print(f"  📈 Loaded DRT matrix: {drt_matrix.shape} (zones × intervals)")
+
+                # Update the DRT portion of the initial solution in opt_data
+                opt_data['initial_solution'] = self._update_drt_portion_in_flat_solution(
+                    flat_solution=opt_data['initial_solution'],
+                    drt_matrix=drt_matrix,
+                    opt_data=opt_data
+                )
+
+                print("  ✅ Applied DRT solution to optimization data")
+
+            elif drt_solution_paths and drt_solution_paths[i] and not drt_config:
+                print("  ⚠️  DRT solution file provided but DRT not enabled, ignoring")
+
+            # Add metadata about the source
+            opt_data['metadata']['source_index'] = i
+            opt_data['metadata']['source_gtfs_path'] = gtfs_path
+            if drt_solution_paths and i < len(drt_solution_paths) and drt_solution_paths[i]:
+                opt_data['metadata']['source_drt_path'] = drt_solution_paths[i]
+
+            optimization_data_list.append(opt_data)
+
+        print(f"✅ Extracted {len(optimization_data_list)} optimization data structures")
+        return optimization_data_list
+
+    def _update_drt_portion_in_flat_solution(
+        self,
+        flat_solution: np.ndarray,
+        drt_matrix: np.ndarray,
+        opt_data: dict[str, Any]
+    ) -> np.ndarray:
+        """
+        Update the DRT portion of a flat combined solution array with values from a DRT matrix.
+        
+        **Purpose**: 
+        Replace the DRT variables in a combined PT+DRT flat solution with specific values 
+        loaded from a saved DRT solution file, while keeping the PT portion unchanged.
+        
+        **Data Structure**:
+        The flat_solution has this structure:
+        ```
+        [PT₁₁, PT₁₂, ..., PT_nᵢ, DRT₁₁, DRT₁₂, ..., DRT_kᵢ]
+        │────────────────────────│────────────────────────│
+            PT variables              DRT variables
+            (pt_size elements)       (drt_size elements)
+        ```
+        
+        Args:
+            flat_solution: Combined flat solution array from extract_optimization_data_with_drt()
+            drt_matrix: DRT solution matrix (n_drt_zones × n_intervals) with choice indices
+            opt_data: Optimization data containing variable structure information
+            
+        Returns:
+            Updated flat solution array with DRT portion replaced
+            
+        **Example**:
+        ```
+        Input flat_solution:  [1, 2, 0, 1, 0, 0, 0, 0]  # PT=[1,2,0,1], DRT=[0,0,0,0] 
+        Input drt_matrix:     [[1, 2], [0, 3]]           # 2 zones × 2 intervals
+        Output flat_solution: [1, 2, 0, 1, 1, 2, 0, 3]  # PT unchanged, DRT=[1,2,0,3]
+        ```
+        
+        Raises:
+            ValueError: If DRT matrix dimensions don't match expected structure
+        """
+        # Get structure information
+        variable_structure = opt_data['variable_structure']
+        pt_size = variable_structure['pt_size']
+        drt_size = variable_structure['drt_size']
+        expected_drt_shape = variable_structure['drt_shape']
+
+        # Validate DRT matrix shape
+        if drt_matrix.shape != expected_drt_shape:
+            raise ValueError(
+                f"DRT matrix shape {drt_matrix.shape} doesn't match expected {expected_drt_shape}"
+            )
+
+        # Validate flat solution length
+        expected_total_size = pt_size + drt_size
+        if len(flat_solution) != expected_total_size:
+            raise ValueError(
+                f"Flat solution length {len(flat_solution)} doesn't match expected "
+                f"{expected_total_size} (PT: {pt_size} + DRT: {drt_size})"
+            )
+
+        # Create updated solution
+        updated_solution = flat_solution.copy()
+
+        # Flatten the DRT matrix and replace the DRT portion
+        drt_flat = drt_matrix.flatten()
+
+        # Validate flattened DRT size
+        if len(drt_flat) != drt_size:
+            raise ValueError(
+                f"Flattened DRT size {len(drt_flat)} doesn't match expected {drt_size}"
+            )
+
+        # Replace DRT portion (keep PT portion unchanged)
+        updated_solution[pt_size:pt_size + drt_size] = drt_flat
+
+        print(f"    🔧 Updated DRT portion: indices {pt_size}:{pt_size + drt_size}")
+        print(f"    📊 DRT values: {drt_flat.tolist()}")
+
+        return updated_solution
+
+    def _load_drt_solution_from_file(
+        self,
+        drt_solution_path: str,
+        opt_data: dict[str, Any]
+    ) -> np.ndarray:
+        """
+        Load DRT solution from JSON file and convert to matrix format. We save the DRT component
+        from some solutions from the optimisation run as a JSON file. This method allows us to load 
+        those files back into the correct matrix format for use in combined PT+DRT solutions.
+        It is used by _combine_pt_gtfs_with_drt_json() to replace the initial DRT solution (all 0 values)
+        with the values from the JSON file.
+        
+        Args:
+            drt_solution_path: Path to DRT solution JSON file
+            opt_data: Optimization data for validation
+            
+        Returns:
+            DRT solution matrix (n_drt_zones × n_intervals)
+        """
+        from pathlib import Path
+
+        if not Path(drt_solution_path).exists():
+            raise FileNotFoundError(f"DRT solution file not found: {drt_solution_path}")
+
+        # Load JSON
+        try:
+            with open(drt_solution_path) as f:
+                drt_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in DRT solution file {drt_solution_path}: {e}") from e
+
+        # Validate structure
+        if 'drt_solutions' not in drt_data:
+            raise ValueError("DRT solution file missing 'drt_solutions' key")
+
+        # Get current DRT configuration
+        if not opt_data.get('drt_enabled', False):
+            raise ValueError("Cannot load DRT solution: DRT not enabled in current optimization data")
+
+        current_zones = opt_data['drt_config']['zones']
+        n_intervals = opt_data['n_intervals']
+        interval_labels = opt_data['intervals']['labels']
+
+        # Create solution matrix
+        drt_matrix = np.zeros((len(current_zones), n_intervals), dtype=int)
+
+        # Track loading statistics
+        loaded_zones = 0
+        missing_zones = []
+        invalid_deployments = 0
+
+        # Map solutions to current configuration
+        for zone_idx, zone in enumerate(current_zones):
+            zone_id = zone['zone_id']
+
+            if zone_id not in drt_data['drt_solutions']:
+                print(f"  ⚠️  Zone {zone_id} not found in solution file, using default (0)")
+                missing_zones.append(zone_id)
+                continue
+
+            zone_solution = drt_data['drt_solutions'][zone_id]
+            allowed_fleet_sizes = zone.get('allowed_fleet_sizes', [])
+            loaded_zones += 1
+
+            # Map each interval
+            for interval_idx, interval_label in enumerate(interval_labels):
+                if interval_label in zone_solution['fleet_deployment']:
+                    # Get fleet size from solution file
+                    deployment = zone_solution['fleet_deployment'][interval_label]
+                    target_fleet_size = deployment['fleet_size']
+
+                    # Find matching choice index in current configuration
+                    try:
+                        choice_idx = allowed_fleet_sizes.index(target_fleet_size)
+                        drt_matrix[zone_idx, interval_idx] = choice_idx
+                        print(f"    Zone {zone_id} {interval_label}: {target_fleet_size} vehicles (idx {choice_idx})")
+                    except ValueError:
+                        print(f"    ⚠️  Zone {zone_id} {interval_label}: fleet size {target_fleet_size} not in allowed list, using 0")
+                        drt_matrix[zone_idx, interval_idx] = 0
+                        invalid_deployments += 1
+                else:
+                    print(f"    ⚠️  Zone {zone_id} {interval_label}: not in solution file, using 0")
+                    drt_matrix[zone_idx, interval_idx] = 0
+                    invalid_deployments += 1
+
+        # Summary
+        print(f"✅ Loaded DRT solution from: {drt_solution_path}")
+        print(f"   Zones loaded: {loaded_zones}/{len(current_zones)}")
+        if missing_zones:
+            print(f"   Missing zones: {missing_zones}")
+        if invalid_deployments > 0:
+            print(f"   Invalid deployments: {invalid_deployments}")
+
+        return drt_matrix

@@ -632,3 +632,296 @@ class TestGTFSDataPreparator:
 
         with pytest.raises(FileNotFoundError, match="DRT service area file not found"):
             preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
+
+
+
+
+
+
+    def test_load_drt_solution_from_file_with_real_json(self, sample_gtfs_path):
+        """Test loading DRT solution from real saved JSON file."""
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = sample_gtfs_path
+        drt_json_path = test_data_dir / "drt" / "drt_solution.json"
+
+        # Verify the test file exists
+        assert drt_json_path.exists(), f"Test DRT solution file not found: {drt_json_path}"
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6, log_level="ERROR")
+
+        # Create DRT config matching the JSON file
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 5, 10, 15, 20],  # Matches JSON fleet_choice_idx
+                    'zone_name': 'Duke Area 1'
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 8, 16, 24],  # Matches JSON fleet_choice_idx
+                    'zone_name': 'Duke Area 2'
+                }
+            ]
+        }
+
+        # Extract optimization data to get proper structure
+        opt_data = preparator.extract_optimization_data_with_drt(
+            allowed_headways=[15, 30, 60, 120],
+            drt_config=drt_config
+        )
+
+        # Test loading from real JSON file
+        drt_matrix = preparator._load_drt_solution_from_file(str(drt_json_path), opt_data)
+
+        # Verify shape (2 zones, 4 intervals)
+        assert drt_matrix.shape == (2, 4)
+
+        # Verify Duke Area 1 fleet deployment from JSON:
+        # "00-06h": choice_idx 1 -> 5 vehicles
+        # "06-12h": choice_idx 3 -> 15 vehicles
+        # "12-18h": choice_idx 4 -> 20 vehicles
+        # "18-24h": choice_idx 2 -> 10 vehicles
+        expected_duke1 = [1, 3, 4, 2]  # Fleet choice indices
+        assert drt_matrix[0, :].tolist() == expected_duke1
+
+        # Verify Duke Area 2 fleet deployment from JSON:
+        # "00-06h": choice_idx 0 -> 0 vehicles
+        # "06-12h": choice_idx 2 -> 16 vehicles
+        # "12-18h": choice_idx 3 -> 24 vehicles
+        # "18-24h": choice_idx 1 -> 8 vehicles
+        expected_duke2 = [0, 2, 3, 1]  # Fleet choice indices
+        assert drt_matrix[1, :].tolist() == expected_duke2
+
+        # Verify actual fleet sizes match JSON
+        duke1_fleet_sizes = [drt_config['zones'][0]['allowed_fleet_sizes'][idx] for idx in expected_duke1]
+        duke2_fleet_sizes = [drt_config['zones'][1]['allowed_fleet_sizes'][idx] for idx in expected_duke2]
+
+        assert duke1_fleet_sizes == [5, 15, 20, 10]
+        assert duke2_fleet_sizes == [0, 16, 24, 8]
+
+
+    def test_extract_multiple_gtfs_solutions_with_real_drt_data(self, sample_gtfs_path):
+        """
+        Test extract_multiple_gtfs_solutions with real DRT solution file.
+        
+        **Test Purpose**:
+        Verify that the method correctly loads GTFS data, creates complete optimization
+        data structures, and properly applies DRT solutions from JSON files to the 
+        initial solution within each opt_data.
+        
+        **What We're Testing**:
+        1. GTFS → complete opt_data structure creation
+        2. DRT solution JSON → DRT matrix loading  
+        3. DRT matrix → initial_solution integration within opt_data
+        4. Data consistency between baseline (no DRT file) and loaded (with DRT file) solutions
+        
+        """
+        test_data_dir = Path(__file__).parent / "data"
+        drt_json_path = test_data_dir / "drt" / "drt_solution.json"
+
+        # Verify test files exist
+        assert Path(sample_gtfs_path).exists(), f"GTFS file not found: {sample_gtfs_path}"
+        assert drt_json_path.exists(), f"DRT solution file not found: {drt_json_path}"
+
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6, log_level="ERROR")
+
+        # DRT configuration matching the saved JSON file
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 5, 10, 15, 20],  # 5 choices
+                    'zone_name': 'Duke Area 1'
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 8, 16, 24],      # 4 choices
+                    'zone_name': 'Duke Area 2'
+                }
+            ]
+        }
+
+        print("\n" + "="*60)
+        print("🧪 TESTING DRT SOLUTION LOADING")
+        print("="*60)
+
+        # === STEP 1: Test with DRT solution file ===
+        print("\n📁 Step 1: Loading optimization data WITH DRT file")
+        opt_data_list_with_drt = preparator.extract_multiple_gtfs_solutions(
+            gtfs_paths=[sample_gtfs_path],
+            allowed_headways=[15, 30, 60, 120],
+            drt_config=drt_config,
+            drt_solution_paths=[str(drt_json_path)]  # Load DRT from JSON
+        )
+
+        assert len(opt_data_list_with_drt) == 1
+        opt_data_with_drt = opt_data_list_with_drt[0]
+
+        # Should be complete optimization data structure
+        assert isinstance(opt_data_with_drt, dict)
+        assert 'initial_solution' in opt_data_with_drt
+        assert 'n_routes' in opt_data_with_drt
+        assert 'drt_enabled' in opt_data_with_drt
+
+        initial_solution_with_drt = opt_data_with_drt['initial_solution']
+        assert isinstance(initial_solution_with_drt, np.ndarray)
+        assert initial_solution_with_drt.ndim == 1  # Flattened for PSO
+
+        print(f"✅ Got complete opt_data with {len(initial_solution_with_drt)} variables")
+
+        # === STEP 2: Test baseline without DRT file ===
+        print("\n📁 Step 2: Loading optimization data WITHOUT DRT file (baseline)")
+        opt_data_list_baseline = preparator.extract_multiple_gtfs_solutions(
+            gtfs_paths=[sample_gtfs_path],
+            allowed_headways=[15, 30, 60, 120],
+            drt_config=drt_config,
+            drt_solution_paths=[None]  # No DRT file → DRT portion stays as zeros
+        )
+
+        opt_data_baseline = opt_data_list_baseline[0]
+        initial_solution_baseline = opt_data_baseline['initial_solution']
+
+        print(f"✅ Got baseline opt_data with {len(initial_solution_baseline)} variables")
+
+        # === STEP 3: Verify structural consistency ===
+        print("\n🔍 Step 3: Verifying structural consistency")
+
+        # Both opt_data should have same problem structure
+        assert opt_data_with_drt['n_routes'] == opt_data_baseline['n_routes']
+        assert opt_data_with_drt['n_intervals'] == opt_data_baseline['n_intervals']
+        assert opt_data_with_drt['drt_enabled'] == opt_data_baseline['drt_enabled']
+        assert len(initial_solution_with_drt) == len(initial_solution_baseline)
+
+        # Get the variable structure to understand PT/DRT split
+        pt_size = opt_data_with_drt['variable_structure']['pt_size']
+        drt_size = opt_data_with_drt['variable_structure']['drt_size']
+        n_routes = opt_data_with_drt['n_routes']
+        n_intervals = opt_data_with_drt['n_intervals']
+        n_drt_zones = opt_data_with_drt['n_drt_zones']
+
+        print("📊 Problem structure:")
+        print(f"   Routes: {n_routes}, Intervals: {n_intervals}, DRT zones: {n_drt_zones}")
+        print(f"   PT variables: {pt_size} ({n_routes} × {n_intervals})")
+        print(f"   DRT variables: {drt_size} ({n_drt_zones} × {n_intervals})")
+        print(f"   Total variables: {pt_size + drt_size}")
+
+        # Verify expected dimensions
+        assert pt_size == n_routes * n_intervals
+        assert drt_size == n_drt_zones * n_intervals
+        assert len(initial_solution_with_drt) == pt_size + drt_size
+
+        # === STEP 4: Verify PT portions are identical ===
+        print("\n🚌 Step 4: Verifying PT portions are identical")
+
+        pt_with_drt = initial_solution_with_drt[:pt_size]
+        pt_baseline = initial_solution_baseline[:pt_size]
+
+        np.testing.assert_array_equal(
+            pt_with_drt,
+            pt_baseline,
+            err_msg="PT portions should be identical between DRT-loaded and baseline solutions"
+        )
+        print("✅ PT portions are identical (as expected)")
+
+        # === STEP 5: Verify DRT portions differ correctly ===
+        print("\n🚁 Step 5: Verifying DRT portions differ correctly")
+
+        drt_with_file = initial_solution_with_drt[pt_size:pt_size + drt_size]
+        drt_baseline = initial_solution_baseline[pt_size:pt_size + drt_size]
+
+        print(f"DRT from JSON file: {drt_with_file}")
+        print(f"DRT baseline (zeros): {drt_baseline}")
+
+        # Baseline should be all zeros (default initialization)
+        assert np.all(drt_baseline == 0), \
+            f"Baseline DRT should be all zeros, got: {drt_baseline}"
+        print("✅ Baseline DRT portion is all zeros (as expected)")
+
+        # Solution with DRT file should NOT be all zeros
+        assert not np.all(drt_with_file == 0), \
+            f"DRT solution should not be all zeros after loading from file, got: {drt_with_file}"
+        print("✅ DRT solution loaded from file is not all zeros")
+
+        # === STEP 6: Verify specific DRT values match JSON ===
+        print("\n📋 Step 6: Verifying DRT values match JSON file")
+
+        # Reshape DRT portion back to matrix form for easier verification
+        drt_matrix = drt_with_file.reshape(n_drt_zones, n_intervals)
+        print(f"DRT matrix shape: {drt_matrix.shape} (zones × intervals)")
+        print(f"DRT matrix:\n{drt_matrix}")
+
+        # Expected values from JSON file (these are the choice indices, not fleet sizes)
+        # From drt_solution.json:
+        # drt_duke_1: 00-06h→5 vehicles (idx 1), 06-12h→15 vehicles (idx 3),
+        #             12-18h→20 vehicles (idx 4), 18-24h→10 vehicles (idx 2)
+        # drt_duke_2: 00-06h→0 vehicles (idx 0), 06-12h→16 vehicles (idx 2),
+        #             12-18h→24 vehicles (idx 3), 18-24h→8 vehicles (idx 1)
+        expected_duke1_indices = [1, 3, 4, 2]  # Choice indices for Duke Area 1
+        expected_duke2_indices = [0, 2, 3, 1]  # Choice indices for Duke Area 2
+
+        print(f"Expected Duke Area 1 indices: {expected_duke1_indices}")
+        print(f"Expected Duke Area 2 indices: {expected_duke2_indices}")
+        print(f"Actual Duke Area 1 indices:   {drt_matrix[0, :].tolist()}")
+        print(f"Actual Duke Area 2 indices:   {drt_matrix[1, :].tolist()}")
+
+        assert drt_matrix[0, :].tolist() == expected_duke1_indices, \
+            f"Duke Area 1 DRT indices don't match: expected {expected_duke1_indices}, got {drt_matrix[0, :].tolist()}"
+        assert drt_matrix[1, :].tolist() == expected_duke2_indices, \
+            f"Duke Area 2 DRT indices don't match: expected {expected_duke2_indices}, got {drt_matrix[1, :].tolist()}"
+
+        print("✅ DRT values match JSON file exactly")
+
+        # === STEP 7: Verify fleet sizes are correct ===
+        print("\n🚐 Step 7: Verifying fleet sizes are correct")
+
+        duke1_fleet_sizes = [drt_config['zones'][0]['allowed_fleet_sizes'][idx] for idx in expected_duke1_indices]
+        duke2_fleet_sizes = [drt_config['zones'][1]['allowed_fleet_sizes'][idx] for idx in expected_duke2_indices]
+
+        expected_duke1_fleet = [5, 15, 20, 10]  # Vehicles
+        expected_duke2_fleet = [0, 16, 24, 8]   # Vehicles
+
+        assert duke1_fleet_sizes == expected_duke1_fleet
+        assert duke2_fleet_sizes == expected_duke2_fleet
+
+        print("✅ Fleet sizes match JSON file exactly")
+        print(f"   Duke Area 1 fleet: {duke1_fleet_sizes} vehicles")
+        print(f"   Duke Area 2 fleet: {duke2_fleet_sizes} vehicles")
+
+        # === STEP 8: Verify complete opt_data is ready for optimization ===
+        print("\n🎯 Step 8: Verifying opt_data is ready for optimization")
+
+        # Check that both opt_data have all required fields for optimization
+        required_fields = [
+            'problem_type', 'n_routes', 'n_intervals', 'initial_solution',
+            'allowed_headways', 'routes', 'constraints', 'metadata'
+        ]
+
+        for field in required_fields:
+            assert field in opt_data_with_drt, f"Missing field: {field}"
+            assert field in opt_data_baseline, f"Missing field in baseline: {field}"
+
+        # Check DRT-specific fields
+        if opt_data_with_drt['drt_enabled']:
+            drt_fields = ['drt_config', 'n_drt_zones', 'variable_structure']
+            for field in drt_fields:
+                assert field in opt_data_with_drt, f"Missing DRT field: {field}"
+
+        # Check metadata includes source information
+        assert 'source_index' in opt_data_with_drt['metadata']
+        assert 'source_gtfs_path' in opt_data_with_drt['metadata']
+        assert 'source_drt_path' in opt_data_with_drt['metadata']
+
+        print("✅ Complete opt_data structures are ready for optimization")
+
+        print("\n" + "="*60)
+        print("🎉 ALL TESTS PASSED - DRT solution loading works correctly!")
+        print("="*60)

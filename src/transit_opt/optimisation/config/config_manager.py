@@ -57,133 +57,57 @@ from typing import Any
 
 import yaml
 
+# Replace the PSOConfig class definition around line 50
 
 @dataclass
 class PSOConfig:
     """
-    Particle Swarm Optimization algorithm configuration with penalty method support.
+    Particle Swarm Optimization algorithm configuration.
 
     This class encapsulates all PSO-specific parameters that control the
-    algorithm behavior. Supports both fixed and adaptive inertia weight strategies
-    and penalty-based constraint handling.
+    algorithm behavior. Uses PyMOO's native adaptive PSO implementation.
 
     ALGORITHM MODES:
     ===============
 
     **Standard PSO Mode:**
-    - Fixed or adaptive inertia weight scheduling
-    - Hard constraints (infeasible solutions rejected)
-    - Traditional PSO behavior with constraint handling via pymoo
+    - Fixed inertia weight, cognitive, and social coefficients
+    - Traditional PSO behavior (adaptive=False)
 
-    **Penalty Method Mode:**
-    - Converts constraints to objective penalties
-    - Allows exploration of infeasible regions
-    - Adaptive penalty weight scheduling available
-
-    INERTIA WEIGHT STRATEGIES:
-    =========================
-
-    **Adaptive Inertia Weight (Recommended):**
-    The inertia weight linearly decreases from initial to final value over generations.
-    This provides automatic balance between exploration (early) and exploitation (late).
-
-    - Early generations (w ≈ 0.9): High exploration, particles move freely
-    - Late generations (w ≈ 0.4): Low exploitation, particles converge locally
-    - Formula: w(t) = w_initial - (w_initial - w_final) × t/(T-1)
-
-    **Fixed Inertia Weight (Traditional):**
-    Constant inertia weight throughout optimization (set inertia_weight_final=None).
-
-    PENALTY METHOD CONSTRAINT HANDLING:
-    ==================================
-
-    **Two-Level Weight System:**
-    The penalty method uses a hierarchical weight resolution system to allow both
-    global defaults and constraint-specific customization.
-
-    **Weight Resolution Priority (highest to lowest):**
-    1. 🎯 Constraint-specific weights (problem.penalty_weights['constraint_type'])
-    2. 🔄 Algorithm default weight (optimization.algorithm.penalty_weight)
-    3. 🛡️ System fallback (1000.0 - hardcoded)
-
-    **Why Both Levels Are Needed:**
-    - penalty_weight: Provides consistent baseline for ALL constraints
-    - penalty_weights: Allows fine-tuning for SPECIFIC constraint types
-    - Prevents having to specify every constraint type individually
-
-    **Configuration Examples:**
-    ```python
-    # All constraints use same weight
-    config = {
-        'optimization': {
-            'algorithm': {
-                'penalty_weight': 1500.0,  # Applied to all constraints
-                'use_penalty_method': True
-            }
-        }
-        # No penalty_weights section needed
-    }
-
-    # Mixed weights: some constraints overridden, others use default
-    config = {
-        'problem': {
-            'constraints': [
-                {'type': 'FleetTotalConstraintHandler'},      # Uses 1000.0 (default)
-                {'type': 'FleetPerIntervalConstraintHandler'}, # Uses 2000.0 (override)
-                {'type': 'MinimumFleetConstraintHandler'}      # Uses 1000.0 (default)
-            ],
-            'penalty_weights': {
-                'fleet_per_interval': 2000.0  # Override only this constraint
-            }
-        },
-        'optimization': {
-            'algorithm': {
-                'penalty_weight': 1000.0,  # Default for all other constraints
-                'use_penalty_method': True
-            }
-        }
-    }
-    ```
-
-    **Constraint Type Mapping:**
-    - 'fleet_total' → FleetTotalConstraintHandler
-    - 'fleet_per_interval' → FleetPerIntervalConstraintHandler
-    - 'minimum_fleet' → MinimumFleetConstraintHandler
+    **Adaptive PSO Mode:**
+    - Dynamically adjusts w, c1, c2 based on swarm spread
+    - Uses PyMOO's built-in adaptive algorithm (adaptive=True)
+    - Initial values serve as starting points
 
     Attributes:
     ===========
-
-    **Core PSO Parameters:**
 
     pop_size : int (REQUIRED)
         Population size (number of particles in swarm).
         Typical range: 20-200, default 50 works well for most problems.
 
     inertia_weight : float, default=0.9
-        Initial inertia weight (w) for adaptive strategy, or fixed value.
-        - For adaptive: start high (0.9) for exploration
-        - For fixed: single value used throughout optimization
+        Inertia weight (w) for velocity update.
+        - For adaptive=False: fixed value throughout optimization
+        - For adaptive=True: initial value, will be adjusted by PyMOO
         - Typical range: 0.4-0.9
-
-    inertia_weight_final : float | None, default=0.4
-        Final inertia weight for adaptive strategy.
-        - If None: use fixed inertia weight (traditional PSO)
-        - If set: linearly decrease from inertia_weight to this value
-        - Typical value: 0.4 for exploitation
-        - Must be less than inertia_weight
 
     cognitive_coeff : float, default=2.0
         Cognitive coefficient (c1) - attraction to personal best.
-        Typical range: 1.5-2.5, default 2.0 is standard.
+        - For adaptive=False: fixed value throughout optimization
+        - For adaptive=True: initial value, will be adjusted by PyMOO
+        - Typical range: 1.5-2.5, default 2.0 is standard.
 
     social_coeff : float, default=2.0
         Social coefficient (c2) - attraction to global best.
-        Typical range: 1.5-2.5, default 2.0 is standard.
+        - For adaptive=False: fixed value throughout optimization
+        - For adaptive=True: initial value, will be adjusted by PyMOO
+        - Typical range: 1.5-2.5, default 2.0 is standard.
 
-    variant : str, default="adaptive"
-        PSO variant to use:
-        - 'canonical': Standard PSO (Shi & Eberhart 1998)
-        - 'adaptive': PSO with linearly decreasing inertia weight
+    adaptive : bool, default=True
+        Whether to use PyMOO's adaptive PSO algorithm.
+        - True: w, c1, c2 change dynamically based on swarm diversity
+        - False: w, c1, c2 remain constant throughout optimization
 
     **Penalty Method Parameters:**
 
@@ -213,46 +137,40 @@ class PSOConfig:
     ==============
 
     ```python
-    # Standard PSO with adaptive inertia (recommended)
+    # Adaptive PSO (recommended)
     config = PSOConfig(
         pop_size=50,
-        inertia_weight=0.9,        # Start: exploration
-        inertia_weight_final=0.4,  # End: exploitation
-        use_penalty_method=False   # Hard constraints
+        inertia_weight=0.9,        # Initial value
+        cognitive_coeff=2.0,       # Initial value
+        social_coeff=2.0,          # Initial value
+        adaptive=True              # PyMOO handles adaptation
     )
 
-    # Traditional PSO with fixed inertia
+    # Traditional fixed PSO
     config = PSOConfig(
         pop_size=30,
-        inertia_weight=0.7,
-        inertia_weight_final=None,  # Fixed weight
-        use_penalty_method=False
+        inertia_weight=0.7,        # Fixed value
+        cognitive_coeff=2.0,       # Fixed value
+        social_coeff=2.0,          # Fixed value
+        adaptive=False             # No adaptation
     )
 
-    # Penalty method PSO with adaptive penalties
+    # Penalty method PSO
     config = PSOConfig(
         pop_size=50,
+        adaptive=True,
         use_penalty_method=True,
-        penalty_weight=1500.0,      # Base penalty
-        adaptive_penalty=True,      # Increase over time
-        penalty_increase_rate=1.5   # 50% increase per generation
+        penalty_weight=1500.0,
+        adaptive_penalty=True
     )
     ```
-
-    Notes:
-    ======
-    - **TODO**: Adaptive inertia weight is currently overwritten by pymoo defaults
-    - Penalty method allows exploration of infeasible regions during optimization
-    - Constraint-specific penalty weights (penalty_weights) are specified in problem config
-    - Validation ensures all parameters are within reasonable ranges
     """
 
     pop_size: int  # REQUIRED - no default
-    inertia_weight: float = 0.9  # Sensible default
-    inertia_weight_final: float | None = 0.4  # Sensible default (adaptive)
-    cognitive_coeff: float = 2.0  # Standard PSO default
-    social_coeff: float = 2.0  # Standard PSO default
-    variant: str = "adaptive"  # Use adaptive as default
+    inertia_weight: float = 0.9  # Initial or fixed inertia weight
+    cognitive_coeff: float = 2.0  # Initial or fixed cognitive coefficient
+    social_coeff: float = 2.0  # Initial or fixed social coefficient
+    adaptive: bool = True  # Use PyMOO's adaptive PSO
 
     use_penalty_method: bool = False
     penalty_weight: float = 1000.0
@@ -269,121 +187,16 @@ class PSOConfig:
         if not 0.0 <= self.inertia_weight <= 2.0:
             raise ValueError("Inertia weight should be in range [0.0, 2.0]")
 
-        # Validate adaptive inertia weight
-        if self.inertia_weight_final is not None:
-            if not 0.0 <= self.inertia_weight_final <= 2.0:
-                raise ValueError("Final inertia weight should be in range [0.0, 2.0]")
-            if self.inertia_weight_final >= self.inertia_weight:
-                raise ValueError(
-                    "Final inertia weight should be less than initial weight"
-                )
-            # Set variant to adaptive when final weight is specified
-            if self.variant == "canonical":
-                self.variant = "adaptive"
-
         if not 0.0 <= self.cognitive_coeff <= 5.0:
             raise ValueError("Cognitive coefficient should be in range [0.0, 5.0]")
 
         if not 0.0 <= self.social_coeff <= 5.0:
             raise ValueError("Social coefficient should be in range [0.0, 5.0]")
 
-        if self.variant not in ["canonical", "adaptive"]:
-            raise ValueError(f"Unknown PSO variant: {self.variant}")
-
         if self.penalty_weight <= 0:
             raise ValueError("Penalty weight must be positive")
         if self.penalty_increase_rate <= 1.0:
             raise ValueError("Penalty increase rate must be > 1.0 for adaptive penalty")
-
-    def is_adaptive(self) -> bool:
-        """Check if adaptive inertia weight is enabled."""
-        return self.inertia_weight_final is not None
-
-    def get_inertia_weight(self, generation: int, max_generations: int) -> float:
-        """
-        Calculate inertia weight for given generation.
-
-        For adaptive strategy, uses linear decay:
-        w(t) = w_max - (w_max - w_min) * t / (T - 1)
-
-        Where:
-        - w_max = initial inertia weight (exploration)
-        - w_min = final inertia weight (exploitation)
-        - t = current generation (0-based)
-        - T = total generations
-
-        Args:
-            generation: Current generation (0-based)
-            max_generations: Total number of generations
-
-        Returns:
-            Inertia weight for this generation
-
-        Example:
-            ```python
-            config = PSOConfig(inertia_weight=0.9, inertia_weight_final=0.4)
-
-            # Generation 0: w = 0.9 (full exploration)
-            w_start = config.get_inertia_weight(0, 100)  # → 0.9
-
-            # Generation 50: w = 0.65 (balanced)
-            w_mid = config.get_inertia_weight(50, 100)   # → 0.65
-
-            # Generation 99: w = 0.4 (full exploitation)
-            w_end = config.get_inertia_weight(99, 100)   # → 0.4
-            ```
-        """
-        if not self.is_adaptive():
-            return self.inertia_weight
-
-        # Handle edge cases
-        if max_generations <= 1:
-            return self.inertia_weight
-
-        if generation <= 0:
-            return self.inertia_weight
-
-        if generation >= max_generations - 1:
-            return self.inertia_weight_final
-
-        # Linear decay: w(t) = w_max - (w_max - w_min) * t / (T - 1)
-        progress = generation / (max_generations - 1)
-        w_current = (
-            self.inertia_weight
-            - (self.inertia_weight - self.inertia_weight_final) * progress
-        )
-
-        return w_current
-
-    def get_weight_schedule(self, max_generations: int) -> list[float]:
-        """
-        Get complete inertia weight schedule for all generations.
-
-        Useful for visualization and analysis.
-
-        Args:
-            max_generations: Total number of generations
-
-        Returns:
-            List of inertia weights for each generation
-
-        Example:
-            ```python
-            config = PSOConfig(inertia_weight=0.9, inertia_weight_final=0.4)
-            schedule = config.get_weight_schedule(100)
-
-            import matplotlib.pyplot as plt
-            plt.plot(schedule)
-            plt.xlabel('Generation')
-            plt.ylabel('Inertia Weight')
-            plt.title('Adaptive Inertia Weight Schedule')
-            ```
-        """
-        return [
-            self.get_inertia_weight(gen, max_generations)
-            for gen in range(max_generations)
-        ]
-
 
 @dataclass
 class TerminationConfig:
@@ -687,6 +500,40 @@ class MultiRunConfig:
                             f"Parameter sweep for '{param}' must have at least 2 values"
                         )
 
+@dataclass
+class SamplingConfig:
+    """
+    Configuration for custom sampling in PSO optimization.
+    Attributes:
+        enabled: Whether custom sampling is enabled
+        base_solutions: List of base solutions or 'from_data' to sample from
+        frac_gaussian_pert: Fraction of new solutions from Gaussian perturbation around base solutions
+        gaussian_sigma: Standard deviation fraction for Gaussian perturbation
+        random_seed: Random seed for reproducibility
+
+    Note: frac_lhs is calculated automatically as (1.0 - frac_gaussian_pert)
+"""
+    enabled: bool = False
+    base_solutions: str | list = "from_data"  # "from_data" or list of solutions
+    frac_gaussian_pert: float = 0.7
+    gaussian_sigma: float = 1.0
+    random_seed: int | None = None
+
+    @property
+    def frac_lhs(self) -> float:
+        """Get fraction of Latin Hypercube Sampling."""
+        return 1.0 - self.frac_gaussian_pert
+
+    def __post_init__(self):
+        """Validate sampling configuration after initialization."""
+        if self.enabled:
+            # Validate fraction is between 0 and 1
+            if not 0.0 <= self.frac_gaussian_pert <= 1.0:
+                raise ValueError(f"frac_gaussian_pert must be between 0.0 and 1.0, got {self.frac_gaussian_pert}")
+
+            # Check sigma is positive
+            if self.gaussian_sigma <= 0:
+                raise ValueError("gaussian_sigma must be positive")
 
 class OptimizationConfigManager:
     """
@@ -829,22 +676,25 @@ class OptimizationConfigManager:
 
         self.pso_config = PSOConfig(
             pop_size=alg_config["pop_size"],  # REQUIRED
-            inertia_weight=alg_config.get(
-                "inertia_weight", 0.9
-            ),  # Optional with default
-            inertia_weight_final=alg_config.get(
-                "inertia_weight_final", 0.4
-            ),  # Optional with default
-            cognitive_coeff=alg_config.get(
-                "cognitive_coeff", 2.0
-            ),  # Optional with default
-            social_coeff=alg_config.get("social_coeff", 2.0),  # Optional with default
-            variant=alg_config.get("variant", "adaptive"),  # Optional with default
+            inertia_weight=alg_config.get("inertia_weight", 0.9),  # Optional with default
+            cognitive_coeff=alg_config.get("cognitive_coeff", 2.0),
+            social_coeff=alg_config.get("social_coeff", 2.0),
+            adaptive=alg_config.get("adaptive", True),  # Optional with default
             # Read penalty method parameters from configuration
             use_penalty_method=alg_config.get("use_penalty_method", False),
             penalty_weight=alg_config.get("penalty_weight", 1000.0),
             adaptive_penalty=alg_config.get("adaptive_penalty", False),
             penalty_increase_rate=alg_config.get("penalty_increase_rate", 2.0),
+        )
+
+        # Setup sampling configuration - all optional with defaults
+        sampling_config = self.config.get("optimization", {}).get("sampling", {})
+        self.sampling_config = SamplingConfig(
+            enabled=sampling_config.get("enabled", False),
+            base_solutions=sampling_config.get("base_solutions", []),
+            frac_gaussian_pert=sampling_config.get("frac_gaussian_pert", 0.3),
+            gaussian_sigma=sampling_config.get("gaussian_sigma", 1.0),
+            random_seed=sampling_config.get("random_seed", None)
         )
 
         # Setup termination configuration - check required parameters
@@ -895,6 +745,10 @@ class OptimizationConfigManager:
         """Get PSO algorithm configuration."""
         return self.pso_config
 
+    def get_sampling_config(self) -> SamplingConfig:
+        """Get sampling configuration for custom PSO initialization."""
+        return self.sampling_config
+
     def get_termination_config(self) -> TerminationConfig:
         """Get termination criteria configuration."""
         return self.termination_config
@@ -928,20 +782,15 @@ class OptimizationConfigManager:
         print("   🔄 Algorithm Configuration:")
         print("      Type: PSO")
         print(f"      Population size: {self.pso_config.pop_size}")
+        print(f"      Inertia weight: {self.pso_config.inertia_weight} ({'adaptive' if self.pso_config.adaptive else 'fixed'})")
+        print(f"      Cognitive/Social coeffs: {self.pso_config.cognitive_coeff}/{self.pso_config.social_coeff}")
+        print(f"      Adaptive algorithm: {'Enabled' if self.pso_config.adaptive else 'Disabled'}")
 
-        # Show adaptive vs fixed inertia weight
-        if self.pso_config.is_adaptive():
-            print(
-                f"      Inertia weight: {self.pso_config.inertia_weight} → {self.pso_config.inertia_weight_final} (adaptive)"
-            )
-            print("      Strategy: Exploration → Exploitation over generations")
+
+        if self.pso_config.adaptive:
+            print("      Strategy: PyMOO adaptive PSO (parameters adjust based on swarm spread)")
         else:
-            print(f"      Inertia weight: {self.pso_config.inertia_weight} (fixed)")
-
-        print(
-            f"      Cognitive/Social coeffs: {self.pso_config.cognitive_coeff}/{self.pso_config.social_coeff}"
-        )
-        print(f"      Variant: {self.pso_config.variant}")
+            print("      Strategy: Fixed parameters throughout optimization")
 
         if self.pso_config.use_penalty_method:
             print("      Constraint handling: Penalty method")

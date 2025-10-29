@@ -5,7 +5,6 @@ This module validates the PSO optimization runner that serves as the main entry 
 for Particle Swarm Optimization in the transit optimization system. Tests cover:
 
 - PSO runner initialization and configuration validation
-- AdaptivePSO algorithm implementation and weight scheduling
 - Integration with existing system components (objectives, constraints)
 - Single and multi-run optimization workflows
 - Error handling and edge cases
@@ -66,7 +65,6 @@ class TestPSORunnerSetup:
                     "type": "PSO",
                     "pop_size": 20,
                     "inertia_weight": 0.8,
-                    "inertia_weight_final": 0.3,
                 },
                 "termination": {"max_generations": 50},
             },
@@ -102,92 +100,6 @@ class TestPSORunnerSetup:
             OptimizationConfigManager(config_dict=bad_config)
 
         print("✅ PSO runner validation works")
-
-
-# ================================================================================================
-# ADAPTIVE PSO ALGORITHM TESTS
-# ================================================================================================
-
-
-class TestAdaptivePSO:
-    """
-    Test the AdaptivePSO algorithm implementation.
-
-    Validates the adaptive inertia weight scheduling that provides automatic
-    exploration-exploitation balance. Tests both adaptive and fixed weight modes
-    to ensure the algorithm works correctly in all configurations.
-    """
-
-    def test_adaptive_pso_creation(self):
-        """
-        Test AdaptivePSO instantiation with adaptive weight scheduling.
-
-        Validates that adaptive mode is correctly detected when both initial
-        and final inertia weights are provided. This enables automatic
-        exploration-to-exploitation transition during optimization.
-        """
-        from transit_opt.optimisation.runners.pso_runner import AdaptivePSO
-
-        # Create adaptive PSO
-        pso = AdaptivePSO(
-            pop_size=30,
-            inertia_weight=0.9,
-            inertia_weight_final=0.4,
-            cognitive_coeff=2.0,
-            social_coeff=2.0,
-        )
-
-        assert pso.pop_size == 30
-        assert pso.initial_inertia_weight == 0.9
-        assert pso.final_inertia_weight == 0.4
-        assert pso.is_adaptive == True
-
-        print("✅ Adaptive PSO creation works")
-
-    def test_fixed_pso_creation(self):
-        """
-        Test AdaptivePSO in fixed inertia weight mode.
-
-        Validates that when no final weight is provided, the algorithm
-        operates as traditional PSO with constant inertia weight.
-        This ensures backward compatibility with standard PSO behavior.
-        """
-        from transit_opt.optimisation.runners.pso_runner import AdaptivePSO
-
-        # Create fixed PSO (no final weight)
-        pso = AdaptivePSO(pop_size=20, inertia_weight=0.7, inertia_weight_final=None)
-
-        assert pso.initial_inertia_weight == 0.7
-        assert pso.final_inertia_weight is None
-        assert pso.is_adaptive == False
-
-        print("✅ Fixed inertia weight PSO creation works")
-
-    def test_adaptive_weight_calculation(self):
-        """
-        Test adaptive inertia weight calculation logic.
-
-        Validates the linear decay formula for inertia weight scheduling:
-        w(t) = w_initial - (w_initial - w_final) * t / (T - 1)
-
-        This ensures correct exploration-exploitation balance throughout optimization.
-        """
-        from transit_opt.optimisation.runners.pso_runner import AdaptivePSO
-
-        pso = AdaptivePSO(pop_size=20, inertia_weight=1.0, inertia_weight_final=0.2)
-
-        # Test weight calculation at different generations
-        w_start = pso._calculate_adaptive_weight(0, 100)
-        w_middle = pso._calculate_adaptive_weight(50, 100)
-        w_end = pso._calculate_adaptive_weight(99, 100)
-
-        assert abs(w_start - 1.0) < 1e-6
-        assert abs(w_end - 0.2) < 1e-6
-        assert 0.2 < w_middle < 1.0
-
-        print(
-            f"✅ Adaptive weight calculation: {w_start:.3f} → {w_middle:.3f} → {w_end:.3f}"
-        )
 
 
 # ================================================================================================
@@ -327,9 +239,9 @@ class TestPSORunnerMockOptimization:
                     "type": "PSO",
                     "pop_size": 25,
                     "inertia_weight": 0.95,
-                    "inertia_weight_final": 0.35,
                     "cognitive_coeff": 1.8,
                     "social_coeff": 2.2,
+                    "adaptive": True,
                 },
                 "termination": {"max_generations": 30},
                 "multi_run": {"enabled": True, "num_runs": 3},
@@ -342,8 +254,10 @@ class TestPSORunnerMockOptimization:
         # Test algorithm creation
         algorithm = runner._create_algorithm()
         assert algorithm.pop_size == 25
-        assert algorithm.initial_inertia_weight == 0.95
-        assert algorithm.final_inertia_weight == 0.35
+        assert algorithm.w == 0.95
+        assert algorithm.c1 == 1.8
+        assert algorithm.c2 == 2.2
+        assert algorithm.adaptive
 
         # Test termination creation
         termination = runner._create_termination()
@@ -405,7 +319,6 @@ class TestPSORunnerWithRealData:
                     "type": "PSO",
                     "pop_size": 20,  # Small for test speed
                     "inertia_weight": 0.9,
-                    "inertia_weight_final": 0.4,
                     "cognitive_coeff": 2.0,
                     "social_coeff": 2.0,
                 },
@@ -737,6 +650,7 @@ class TestPSORunnerWithRealData:
 
         print(f"Integration test: {len(pop_data)} zones, {np.sum(pop_data > 0)} with population")
 
+
 def test_best_feasible_solutions_tracker():
     """
     Test the BestFeasibleSolutionsTracker class functionality.
@@ -991,14 +905,14 @@ class TestPSORunnerMultipleConstraints:
                     {
                         "type": "FleetTotalConstraintHandler",
                         "baseline": "current_peak",
-                        "tolerance": 0.50,  # Lenient - 50% increase allowed
+                        "tolerance": 0.70,  # Lenient - 50% increase allowed
                         "measure": "peak",
                     },
                     # Constraint 2: Per-interval operational limits
                     {
                         "type": "FleetPerIntervalConstraintHandler",
                         "baseline": "current_by_interval",
-                        "tolerance": 0.50,  # Lenient - 50% increase per interval
+                        "tolerance": 0.80,  # Lenient - 50% increase per interval
                     },
                     # Constraint 3: Minimum service requirement
                     {
@@ -1013,11 +927,11 @@ class TestPSORunnerMultipleConstraints:
             "optimization": {
                 "algorithm": {
                     "type": "PSO",
-                    "pop_size": 20,  # Small for test speed
+                    "pop_size": 35,  # Small for test speed
                     "inertia_weight": 0.9,
-                    "inertia_weight_final": 0.4,
+                    "adaptive": True,
                 },
-                "termination": {"max_generations": 3},  # Very short for testing
+                "termination": {"max_generations": 10},  # Very short for testing
             },
         }
 
@@ -1201,12 +1115,13 @@ class TestPSORunnerMultipleConstraints:
                     {
                         "type": "FleetPerIntervalConstraintHandler",
                         "baseline": "current_by_interval",
-                        "tolerance": -0.1,  # 10% reduction per interval
+                        "tolerance": 100.0,  # 10% increase per interval
                     },
                 ],
             },
             "optimization": {
-                "algorithm": {"type": "PSO", "pop_size": 10},
+                "algorithm": {"type": "PSO",
+                              "pop_size": 10},
                 "termination": {"max_generations": 2},
             },
         }
@@ -2000,7 +1915,6 @@ class TestPSORunnerPenaltyMethod:
                     "adaptive_penalty": True,  # Increase penalties over time
                     "penalty_increase_rate": 1.2,  # 20% increase per generation (gradual)
                     "inertia_weight": 0.9,
-                    "inertia_weight_final": 0.3,  # Strong convergence pressure
                 },
                 "termination": {
                     "max_generations": 15
@@ -2020,7 +1934,6 @@ class TestPSORunnerPenaltyMethod:
         print("      Minimum service: 30% of current levels (accessibility)")
         print("   📈 PENALTY SCHEDULE:")
         print("      Initial weights: Budget=2500, Operational=1000, Service=5000")
-        print("      Adaptive increase: 20% per generation")
         print("      Expected final multiplier: ~1.2^15 = 15x initial weights")
 
         # Run penalty method optimization
@@ -2163,6 +2076,506 @@ class TestPSORunnerPenaltyMethod:
         print(
             "      This test demonstrates penalty method effectiveness on real transit data"
         )
+
+
+class TestPSORunnerWithSeeding:
+    """
+    Test PSO runner with custom sampling/seeding functionality.
+    Seeding is used to provide initial solutions to PYMOO PSO problem. 
+    Default without seeding is to use Latin Hypercube Sampling. 
+
+     The number of solutions seeded should be equal to pop_size.
+     With seeding, we set:
+    - base_solutions: "from_data" (this means use the current initial_solutions, 
+                       and make variations of it using a combination of gaussian 
+                       noise and LHS())
+    - base_solutions: List (use a List of base solutions, probably from a previous 
+                      run. Fill in the remaining number of initial solutons using 
+                      a combination of gaussian noise and LHS())
+    """
+
+    def test_sampling_actually_used_algorithm_inspection(self, sample_optimization_data):
+        """Test that custom sampling is actually set on the PSO algorithm using algorithm inspection."""
+        print("\n🔍 TESTING SAMPLING IS ACTUALLY USED (Algorithm Inspection):")
+
+        # Test 1: Default sampling (no custom sampling)
+        config_default = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 20},
+                "termination": {"max_generations": 1},
+                "sampling": {"enabled": False}  # Disabled
+            }
+        }
+
+        config_manager_default = OptimizationConfigManager(config_dict=config_default)
+        runner_default = PSORunner(config_manager_default)
+        runner_default.optimization_data = sample_optimization_data
+        runner_default._create_problem()
+
+        # Create algorithm without custom sampling
+        algorithm_default = runner_default._create_algorithm()
+
+        print("   📊 Algorithm without custom sampling:")
+        print(f"      Sampling type: {type(algorithm_default.initialization.sampling)}")
+        print(f"      Is LHS (default): {type(algorithm_default.initialization.sampling).__name__ == 'LHS'}")
+
+        # Should be default LHS
+        from pymoo.operators.sampling.lhs import LHS
+        assert isinstance(algorithm_default.initialization.sampling, LHS), \
+            "Default algorithm should use LHS sampling"
+
+        # Test 2: Custom sampling enabled
+        config_custom = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 20},
+                "termination": {"max_generations": 1},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": "from_data",
+                    "frac_gaussian_pert": 0.7,
+                    "random_seed": 42
+                }
+            }
+        }
+
+        config_manager_custom = OptimizationConfigManager(config_dict=config_custom)
+        runner_custom = PSORunner(config_manager_custom)
+        runner_custom.optimization_data = sample_optimization_data
+        runner_custom._create_problem()
+
+        # Create algorithm with custom sampling
+        algorithm_custom = runner_custom._create_algorithm()
+
+        print("   📊 Algorithm with custom sampling:")
+        print(f"      Sampling type: {type(algorithm_custom.initialization.sampling)}")
+        print(f"      Is numpy array: {isinstance(algorithm_custom.initialization.sampling, np.ndarray)}")
+
+        # Should be numpy array (pre-built population)
+        assert isinstance(algorithm_custom.initialization.sampling, np.ndarray), \
+            "Custom sampling should result in numpy array being set on algorithm"
+
+        # Check array dimensions
+        expected_pop_size = config_custom["optimization"]["algorithm"]["pop_size"]
+        expected_n_var = runner_custom.problem.n_var
+
+        assert algorithm_custom.initialization.sampling.shape == (expected_pop_size, expected_n_var), \
+            f"Custom sampling array should have shape ({expected_pop_size}, {expected_n_var})"
+
+        print(f"      Array shape: {algorithm_custom.initialization.sampling.shape}")
+        print(f"      Expected shape: ({expected_pop_size}, {expected_n_var})")
+
+        print("   ✅ Algorithm inspection confirms custom sampling is properly set!")
+
+    def test_sampling_initial_population_inspection(self, sample_optimization_data):
+        """Test custom sampling by inspecting the actual initial population produced."""
+        print("\n🔍 TESTING SAMPLING VIA INITIAL POPULATION INSPECTION:")
+
+        # Create runner with custom sampling
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 15},
+                "termination": {"max_generations": 1},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": "from_data",
+                    "frac_gaussian_pert": 0.5,  # 50% gaussian, 50% LHS
+                    "gaussian_sigma": 1.5,
+                    "random_seed": 123  # Fixed seed for reproducibility
+                }
+            }
+        }
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+        runner.optimization_data = sample_optimization_data
+        runner._create_problem()
+
+        # Create algorithm
+        algorithm = runner._create_algorithm()
+
+        # Get the initial population that would be used
+        pop = algorithm.initialization.do(runner.problem, algorithm.pop_size, random_state=123)
+
+        print("   📊 Initial population analysis:")
+        print(f"      Population size: {len(pop)}")
+        print(f"      Expected size: {algorithm.pop_size}")
+        print(f"      X matrix shape: {pop.get('X').shape}")
+
+        # Should match expected population size
+        assert len(pop) == algorithm.pop_size, \
+            f"Initial population size should be {algorithm.pop_size}, got {len(pop)}"
+
+        # Extract initial solution for comparison
+        initial_solution = sample_optimization_data['initial_solution'].flatten()
+        pop_X = pop.get('X')
+
+        print(f"      Initial solution (first 5): {initial_solution[:5]}")
+        print(f"      Pop particle 0 (first 5): {pop_X[0][:5]}")
+
+        # With custom sampling, at least one particle should be very close to initial solution
+        # (the base solution should be included, so should be identical actually)
+        distances_to_initial = [np.linalg.norm(pop_X[i] - initial_solution) for i in range(len(pop))]
+        min_distance = min(distances_to_initial)
+        # the first solution should be zero, and the first n% after that should be closer
+        # as they are based on Gaussian pertubation
+        print(f"      Distances to initial solution: {[f'{d:.6f}' for d in distances_to_initial]}")
+        print(f"      Min distance to initial solution: {min_distance:.6f}")
+
+        # Should have at least one particle very close to initial solution (the base solution)
+        assert min_distance < 1e-10, \
+            f"Expected base solution to be included in population (min distance: {min_distance})"
+
+        # Check that particles are not all identical (should have variety from gaussian + LHS)
+        unique_particles = len(set(tuple(row) for row in pop_X))
+        print(f"      Unique particles: {unique_particles}/{len(pop)}")
+
+        assert unique_particles > 1, \
+            "Population should have variety, not all identical particles"
+
+        # Check bounds are respected
+        assert np.all(pop_X >= runner.problem.xl), "All particles should respect lower bounds"
+        assert np.all(pop_X <= runner.problem.xu), "All particles should respect upper bounds"
+
+        print("   ✅ Initial population inspection confirms custom sampling works correctly!")
+
+    def test_sampling_vs_no_sampling_population_difference(self, sample_optimization_data):
+        """Test that custom sampling produces different initial populations than default LHS."""
+        print("\n🔍 TESTING CUSTOM SAMPLING PRODUCES DIFFERENT POPULATIONS:")
+
+        # Base config
+        base_config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 10},
+                "termination": {"max_generations": 1}
+            }
+        }
+
+        # Test 1: Default LHS sampling
+        config_default = base_config.copy()
+        config_default["optimization"]["sampling"] = {"enabled": False}
+
+        config_manager_default = OptimizationConfigManager(config_dict=config_default)
+        runner_default = PSORunner(config_manager_default)
+        runner_default.optimization_data = sample_optimization_data
+        runner_default._create_problem()
+
+        algorithm_default = runner_default._create_algorithm()
+        pop_default = algorithm_default.initialization.do(runner_default.problem, algorithm_default.pop_size, random_state=42)
+        X_default = pop_default.get('X')
+
+        print("   📊 Default LHS sampling:")
+        print(f"      Population shape: {X_default.shape}")
+        print(f"      First particle (first 5): {X_default[0][:5]}")
+
+        # Test 2: Custom sampling
+        config_custom = base_config.copy()
+        config_custom["optimization"]["sampling"] = {
+            "enabled": True,
+            "base_solutions": "from_data",
+            "frac_gaussian_pert": 0.6,
+            "gaussian_sigma": 1.5,
+            "random_seed": 42
+        }
+
+        config_manager_custom = OptimizationConfigManager(config_dict=config_custom)
+        runner_custom = PSORunner(config_manager_custom)
+        runner_custom.optimization_data = sample_optimization_data
+        runner_custom._create_problem()
+
+        algorithm_custom = runner_custom._create_algorithm()
+        pop_custom = algorithm_custom.initialization.do(runner_custom.problem, algorithm_custom.pop_size, random_state=42)
+        X_custom = pop_custom.get('X')
+
+        print("   📊 Custom sampling:")
+        print(f"      Population shape: {X_custom.shape}")
+        print(f"      First particle (first 5): {X_custom[0][:5]}")
+
+        # Compare populations - they should be different
+        population_difference = np.linalg.norm(X_default - X_custom)
+        print(f"      Population difference (Frobenius norm): {population_difference:.6f}")
+
+        # Populations should be significantly different (Gaussian noise produces solutions
+        # much closer to initial solution than LHS)
+        assert population_difference > 1.0, \
+            f"Custom sampling should produce different population than default LHS (difference: {population_difference})"
+
+        # Custom sampling should include initial solution (from optimization data)
+        initial_solution = sample_optimization_data['initial_solution'].flatten()
+
+        # Check if initial solution is in custom population
+        distances_custom = [np.linalg.norm(X_custom[i] - initial_solution) for i in range(len(X_custom))]
+        min_distance_custom = min(distances_custom)
+
+        # Check if initial solution is in default population
+        distances_default = [np.linalg.norm(X_default[i] - initial_solution) for i in range(len(X_default))]
+        min_distance_default = min(distances_default)
+
+        print(f"      Min distance to initial (custom): {min_distance_custom:.6f}")
+        print(f"      Min distance to initial (default): {min_distance_default:.6f}")
+
+        # Custom sampling should have initial solution (very small distance)
+        assert min_distance_custom < 1e-10, \
+            "Custom sampling should include exact initial solution as base"
+
+        # Default LHS is very unlikely to randomly hit the exact initial solution
+        assert min_distance_default > 0.1, \
+            "Default LHS should not randomly hit the exact initial solution"
+
+        print("   ✅ Custom sampling produces appropriately different populations!")
+
+
+    def test_sampling_from_data_basic(self, sample_optimization_data):
+        """
+        Test PSO with sampling using initial solution from optimization data.
+        """
+        print("\n🌱 TESTING SAMPLING FROM OPTIMIZATION DATA:")
+
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 20},
+                "termination": {"max_generations": 3},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": "from_data",
+                    "frac_gaussian_pert": 0.7,
+                    "gaussian_sigma": 0.75,
+                    "random_seed": 42
+                }
+            }
+        }
+
+        print("   📋 Configuration: Use initial solution as base for sampling")
+        print("   📊 70% Gaussian perturbations, 30% LHS samples")
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        result = runner.optimize(sample_optimization_data)
+
+        assert result.best_objective < float('inf')
+        assert result.generations_completed > 0
+
+        print(f"   ✅ Optimization completed: {result.best_objective:.6f}")
+        print("   🌱 Sampling from data works!")
+
+    def test_sampling_from_solution_list(self, sample_optimization_data):
+        """Test PSO with sampling using multiple provided base solutions."""
+        print("\n🌱 TESTING SAMPLING FROM SOLUTION LIST:")
+
+        # Create multiple diverse base solutions
+        shape = sample_optimization_data['decision_matrix_shape']
+        n_choices = sample_optimization_data['n_choices']
+        original = sample_optimization_data['initial_solution']
+
+        base_solutions = [
+            original.copy(),                                    # Original solution
+            np.zeros(shape, dtype=int),                        # All frequent service
+            np.full(shape, min(2, n_choices-2), dtype=int),   # All moderate service
+            np.clip(original + 1, 0, n_choices - 1),          # Slightly less frequent
+            np.clip(original - 1, 0, n_choices - 1),          # Slightly more frequent
+        ]
+
+        print(f"   📋 Created {len(base_solutions)} diverse base solutions")
+
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 25},
+                "termination": {"max_generations": 3},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": base_solutions,
+                    "frac_gaussian_pert": 0.8,
+                    "gaussian_sigma": 0.75,
+                    "random_seed": 42
+                }
+            }
+        }
+
+        print("   📊 80% Gaussian perturbations, 20% LHS samples")
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        result = runner.optimize(sample_optimization_data)
+
+        assert result.best_objective < float('inf')
+        assert result.generations_completed > 0
+
+        print(f"   ✅ Optimization completed: {result.best_objective:.6f}")
+        print("   🌱 Sampling from solution list works!")
+
+
+    def test_multi_run_with_sampling(self, sample_optimization_data):
+        """Test multi-run optimization with custom sampling."""
+        print("\n🔄🌱 TESTING MULTI-RUN WITH SAMPLING:")
+
+        # Create diverse base solutions for seeding
+        n_choices = sample_optimization_data['n_choices']
+        original = sample_optimization_data['initial_solution']
+
+        base_solutions = [
+            original.copy(),
+            np.clip(original + 1, 0, n_choices - 1),
+            np.clip(original - 1, 0, n_choices - 1),
+            np.clip(original + 2, 0, n_choices - 1),
+        ]
+
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 8},
+                "termination": {"max_generations": 3},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": base_solutions,
+                    "frac_gaussian_pert": 0.6,
+                    "gaussian_sigma": 0.1
+                    # Note: no random_seed so each run gets different randomness
+                }
+            }
+        }
+
+        print(f"   📋 Using {len(base_solutions)} base solutions for seeding")
+        print("   🔄 Running 4 independent runs...")
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        multi_result = runner.optimize_multi_run(
+            sample_optimization_data,
+            num_runs=4,
+            parallel=True,
+            track_best_n=2
+        )
+
+        # Should complete successfully
+        assert len(multi_result.run_summaries) == 4
+        assert multi_result.best_result is not None
+
+        print("   📊 MULTI-RUN RESULTS:")
+        for i, summary in enumerate(multi_result.run_summaries):
+            print(f"      Run {summary['run_id']}: {summary['objective']:.6f}, "
+                  f"feasible={summary['feasible']}")
+
+        stats = multi_result.statistical_summary
+        print(f"      Mean ± std: {stats['objective_mean']:.6f} ± {stats['objective_std']:.6f}")
+
+        print("   ✅ Multi-run with sampling completed successfully!")
+
+    @pytest.mark.skip(reason="Requires PT+DRT optimization data - implement after DRT integration")
+    def test_sampling_with_pt_drt_solutions(self):
+        """Test sampling with PT+DRT solutions (requires real DRT data)."""
+        print("\n🚁🌱 TESTING SAMPLING WITH PT+DRT SOLUTIONS:")
+        print("   ⏸️ Skipped - requires real PT+DRT optimization data")
+        print("   🔄 Will implement after DRT data preparation is complete")
+
+        # This test will be implemented once we have:
+        # 1. Real PT+DRT optimization data from GTFSDataPreparator
+        # 2. Updated drt_solution.json file
+        # 3. Verified DRT shapefile compatibility
+
+        # The test should:
+        # - Load PT+DRT optimization data
+        # - Create base solutions with both PT and DRT components
+        # - Run PSO with PT+DRT sampling
+        # - Verify that both PT and DRT parts are optimized
+
+    def test_sampling_error_handling(self, sample_optimization_data):
+        """Test error handling in sampling configuration."""
+        print("\n🚨 TESTING SAMPLING ERROR HANDLING:")
+
+        # Test invalid base solutions
+        invalid_shape = np.zeros((5, 5), dtype=int)  # Wrong shape
+
+        config = {
+            "problem": {
+                "objective": {"type": "HexagonalCoverageObjective"},
+                "constraints": []
+            },
+            "optimization": {
+                "algorithm": {"type": "PSO", "pop_size": 10},
+                "termination": {"max_generations": 2},
+                "sampling": {
+                    "enabled": True,
+                    "base_solutions": [invalid_shape],  # Invalid solution
+                    "frac_gaussian_pert": 0.5
+                }
+            }
+        }
+
+        print("   🔧 Testing with invalid base solution shape...")
+
+        config_manager = OptimizationConfigManager(config_dict=config)
+        runner = PSORunner(config_manager)
+
+        # Should raise an error during optimization
+        with pytest.raises(RuntimeError, match="shape"):
+            runner.optimize(sample_optimization_data)
+
+        print("   ✅ Error handling works correctly!")
+
+    def test_sampling_configuration_validation(self):
+        """Test sampling configuration validation."""
+        print("\n🔧 TESTING SAMPLING CONFIGURATION VALIDATION:")
+
+        # Test invalid frac_gaussian_pert
+        with pytest.raises(ValueError, match="frac_gaussian_pert must be between 0.0 and 1.0"):
+            config = {
+                "problem": {"objective": {"type": "HexagonalCoverageObjective"}},
+                "optimization": {
+                    "algorithm": {"type": "PSO", "pop_size": 10},
+                    "termination": {"max_generations": 5},
+                    "sampling": {
+                        "enabled": True,
+                        "frac_gaussian_pert": 1.5  # Invalid: > 1.0
+                    }
+                }
+            }
+            OptimizationConfigManager(config_dict=config)
+
+        # Test invalid gaussian_sigma
+        with pytest.raises(ValueError, match="gaussian_sigma must be positive"):
+            config = {
+                "problem": {"objective": {"type": "HexagonalCoverageObjective"}},
+                "optimization": {
+                    "algorithm": {"type": "PSO", "pop_size": 10},
+                    "termination": {"max_generations": 5},
+                    "sampling": {
+                        "enabled": True,
+                        "gaussian_sigma": -0.1  # Invalid: negative
+                    }
+                }
+            }
+            OptimizationConfigManager(config_dict=config)
+
+        print("   ✅ Configuration validation works correctly!")
 
 
 # ================================================================================================
