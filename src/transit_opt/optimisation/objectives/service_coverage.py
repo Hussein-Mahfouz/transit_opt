@@ -4,9 +4,11 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (calculate_population_weighted_variance,
-                                interpolate_population_to_zones,
-                                validate_population_config)
+from ..utils.population import (
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+    validate_population_config,
+)
 from .base import BaseSpatialObjective
 
 
@@ -166,7 +168,26 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         vehicles_data = self.spatial_system._vehicles_per_zone(
             solution_matrix, self.opt_data
         )
-        vehicles_per_zone = vehicles_data[self.time_aggregation]
+
+        # Get vehicles_per_zone based on time aggregation parameter:
+        #TODO: implement 'intervals' option as done in waiting_times.py
+        if self.time_aggregation == "average":
+            # Use average vehicles across intervals
+            vehicles_per_zone = vehicles_data["average"]
+
+        elif self.time_aggregation == "peak":
+            # Use peak interval vehicles
+            vehicles_per_zone = vehicles_data["peak"]
+
+        elif self.time_aggregation == "sum":
+            # Use total vehicles across all intervals
+            vehicles_per_zone = vehicles_data["sum"]
+
+        else:
+            raise ValueError(
+                f"Unknown time_aggregation: {self.time_aggregation}. "
+                f"Must be 'average', 'peak', 'sum'"
+            )
 
         if len(vehicles_per_zone) > 1 and np.sum(vehicles_per_zone) > 0:
             # Choose calculation method based on parameters
@@ -184,8 +205,10 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
                 variance = np.var(vehicles_per_zone)  # Standard variance
 
             print(
-                f"📊 Vehicles per zone ({self.time_aggregation}): min={np.min(vehicles_per_zone)}, "
-                f"max={np.max(vehicles_per_zone)}, var={variance:.2f}"
+                f"📊 Vehicles per zone ({self.time_aggregation}): "
+                f"min={np.min(vehicles_per_zone)}, "
+                f"max={np.max(vehicles_per_zone)}, "
+                f"var={variance:.2f}"
             )
             return float(variance)
         else:

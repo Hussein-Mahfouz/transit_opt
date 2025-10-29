@@ -15,6 +15,7 @@ Test Coverage:
 """
 
 import numpy as np
+import pytest
 
 from transit_opt.optimisation.objectives import HexagonalCoverageObjective
 
@@ -450,4 +451,190 @@ class TestPopulationWeighting:
 
         # higher power should have variance larger than or equal to lower power
         assert variances[0] <= variances[1] <= variances[2]
+
+
+class TestTimeAggregation:
+    """
+    Test that different time aggregations work 
+    """
+
+    def test_time_aggregation_options_coverage(self, sample_optimization_data):
+        """
+        Test all valid time_aggregation options for HexagonalCoverageObjective.
+        
+        Valid options: 'average', 'peak', 'sum'
+        All should return valid variance values.
+        """
+        print("\n🕐 TESTING TIME AGGREGATION OPTIONS:")
+
+        valid_options = ['average', 'peak', 'sum']
+        results = {}
+
+        for aggregation in valid_options:
+            print(f"\n   Testing time_aggregation='{aggregation}'...")
+
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=3.0,
+                time_aggregation=aggregation
+            )
+
+            variance = objective.evaluate(sample_optimization_data['initial_solution'])
+
+            # Validate result
+            assert isinstance(variance, float), f"Should return float for {aggregation}"
+            assert variance >= 0, f"Variance must be non-negative for {aggregation}"
+            assert not np.isnan(variance), f"Variance should not be NaN for {aggregation}"
+
+            results[aggregation] = variance
+            print(f"      ✅ {aggregation}: variance = {variance:.6f}")
+
+        # Check that different aggregations give different results (they should!)
+        assert results['average'] != results['peak'] or results['peak'] != results['sum'], \
+            "Different time aggregations should generally produce different variances"
+
+        print("\n   ✅ All time_aggregation options work correctly")
+        print(f"   📊 Results: {results}")
+
+
+    def test_time_aggregation_invalid_option(self, sample_optimization_data):
+        """Test that invalid time_aggregation options are rejected."""
+        print("\n❌ TESTING INVALID TIME AGGREGATION:")
+
+        with pytest.raises(ValueError, match="time_aggregation must be"):
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=3.0,
+                time_aggregation="intervals"  # NOT valid for coverage objective
+            )
+            objective.evaluate(sample_optimization_data['initial_solution'])
+
+        print("   ✅ Invalid option correctly rejected")
+
+
+    def test_time_aggregation_mathematical_consistency(self, sample_optimization_data):
+        """
+        Test mathematical relationships between different time aggregations.
+        
+        Key relationships to verify:
+        - sum aggregation should have highest absolute vehicle counts
+        - average aggregation is sum / n_intervals  
+        - peak aggregation is max across intervals
+        """
+        print("\n🔢 TESTING TIME AGGREGATION MATHEMATICS:")
+
+        # Create objectives with different aggregations
+        obj_avg = HexagonalCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=3.0,
+            time_aggregation='average'
+        )
+
+        # Get vehicle data directly to check relationships
+        vehicles_data = obj_avg.spatial_system._vehicles_per_zone(
+            sample_optimization_data['initial_solution'],
+            sample_optimization_data
+        )
+
+        # Verify mathematical relationships
+        n_intervals = sample_optimization_data['n_intervals']
+
+        # Check: average * n_intervals ≈ sum (should be exact)
+        np.testing.assert_array_almost_equal(
+            vehicles_data['average'] * n_intervals,
+            vehicles_data['sum'],
+            decimal=10,
+            err_msg="average * n_intervals should equal sum"
+        )
+        print("   ✅ average * n_intervals = sum verified:")
+        print(f" {vehicles_data['average']} x {n_intervals} ≈ {vehicles_data['sum']}")
+
+
+        # Check: peak >= average (by definition of max)
+        assert np.all(vehicles_data['peak'] >= vehicles_data['average']), \
+            "Peak should be >= average for all zones"
+        # Print the first 5 zones to visually inspect:
+        print("   ✅ peak >= average verified for all zones. Sample values (first 5 zones):")
+        for i in range(5):
+            print(f"      Zone {i}: peak={vehicles_data['peak'][i]}, average={vehicles_data['average'][i]}")
+        # Check: sum >= peak (cumulative is at least the max single value)
+        assert np.all(vehicles_data['sum'] >= vehicles_data['peak']), \
+            "Sum should be >= peak for all zones"
+        print("   ✅ sum >= peak verified for all zones. Sample values (first 5 zones):")
+        for i in range(5):
+            print(f"      Zone {i}: sum={vehicles_data['sum'][i]}, peak={vehicles_data['peak'][i]}")
+
+
+
+    def test_time_aggregation_with_spatial_lag(self, sample_optimization_data):
+        """
+        Test that time_aggregation works correctly with spatial_lag enabled.
+        
+        All time_aggregation options should work with spatial lag.
+        """
+        print("\n🗺️ TESTING TIME AGGREGATION + SPATIAL LAG:")
+
+        for aggregation in ['average', 'peak', 'sum']:
+            print(f"\n   Testing {aggregation} with spatial lag...")
+
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=3.0,
+                time_aggregation=aggregation,
+                spatial_lag=True,
+                alpha=0.2
+            )
+
+            variance = objective.evaluate(sample_optimization_data['initial_solution'])
+
+            assert isinstance(variance, float)
+            assert variance >= 0
+            assert not np.isnan(variance)
+
+            print(f"      ✅ {aggregation} + spatial lag: {variance:.6f}")
+
+        print("   ✅ All combinations work correctly")
+
+    def test_time_aggregation_with_population_weighting(self, sample_optimization_data, usa_population_path):
+        """
+        Test that time_aggregation works correctly with population weighting enabled.
+        """
+        print("\n👥 TESTING TIME AGGREGATION + POPULATION WEIGHTING:")
+
+        for aggregation in ['average', 'peak', 'sum']:
+            print(f"\n   Testing {aggregation} with population weighting...")
+
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=3.0,
+                time_aggregation=aggregation,
+                population_weighted=True,
+                population_layer=usa_population_path
+            )
+
+            variance = objective.evaluate(sample_optimization_data['initial_solution'])
+
+            assert isinstance(variance, float)
+            assert variance >= 0
+            assert not np.isnan(variance)
+
+            print(f"      ✅ {aggregation} + population weighting: {variance:.6f}")
+
+    def test_time_aggregation_configuration_stored(self, sample_optimization_data):
+        """Test that time_aggregation setting is properly stored in objective."""
+        print("\n⚙️ TESTING CONFIGURATION STORAGE:")
+
+        for aggregation in ['average', 'peak', 'sum']:
+            objective = HexagonalCoverageObjective(
+                optimization_data=sample_optimization_data,
+                spatial_resolution_km=3.0,
+                time_aggregation=aggregation
+            )
+
+            assert objective.time_aggregation == aggregation, \
+                f"Configuration should be stored correctly: {aggregation}"
+
+            print(f"   ✅ {aggregation}: correctly stored")
+
+        print("   ✅ All configurations stored correctly")
 
