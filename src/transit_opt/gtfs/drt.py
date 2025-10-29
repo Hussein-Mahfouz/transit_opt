@@ -1,4 +1,3 @@
-# filepath: /home/hussein/Documents/GitHub/transit_opt/src/transit_opt/gtfs/drt.py
 """
 DRT solution export utilities.
 

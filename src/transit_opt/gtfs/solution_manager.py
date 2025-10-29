@@ -200,12 +200,6 @@ class SolutionExportManager:
         # Create the output file path with solution_id in the filename
         output_path = Path(output_dir) / f"{solution_id}_drt.json"
 
-        # # Include solution_id in metadata so DRT exporter can use it for filename
-        # export_metadata = {
-        #     **metadata,
-        #     'solution_id': solution_id
-        # }
-
         # Export DRT solution - remove solution_id from direct parameters
         drt_path = self.drt_exporter.export_solution(
             solution=drt_solution,

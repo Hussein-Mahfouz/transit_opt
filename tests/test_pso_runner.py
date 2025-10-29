@@ -125,8 +125,7 @@ class TestPSORunnerIntegration:
         in the expected format. This structure is used throughout the system
         for solution analysis, constraint validation, and performance assessment.
         """
-        from transit_opt.optimisation.runners.pso_runner import \
-            OptimizationResult
+        from transit_opt.optimisation.runners.pso_runner import OptimizationResult
 
         # Create sample result
         result = OptimizationResult(
@@ -155,8 +154,7 @@ class TestPSORunnerIntegration:
         across runs and provide statistical summaries. This enables robust
         optimization assessment and confidence interval analysis.
         """
-        from transit_opt.optimisation.runners.pso_runner import (
-            MultiRunResult, OptimizationResult)
+        from transit_opt.optimisation.runners.pso_runner import MultiRunResult, OptimizationResult
 
         # Create sample results
         result1 = OptimizationResult(
@@ -627,8 +625,7 @@ class TestPSORunnerWithRealData:
                 }
             }
         }
-        from transit_opt.optimisation.config.config_manager import \
-            OptimizationConfigManager
+        from transit_opt.optimisation.config.config_manager import OptimizationConfigManager
         from transit_opt.optimisation.runners.pso_runner import PSORunner
 
         config_manager = OptimizationConfigManager(config_dict=config)
@@ -660,8 +657,7 @@ def test_best_feasible_solutions_tracker():
     The class tracks the best feasible solutions found during optimisation, updating
     with each generation
     """
-    from transit_opt.optimisation.runners.pso_runner import \
-        BestFeasibleSolutionsTracker
+    from transit_opt.optimisation.runners.pso_runner import BestFeasibleSolutionsTracker
 
     tracker = BestFeasibleSolutionsTracker(max_solutions=3)
 
@@ -1581,8 +1577,7 @@ class TestPSORunnerPenaltyMethod:
         automatic exploration-to-exploitation transition mechanism.
         """
 
-        from transit_opt.optimisation.runners.pso_runner import \
-            PenaltySchedulingCallback
+        from transit_opt.optimisation.runners.pso_runner import PenaltySchedulingCallback
 
         print("\n📈 TESTING ADAPTIVE PENALTY CALLBACK:")
 
@@ -2439,7 +2434,6 @@ class TestPSORunnerWithSeeding:
         print("\n🔄🌱 TESTING MULTI-RUN WITH SAMPLING:")
 
         # Create diverse base solutions for seeding
-        shape = sample_optimization_data['decision_matrix_shape']
         n_choices = sample_optimization_data['n_choices']
         original = sample_optimization_data['initial_solution']
 
@@ -2512,8 +2506,6 @@ class TestPSORunnerWithSeeding:
         # - Create base solutions with both PT and DRT components
         # - Run PSO with PT+DRT sampling
         # - Verify that both PT and DRT parts are optimized
-
-        pass
 
     def test_sampling_error_handling(self, sample_optimization_data):
         """Test error handling in sampling configuration."""

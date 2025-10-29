@@ -508,8 +508,7 @@ class SamplingConfig:
         enabled: Whether custom sampling is enabled
         base_solutions: List of base solutions or 'from_data' to sample from
         frac_gaussian_pert: Fraction of new solutions from Gaussian perturbation around base solutions
-        frac_sampled: Fraction of new solutions from sampling the solution space using Latin Hypercube Sampling
-        gaussian_sigma_frac: Standard deviation fraction for Gaussian perturbation
+        gaussian_sigma: Standard deviation fraction for Gaussian perturbation
         random_seed: Random seed for reproducibility
 
     Note: frac_lhs is calculated automatically as (1.0 - frac_gaussian_pert)
@@ -528,7 +527,7 @@ class SamplingConfig:
     def __post_init__(self):
         """Validate sampling configuration after initialization."""
         if self.enabled:
-             # Validate fraction is between 0 and 1
+            # Validate fraction is between 0 and 1
             if not 0.0 <= self.frac_gaussian_pert <= 1.0:
                 raise ValueError(f"frac_gaussian_pert must be between 0.0 and 1.0, got {self.frac_gaussian_pert}")
 
