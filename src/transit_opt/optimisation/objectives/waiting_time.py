@@ -21,14 +21,14 @@ class WaitingTimeObjective(BaseSpatialObjective):
     Features:
     - **Population weighting**: Weight by zone population for equity
     - **Multiple metrics**: Total waiting time vs variance in waiting time
-    - **Time aggregation**: Average, peak, or interval-specific analysis
+    - **Time aggregation**: Average, peak, sum, or interval-specific analysis
     
     Args:
         optimization_data: Complete optimization data from preparator
         spatial_resolution_km: Hexagon size in kilometers
         crs: Coordinate reference system
         boundary: Geographic boundary filter
-        time_aggregation: 'average', 'peak', or 'intervals'
+        time_aggregation: 'average', 'peak', 'sum', or 'intervals'
         metric: 'total' (minimize total) or 'variance' (minimize inequality)
         population_weighted: Enable population weighting
         population_layer: Population raster path
@@ -107,8 +107,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Calculate waiting times for each interval
         interval_waiting_times = []
-        for interval_idx in range(vehicles_data["intervals"].shape[1]):
-            vehicles_this_interval = vehicles_data["intervals"][:, interval_idx]
+        for interval_idx in range(vehicles_data["intervals"].shape[0]): # Iterate over intervals
+            vehicles_this_interval = vehicles_data["intervals"][interval_idx, :] # Vehicles per zone for this interval
             waiting_times_this_interval = self._convert_vehicles_to_waiting_times_for_interval(
                 vehicles_this_interval, solution_matrix, interval_idx
             )
