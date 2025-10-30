@@ -217,7 +217,7 @@ class TestStopCoverageObjective:
 
         Transit systems vary by time of day (rush hour vs off-peak), so the
         analysis must provide interval-specific data:
-        - vehicles_per_zone_intervals: (n_zones × n_intervals) matrix
+        - vehicles_per_zone_intervals: (n_intervals × n_zones) matrix
         - interval_labels: Human-readable time period names
         """
         objective = StopCoverageObjective(
