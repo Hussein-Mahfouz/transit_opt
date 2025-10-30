@@ -299,7 +299,7 @@ class TestStopCoverageObjective:
         # Extract data for consistency checking
         intervals_data = analysis[
             "vehicles_per_zone_intervals"
-        ]  # (n_zones, n_intervals)
+        ]  # (n_intervals, n_zones)
         print("Intervals Data:", intervals_data)
         average_data = analysis["vehicles_per_zone_average"]  # (n_zones,)
         print("vehicles_per_zone_average:", average_data)
