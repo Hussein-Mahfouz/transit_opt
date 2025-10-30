@@ -20,7 +20,7 @@ Test Data Dependencies:
 
 Key Integration Points:
 - TransitOptimizationProblem: Solution encoding/decoding
-- HexagonalCoverageObjective: Spatial coverage evaluation
+- StopCoverageObjective: Spatial coverage evaluation
 - Constraint handlers: Fleet size validation
 - Configuration system: Parameter management and validation
 """
@@ -57,7 +57,7 @@ class TestPSORunnerSetup:
         """
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -87,7 +87,7 @@ class TestPSORunnerSetup:
         # Invalid population size
         bad_config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -231,7 +231,7 @@ class TestPSORunnerMockOptimization:
         """
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -289,7 +289,7 @@ class TestPSORunnerWithRealData:
         Uses lenient constraints to ensure feasible solutions for testing.
 
         This test demonstrates integration with:
-        - HexagonalCoverageObjective from #service_coverage
+        - StopCoverageObjective from #service_coverage
         - FleetTotalConstraintHandler from #constraints
         - Duke GTFS data from #preprocessing
         """
@@ -299,7 +299,7 @@ class TestPSORunnerWithRealData:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 1.5,
                     "crs": "EPSG:3857",
                     "time_aggregation": "average",
@@ -334,7 +334,7 @@ class TestPSORunnerWithRealData:
         print(
             f"   📊 Duke GTFS data: {sample_optimization_data['n_routes']} routes, {sample_optimization_data['n_intervals']} intervals"
         )
-        print("   🎯 Objective: HexagonalCoverageObjective")
+        print("   🎯 Objective: StopCoverageObjective")
         print("   🚦 Constraints: FleetTotalConstraintHandler (20% tolerance)")
         print("   ⚙️ Algorithm: Adaptive PSO (20 particles, 5 generations)")
 
@@ -395,7 +395,7 @@ class TestPSORunnerWithRealData:
         # Configure for fast testing
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -460,7 +460,7 @@ class TestPSORunnerWithRealData:
         # Simple config for testing solution format
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -524,7 +524,7 @@ class TestPSORunnerWithRealData:
         """Test that track_best_n parameter correctly tracks feasible solutions."""
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],  # No constraints to ensure feasible solutions
             },
             "optimization": {
@@ -558,7 +558,7 @@ class TestPSORunnerWithRealData:
         """Test track_best_n with multi-run optimization."""
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -599,7 +599,7 @@ class TestPSORunnerWithRealData:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.0,
                     "population_weighted": True,
                     "population_layer": usa_pop_path,
@@ -746,7 +746,7 @@ class TestPSORunnerErrorHandling:
         """
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -782,7 +782,7 @@ class TestPSORunnerErrorHandling:
         # Test max generations termination
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -823,7 +823,7 @@ class TestPSORunnerErrorHandling:
         # Create config with tight constraint (likely to be violated)
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [
                     {
                         "type": "FleetTotalConstraintHandler",
@@ -897,7 +897,7 @@ class TestPSORunnerMultipleConstraints:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.0,
                 },
                 "constraints": [
@@ -1061,7 +1061,7 @@ class TestPSORunnerMultipleConstraints:
 
             config = {
                 "problem": {
-                    "objective": {"type": "HexagonalCoverageObjective"},
+                    "objective": {"type": "StopCoverageObjective"},
                     "constraints": combo["constraints"],
                 },
                 "optimization": {
@@ -1102,7 +1102,7 @@ class TestPSORunnerMultipleConstraints:
         # Create tight constraints that are likely to be violated
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [
                     # Very tight total constraint
                     {
@@ -1235,7 +1235,7 @@ class TestPSORunnerPenaltyMethod:
         # Test default values (penalty method disabled)
         config_default = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -1262,7 +1262,7 @@ class TestPSORunnerPenaltyMethod:
         # Test custom penalty configuration
         config_custom = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [],
             },
             "optimization": {
@@ -1313,7 +1313,7 @@ class TestPSORunnerPenaltyMethod:
         with pytest.raises(ValueError, match="Penalty weight must be positive"):
             config = {
                 "problem": {
-                    "objective": {"type": "HexagonalCoverageObjective"},
+                    "objective": {"type": "StopCoverageObjective"},
                     "constraints": [],
                 },
                 "optimization": {
@@ -1331,7 +1331,7 @@ class TestPSORunnerPenaltyMethod:
         with pytest.raises(ValueError, match="Penalty increase rate must be > 1.0"):
             config = {
                 "problem": {
-                    "objective": {"type": "HexagonalCoverageObjective"},
+                    "objective": {"type": "StopCoverageObjective"},
                     "constraints": [],
                 },
                 "optimization": {
@@ -1372,7 +1372,7 @@ class TestPSORunnerPenaltyMethod:
         # Create configuration for penalty method
         config_penalty = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [
                     {
                         "type": "FleetTotalConstraintHandler",
@@ -1397,7 +1397,7 @@ class TestPSORunnerPenaltyMethod:
         # Create configuration for hard constraints
         config_hard = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [
                     {
                         "type": "FleetTotalConstraintHandler",
@@ -1485,7 +1485,7 @@ class TestPSORunnerPenaltyMethod:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.0,
                 },
                 "constraints": [
@@ -1653,7 +1653,7 @@ class TestPSORunnerPenaltyMethod:
 
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": [
                     {
                         "type": "FleetTotalConstraintHandler",
@@ -1771,7 +1771,7 @@ class TestPSORunnerPenaltyMethod:
         base_config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 2.0,
                 },
                 "constraints": [
@@ -1873,7 +1873,7 @@ class TestPSORunnerPenaltyMethod:
         config = {
             "problem": {
                 "objective": {
-                    "type": "HexagonalCoverageObjective",
+                    "type": "StopCoverageObjective",
                     "spatial_resolution_km": 1.5,  # Higher resolution for more challenge
                     "time_aggregation": "peak",  # Focus on peak coverage
                 },
@@ -2101,7 +2101,7 @@ class TestPSORunnerWithSeeding:
         # Test 1: Default sampling (no custom sampling)
         config_default = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2131,7 +2131,7 @@ class TestPSORunnerWithSeeding:
         # Test 2: Custom sampling enabled
         config_custom = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2181,7 +2181,7 @@ class TestPSORunnerWithSeeding:
         # Create runner with custom sampling
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2257,7 +2257,7 @@ class TestPSORunnerWithSeeding:
         # Base config
         base_config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2348,7 +2348,7 @@ class TestPSORunnerWithSeeding:
 
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2399,7 +2399,7 @@ class TestPSORunnerWithSeeding:
 
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2446,7 +2446,7 @@ class TestPSORunnerWithSeeding:
 
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2516,7 +2516,7 @@ class TestPSORunnerWithSeeding:
 
         config = {
             "problem": {
-                "objective": {"type": "HexagonalCoverageObjective"},
+                "objective": {"type": "StopCoverageObjective"},
                 "constraints": []
             },
             "optimization": {
@@ -2548,7 +2548,7 @@ class TestPSORunnerWithSeeding:
         # Test invalid frac_gaussian_pert
         with pytest.raises(ValueError, match="frac_gaussian_pert must be between 0.0 and 1.0"):
             config = {
-                "problem": {"objective": {"type": "HexagonalCoverageObjective"}},
+                "problem": {"objective": {"type": "StopCoverageObjective"}},
                 "optimization": {
                     "algorithm": {"type": "PSO", "pop_size": 10},
                     "termination": {"max_generations": 5},
@@ -2563,7 +2563,7 @@ class TestPSORunnerWithSeeding:
         # Test invalid gaussian_sigma
         with pytest.raises(ValueError, match="gaussian_sigma must be positive"):
             config = {
-                "problem": {"objective": {"type": "HexagonalCoverageObjective"}},
+                "problem": {"objective": {"type": "StopCoverageObjective"}},
                 "optimization": {
                     "algorithm": {"type": "PSO", "pop_size": 10},
                     "termination": {"max_generations": 5},

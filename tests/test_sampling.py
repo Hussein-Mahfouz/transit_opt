@@ -219,13 +219,11 @@ class TestPopulationBuilder:
 
     def test_build_population_basic(self, sample_optimization_data):
         """Test basic population building workflow."""
-        from transit_opt.optimisation.objectives.service_coverage import \
-            HexagonalCoverageObjective
-        from transit_opt.optimisation.problems.transit_problem import \
-            TransitOptimizationProblem
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create mock problem
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=2.0
         )
@@ -255,13 +253,11 @@ class TestPopulationBuilder:
 
     def test_build_population_with_solution_list(self, sample_optimization_data):
         """Test population building with provided list of base solutions."""
-        from transit_opt.optimisation.objectives.service_coverage import \
-            HexagonalCoverageObjective
-        from transit_opt.optimisation.problems.transit_problem import \
-            TransitOptimizationProblem
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create problem
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=2.0
         )

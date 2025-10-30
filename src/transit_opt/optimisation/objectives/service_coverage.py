@@ -4,15 +4,13 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-    validate_population_config,
-)
+from ..utils.population import (calculate_population_weighted_variance,
+                                interpolate_population_to_zones,
+                                validate_population_config)
 from .base import BaseSpatialObjective
 
 
-class HexagonalCoverageObjective(BaseSpatialObjective):
+class StopCoverageObjective(BaseSpatialObjective):
     """
     Spatial equity objective using hexagonal zones with optional spatial lag analysis.
 
@@ -46,7 +44,7 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
         boundary (Optional[StudyAreaBoundary], optional): Geographic boundary filter.
                                                         Defaults to None.
         time_aggregation (str, optional): Time aggregation method. Options:
-                                        'average', 'peak'. Defaults to 'average'.
+                                        'average', 'peak', 'sum'. Defaults to 'average'.
         spatial_lag (bool, optional): Enable spatial lag accessibility.
                                     Defaults to False.
         alpha (float, optional): Spatial lag decay factor [0,1]. Higher values
@@ -71,13 +69,13 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
     Example:
         ```python
         # Standard equity objective
-        equity_obj = HexagonalCoverageObjective(
+        equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=3.0
         )
 
         # With spatial lag and boundary filtering
-        spatial_equity_obj = HexagonalCoverageObjective(
+        spatial_equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0,
             boundary=study_boundary,
@@ -85,7 +83,7 @@ class HexagonalCoverageObjective(BaseSpatialObjective):
             alpha=0.15  # 15% neighbor influence
         )
         # With population weighting 
-        pop_equity_obj = HexagonalCoverageObjective(
+        pop_equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0,
             boundary=study_boundary,

@@ -1,8 +1,8 @@
 from .base import BaseObjective, BaseSpatialObjective
-from .service_coverage import HexagonalCoverageObjective
+from .service_coverage import StopCoverageObjective
 from .waiting_time import WaitingTimeObjective
 
 __all__ = ["BaseObjective",
            "BaseSpatialObjective",
-           "HexagonalCoverageObjective",
+           "StopCoverageObjective",
            "WaitingTimeObjective"]

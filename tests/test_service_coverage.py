@@ -1,8 +1,8 @@
 """
-Comprehensive tests for HexagonalCoverageObjective functionality.
+Comprehensive tests for StopCoverageObjective functionality.
 
 This test suite validates the spatial equity objective function used in transit
-network optimization. The HexagonalCoverageObjective evaluates how evenly
+network optimization. The StopCoverageObjective evaluates how evenly
 transit service (measured in vehicles) is distributed across spatial zones.
 
 Test Coverage:
@@ -17,10 +17,10 @@ Test Coverage:
 import numpy as np
 import pytest
 
-from transit_opt.optimisation.objectives import HexagonalCoverageObjective
+from transit_opt.optimisation.objectives import StopCoverageObjective
 
 
-class TestHexagonalCoverageObjective:
+class TestStopCoverageObjective:
     """Test the service coverage objective."""
 
     def test_basic_objective_creation(self, sample_optimization_data):
@@ -28,7 +28,7 @@ class TestHexagonalCoverageObjective:
         Test that objective can be created and has expected properties.
 
         This test validates:
-        - Successful instantiation of HexagonalCoverageObjective
+        - Successful instantiation of StopCoverageObjective
         - Correct storage of configuration parameters
         - Creation of underlying spatial system components
 
@@ -37,7 +37,7 @@ class TestHexagonalCoverageObjective:
         - Transit stops mapped to zones
         - Stop-to-zone mapping for vehicle calculations
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,  # 3km hexagonal zones
             crs="EPSG:3857",  # Web Mercator projection
@@ -65,7 +65,7 @@ class TestHexagonalCoverageObjective:
 
         This test ensures the core optimization objective functions properly.
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -92,7 +92,7 @@ class TestHexagonalCoverageObjective:
         - Correct variance calculation when all values are identical (zero)
         - Robustness of the objective function in extreme scenarios
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -126,7 +126,7 @@ class TestHexagonalCoverageObjective:
         Where W[i,j] are spatial weights between zones i and j.
         """
         # Standard objective: Direct vehicle counts only
-        standard_obj = HexagonalCoverageObjective(
+        standard_obj = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -134,7 +134,7 @@ class TestHexagonalCoverageObjective:
         )
 
         # Spatial lag objective: Include neighbor accessibility
-        spatial_obj = HexagonalCoverageObjective(
+        spatial_obj = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -179,7 +179,7 @@ class TestHexagonalCoverageObjective:
         This data is essential for understanding optimization results and
         validating that the objective function is working correctly.
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -217,15 +217,10 @@ class TestHexagonalCoverageObjective:
 
         Transit systems vary by time of day (rush hour vs off-peak), so the
         analysis must provide interval-specific data:
-        - vehicles_per_zone_intervals: (n_zones × n_intervals) matrix
+        - vehicles_per_zone_intervals: (n_intervals × n_zones) matrix
         - interval_labels: Human-readable time period names
-
-        This granular data enables:
-        - Time-of-day specific analysis
-        - Validation of aggregation methods
-        - Detailed visualization of service patterns
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -247,11 +242,14 @@ class TestHexagonalCoverageObjective:
         interval_data = analysis["vehicles_per_zone_intervals"]
         interval_labels = analysis["interval_labels"]
 
-        # Validate matrix dimensions: each zone × each time interval
+        # print interval data for debugging
+        print("Interval Data (vehicles_per_zone_intervals):")
+        print(interval_data)
+        # Validate matrix dimensions: each interval × each zone
         assert interval_data.shape == (
-            n_zones,
             n_intervals,
-        ), f"Expected shape ({n_zones}, {n_intervals}), got {interval_data.shape}"
+            n_zones,
+        ), f"Expected shape ({n_intervals}, {n_zones}), got {interval_data.shape}"
 
         # Validate label count matches interval count
         assert (
@@ -275,7 +273,7 @@ class TestHexagonalCoverageObjective:
         print(f"✅ Interval data shape: {interval_data.shape}")
         print(f"✅ Number of intervals: {n_intervals}")
         print(f"✅ Interval labels: {interval_labels}")
-        print(f"✅ Sample interval data (first zone): {interval_data[0, :]}")
+        print(f"✅ Sample interval data (second interval): {interval_data[1, :]}")
 
     def test_intervals_consistency_with_aggregated_data(self, sample_optimization_data):
         """
@@ -288,7 +286,7 @@ class TestHexagonalCoverageObjective:
         This validates that the aggregation methods are implemented correctly
         and that there are no bugs in the temporal aggregation logic.
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -301,12 +299,15 @@ class TestHexagonalCoverageObjective:
         # Extract data for consistency checking
         intervals_data = analysis[
             "vehicles_per_zone_intervals"
-        ]  # (n_zones, n_intervals)
+        ]  # (n_intervals, n_zones)
+        print("Intervals Data:", intervals_data)
         average_data = analysis["vehicles_per_zone_average"]  # (n_zones,)
+        print("vehicles_per_zone_average:", average_data)
         peak_data = analysis["vehicles_per_zone_peak"]  # (n_zones,)
+        print("vehicles_per_zone_peak:", peak_data)
 
         # Test average aggregation: should be mean across time intervals
-        calculated_average = np.mean(intervals_data, axis=1)
+        calculated_average = np.mean(intervals_data, axis=0)
         np.testing.assert_array_almost_equal(
             average_data,
             calculated_average,
@@ -315,7 +316,11 @@ class TestHexagonalCoverageObjective:
         )
 
         # Test peak aggregation: should be max across time intervals
-        calculated_peak = np.max(intervals_data, axis=1)
+        total_vehicles_by_interval = np.sum(intervals_data, axis=1)  # Sum across zones
+        # Find interval with most total vehicles
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        calculated_peak = intervals_data[peak_interval_idx, :]
+
         np.testing.assert_array_equal(
             peak_data,
             calculated_peak,
@@ -337,7 +342,7 @@ class TestHexagonalCoverageObjective:
         - Consistent interpretation across analysis components
         - Proper alignment between GTFS data and spatial analysis
         """
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             crs="EPSG:3857",
@@ -379,14 +384,14 @@ class TestHexagonalCoverageObjective:
         This test validates both methods work and have correct configuration.
         """
         # Test average aggregation (promotes all-day equity)
-        obj_avg = HexagonalCoverageObjective(
+        obj_avg = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             time_aggregation="average",  # Focus on average service levels
         )
 
         # Test peak aggregation (ensures peak-hour capacity)
-        obj_peak = HexagonalCoverageObjective(
+        obj_peak = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             time_aggregation="peak",  # Focus on peak service levels
@@ -415,7 +420,7 @@ class TestPopulationWeighting:
 
     def test_population_interpolation_real_data(self, sample_optimization_data, usa_population_path):
         """Test population interpolation with real WorldPop data."""
-        objective = HexagonalCoverageObjective(
+        objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=1.5,
             population_weighted=True,
@@ -434,7 +439,7 @@ class TestPopulationWeighting:
         variances = []
 
         for power in power_values:
-            objective = HexagonalCoverageObjective(
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=2.0,
                 population_weighted=True,
@@ -460,7 +465,7 @@ class TestTimeAggregation:
 
     def test_time_aggregation_options_coverage(self, sample_optimization_data):
         """
-        Test all valid time_aggregation options for HexagonalCoverageObjective.
+        Test all valid time_aggregation options for StopCoverageObjective.
         
         Valid options: 'average', 'peak', 'sum'
         All should return valid variance values.
@@ -473,7 +478,7 @@ class TestTimeAggregation:
         for aggregation in valid_options:
             print(f"\n   Testing time_aggregation='{aggregation}'...")
 
-            objective = HexagonalCoverageObjective(
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
                 time_aggregation=aggregation
@@ -501,8 +506,8 @@ class TestTimeAggregation:
         """Test that invalid time_aggregation options are rejected."""
         print("\n❌ TESTING INVALID TIME AGGREGATION:")
 
-        with pytest.raises(ValueError, match="time_aggregation must be"):
-            objective = HexagonalCoverageObjective(
+        with pytest.raises(ValueError, match="Unknown time_aggregation"):
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
                 time_aggregation="intervals"  # NOT valid for coverage objective
@@ -524,7 +529,7 @@ class TestTimeAggregation:
         print("\n🔢 TESTING TIME AGGREGATION MATHEMATICS:")
 
         # Create objectives with different aggregations
-        obj_avg = HexagonalCoverageObjective(
+        obj_avg = StopCoverageObjective(
             optimization_data=sample_optimization_data,
             spatial_resolution_km=3.0,
             time_aggregation='average'
@@ -577,7 +582,7 @@ class TestTimeAggregation:
         for aggregation in ['average', 'peak', 'sum']:
             print(f"\n   Testing {aggregation} with spatial lag...")
 
-            objective = HexagonalCoverageObjective(
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
                 time_aggregation=aggregation,
@@ -604,7 +609,7 @@ class TestTimeAggregation:
         for aggregation in ['average', 'peak', 'sum']:
             print(f"\n   Testing {aggregation} with population weighting...")
 
-            objective = HexagonalCoverageObjective(
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
                 time_aggregation=aggregation,
@@ -625,7 +630,7 @@ class TestTimeAggregation:
         print("\n⚙️ TESTING CONFIGURATION STORAGE:")
 
         for aggregation in ['average', 'peak', 'sum']:
-            objective = HexagonalCoverageObjective(
+            objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
                 time_aggregation=aggregation

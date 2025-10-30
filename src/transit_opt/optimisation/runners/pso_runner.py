@@ -45,7 +45,7 @@ print(f"Optimization time: {result.optimization_time}s")
 Integration with Existing System:
 The runner integrates seamlessly with:
 - Your existing constraint system (FleetTotalConstraintHandler, etc.)
-- Your existing objective system (HexagonalCoverageObjective)
+- Your existing objective system (StopCoverageObjective)
 - Your existing TransitOptimizationProblem class
 - Your existing optimization data preparation workflow
 
@@ -245,9 +245,9 @@ class OptimizationResult:
         violations = constraint.evaluate(result.best_solution)
         
         # Use with existing objective functions for detailed analysis
-        from transit_opt.optimisation.objectives.service_coverage import HexagonalCoverageObjective
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
         
-        objective = HexagonalCoverageObjective(optimization_data)
+        objective = StopCoverageObjective(optimization_data)
         detailed_analysis = objective.get_detailed_analysis(result.best_solution)
         
         # Use with existing visualization tools
@@ -267,7 +267,7 @@ class OptimizationResult:
     See Also:
         - MultiRunResult: For statistical analysis across multiple runs
         - TransitOptimizationProblem: For solution encoding/decoding
-        - HexagonalCoverageObjective: For objective function details
+        - StopCoverageObjective: For objective function details
         - Constraint handlers: For constraint violation interpretation
     """
 
@@ -1417,7 +1417,7 @@ class PSORunner:
         4. **Validation**: Verify problem is properly constructed
         
         OBJECTIVE FUNCTION HANDLING:
-        - Currently supports HexagonalCoverageObjective
+        - Currently supports StopCoverageObjective
         - Dynamically imports objective class based on configuration
         - Passes only explicitly configured parameters to constructor
         - Extensible to additional objective types
@@ -1446,7 +1446,7 @@ class PSORunner:
             ```yaml
             problem:
               objective:
-                type: HexagonalCoverageObjective
+                type: StopCoverageObjective
                 spatial_resolution_km: 3.0
                 crs: "EPSG:3857"
               constraints:
@@ -1467,9 +1467,8 @@ class PSORunner:
             objective_config = problem_config.get('objective', {})
             objective_type = objective_config.get('type')
 
-            if objective_type == 'HexagonalCoverageObjective':
-                from ..objectives.service_coverage import \
-                    HexagonalCoverageObjective
+            if objective_type == 'StopCoverageObjective':
+                from ..objectives.service_coverage import StopCoverageObjective
 
                 # Build kwargs with only explicitly configured values
                 objective_kwargs = {'optimization_data': self.optimization_data}
@@ -1495,7 +1494,7 @@ class PSORunner:
                 if 'population_power' in objective_config:
                     objective_kwargs['population_power'] = objective_config['population_power']
 
-                objective = HexagonalCoverageObjective(**objective_kwargs)
+                objective = StopCoverageObjective(**objective_kwargs)
 
             elif objective_type == 'WaitingTimeObjective':
                 from ..objectives.waiting_time import WaitingTimeObjective
@@ -1546,8 +1545,7 @@ class PSORunner:
                     print(f"         ✓ FleetTotal: {constraint.n_constraints} constraint(s)")
 
                 elif constraint_type == 'FleetPerIntervalConstraintHandler':
-                    from ..problems.base import \
-                        FleetPerIntervalConstraintHandler
+                    from ..problems.base import FleetPerIntervalConstraintHandler
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     print(f"         ✓ FleetPerInterval: {constraint.n_constraints} constraint(s)")
