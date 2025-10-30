@@ -525,11 +525,15 @@ class HexagonalZoneSystem:
 
             vehicles_by_intervals[interval_idx, :] = list(zone_counts.values())
 
+        # identify time interval with peak total vehicles
+        total_vehicles_by_interval = np.sum(vehicles_by_intervals, axis=1)
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+
         # Return all aggregation types
         return {
             "intervals": vehicles_by_intervals,  # [n_intervals, n_zones]
             "average": np.mean(vehicles_by_intervals, axis=0),  # [n_zones]
-            "peak": np.max(vehicles_by_intervals, axis=0),      # [n_zones]
+            "peak": vehicles_by_intervals[peak_interval_idx, :],  # [n_zones]
             "sum": np.sum(vehicles_by_intervals, axis=0),       # [n_zones]
             "interval_labels": interval_labels,
         }
@@ -629,11 +633,18 @@ class HexagonalZoneSystem:
                 for hex_zone_idx in affected_hex_zones:
                     drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
 
+
+        # identify time interval with peak total vehicles
+        total_vehicles_by_interval = np.sum(drt_vehicles_by_interval, axis=1)
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+
         # CONSISTENT: Apply same aggregations as PT
         return {
             'intervals': drt_vehicles_by_interval,
             'average': np.mean(drt_vehicles_by_interval, axis=0),
-            'peak': np.max(drt_vehicles_by_interval, axis=0),
+            #TODO: consider fixing peak so that it is the same interval with PT peak, not a different one.
+            # Not important as drt peak not used directly on its own
+            'peak': drt_vehicles_by_interval[peak_interval_idx, :],
             'sum': np.sum(drt_vehicles_by_interval, axis=0),
             'interval_labels': optimization_data['intervals']['labels']
         }

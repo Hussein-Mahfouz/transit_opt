@@ -219,11 +219,6 @@ class TestStopCoverageObjective:
         analysis must provide interval-specific data:
         - vehicles_per_zone_intervals: (n_zones × n_intervals) matrix
         - interval_labels: Human-readable time period names
-
-        This granular data enables:
-        - Time-of-day specific analysis
-        - Validation of aggregation methods
-        - Detailed visualization of service patterns
         """
         objective = StopCoverageObjective(
             optimization_data=sample_optimization_data,
@@ -247,11 +242,14 @@ class TestStopCoverageObjective:
         interval_data = analysis["vehicles_per_zone_intervals"]
         interval_labels = analysis["interval_labels"]
 
-        # Validate matrix dimensions: each zone × each time interval
+        # print interval data for debugging
+        print("Interval Data (vehicles_per_zone_intervals):")
+        print(interval_data)
+        # Validate matrix dimensions: each interval × each zone
         assert interval_data.shape == (
-            n_zones,
             n_intervals,
-        ), f"Expected shape ({n_zones}, {n_intervals}), got {interval_data.shape}"
+            n_zones,
+        ), f"Expected shape ({n_intervals}, {n_zones}), got {interval_data.shape}"
 
         # Validate label count matches interval count
         assert (
@@ -275,7 +273,7 @@ class TestStopCoverageObjective:
         print(f"✅ Interval data shape: {interval_data.shape}")
         print(f"✅ Number of intervals: {n_intervals}")
         print(f"✅ Interval labels: {interval_labels}")
-        print(f"✅ Sample interval data (first zone): {interval_data[0, :]}")
+        print(f"✅ Sample interval data (second interval): {interval_data[1, :]}")
 
     def test_intervals_consistency_with_aggregated_data(self, sample_optimization_data):
         """
@@ -302,11 +300,14 @@ class TestStopCoverageObjective:
         intervals_data = analysis[
             "vehicles_per_zone_intervals"
         ]  # (n_zones, n_intervals)
+        print("Intervals Data:", intervals_data)
         average_data = analysis["vehicles_per_zone_average"]  # (n_zones,)
+        print("vehicles_per_zone_average:", average_data)
         peak_data = analysis["vehicles_per_zone_peak"]  # (n_zones,)
+        print("vehicles_per_zone_peak:", peak_data)
 
         # Test average aggregation: should be mean across time intervals
-        calculated_average = np.mean(intervals_data, axis=1)
+        calculated_average = np.mean(intervals_data, axis=0)
         np.testing.assert_array_almost_equal(
             average_data,
             calculated_average,
@@ -315,7 +316,11 @@ class TestStopCoverageObjective:
         )
 
         # Test peak aggregation: should be max across time intervals
-        calculated_peak = np.max(intervals_data, axis=1)
+        total_vehicles_by_interval = np.sum(intervals_data, axis=1)  # Sum across zones
+        # Find interval with most total vehicles
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        calculated_peak = intervals_data[peak_interval_idx, :]
+
         np.testing.assert_array_equal(
             peak_data,
             calculated_peak,
@@ -501,7 +506,7 @@ class TestTimeAggregation:
         """Test that invalid time_aggregation options are rejected."""
         print("\n❌ TESTING INVALID TIME AGGREGATION:")
 
-        with pytest.raises(ValueError, match="time_aggregation must be"):
+        with pytest.raises(ValueError, match="Unknown time_aggregation"):
             objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,

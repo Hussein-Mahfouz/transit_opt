@@ -4,11 +4,9 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-    validate_population_config,
-)
+from ..utils.population import (calculate_population_weighted_variance,
+                                interpolate_population_to_zones,
+                                validate_population_config)
 from .base import BaseSpatialObjective
 
 
@@ -46,7 +44,7 @@ class StopCoverageObjective(BaseSpatialObjective):
         boundary (Optional[StudyAreaBoundary], optional): Geographic boundary filter.
                                                         Defaults to None.
         time_aggregation (str, optional): Time aggregation method. Options:
-                                        'average', 'peak'. Defaults to 'average'.
+                                        'average', 'peak', 'sum'. Defaults to 'average'.
         spatial_lag (bool, optional): Enable spatial lag accessibility.
                                     Defaults to False.
         alpha (float, optional): Spatial lag decay factor [0,1]. Higher values
