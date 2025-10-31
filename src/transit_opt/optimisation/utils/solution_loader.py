@@ -8,6 +8,7 @@ solutions, and multiple GTFS feeds.
 The idea is to pass a list of soltions to the sampling argument in pymoo: https://pymoo.org/algorithms/soo/pso.html
 """
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -235,5 +236,214 @@ class SolutionLoader:
         # Check for integer values
         if not np.allclose(drt_solution, np.round(drt_solution)):
             raise ValueError("DRT solution must contain integer indices")
+
+
+    def _resolve_base_solutions_descriptor(self, base_spec: Any, optimization_data: dict[str, Any]) -> list:
+        """
+        Resolve a YAML-friendly 'base_solutions' descriptor into a list of flat numpy arrays
+        suitable for PSO seeding.
+
+        In the seeding config, we need to specify base_solutions. We cannot add a list object
+        to a static config. This function allows to resolve a YAML-friendly 'base_solutions'
+        descriptor into a list of flResolve a YAML-friendly 'base_solutions' descriptor into a list of flat numpy arrays
+        suitable for PSO seeding.at numpy arrays suitable for PSO seeding.
+
+        Supported base_spec forms:
+          - 'from_data' -> returns [optimization_data['initial_solution']]
+          - list -> returned as-is (assumed to be flat arrays or domain solutions)
+          - dict:
+              - gtfs_paths + optional drt_solution_paths -> uses GTFSDataPreparator.extract_multiple_gtfs_solutions
+              - solutions_dir + gtfs_glob/drt_glob -> directory scan
+
+        Args:
+            base_spec: Base solutions descriptor (str, list, or dict)
+            optimization_data: Complete optimization data structure
+        Returns:
+            List of flat numpy arrays suitable for PSO seeding
+        Raises:
+            ValueError: If base_spec is invalid or unsupported
+        """
+        if base_spec is None:
+            return []
+
+        # If already a concrete list, return copy
+        if isinstance(base_spec, list):
+            return list(base_spec)
+
+        # String 'from_data'
+        if isinstance(base_spec, str):
+            if base_spec == "from_data":
+                if "initial_solution" not in optimization_data:
+                    raise ValueError("optimization_data missing 'initial_solution' for 'from_data'")
+                return [optimization_data["initial_solution"]]
+            raise ValueError("Unsupported base_solutions string. Use 'from_data' or provide list/dict descriptor.")
+
+        # Dict descriptor
+        if isinstance(base_spec, dict):
+
+            gtfs_paths = base_spec.get("gtfs_paths")
+            drt_paths = base_spec.get("drt_solution_paths")
+
+            # directory scan
+            if not gtfs_paths and "solutions_dir" in base_spec:
+                sol_dir = Path(base_spec["solutions_dir"])
+                if not sol_dir.exists():
+                    raise FileNotFoundError(f"solutions_dir not found: {sol_dir}")
+                gtfs_glob = base_spec.get("gtfs_glob", "*_gtfs.zip")
+                drt_glob = base_spec.get("drt_glob", "*_drt.json")
+                gtfs_paths = [str(p) for p in sorted(sol_dir.glob(gtfs_glob))]
+                drt_paths = [str(p) for p in sorted(sol_dir.glob(drt_glob))]
+
+            if gtfs_paths:
+                # Lazy import to avoid heavy deps at module import time
+                try:
+                    from transit_opt.preprocessing.prepare_gtfs import \
+                        GTFSDataPreparator
+                except Exception as e:
+                    raise RuntimeError(f"Cannot import GTFSDataPreparator: {e}")
+
+                # try to infer interval_hours from optimization_data, fallback to 6
+                interval_hours = optimization_data.get("interval_hours")
+
+                preparator = GTFSDataPreparator(
+                    gtfs_path=gtfs_paths[0],
+                    interval_hours=interval_hours,
+                    log_level="WARNING"
+                )
+
+                opt_data_list = preparator.extract_multiple_gtfs_solutions(
+                    gtfs_paths=gtfs_paths,
+                    allowed_headways=optimization_data.get("allowed_headways"),
+                    drt_config=optimization_data.get("drt_config"),
+                    drt_solution_paths=drt_paths,
+                )
+
+                return [d["initial_solution"] for d in opt_data_list]
+
+        raise ValueError(
+            "Unsupported base_solutions descriptor. Use 'from_data', a list, or dict with keys: npy_paths | gtfs_paths (+drt_solution_paths) | solutions_dir."
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

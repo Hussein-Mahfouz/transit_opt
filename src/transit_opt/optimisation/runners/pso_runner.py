@@ -979,6 +979,13 @@ class PSORunner:
 
         # Setup optimization problem
         self.optimization_data = optimization_data
+
+        # Resolve sampling descriptors (if any) into concrete seed arrays
+        try:
+            self.config_manager.resolve_sampling_base_solutions(optimization_data)
+        except Exception as e:
+            print(f"   ⚠️ Failed to resolve sampling.base_solutions: {e}")
+            raise
         self._create_problem()
 
         start_time = time.time()
@@ -1545,7 +1552,8 @@ class PSORunner:
                     print(f"         ✓ FleetTotal: {constraint.n_constraints} constraint(s)")
 
                 elif constraint_type == 'FleetPerIntervalConstraintHandler':
-                    from ..problems.base import FleetPerIntervalConstraintHandler
+                    from ..problems.base import \
+                        FleetPerIntervalConstraintHandler
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     print(f"         ✓ FleetPerInterval: {constraint.n_constraints} constraint(s)")
@@ -2063,3 +2071,25 @@ class PSORunner:
             'success_rate': 1.0,
             'feasibility_rate': feasible_count / len(run_summaries)
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
