@@ -5,6 +5,7 @@ This module coordinates the export of optimization solutions to various formats,
 handling both PT-only and combined PT+DRT solutions with minimal metadata embedding.
 """
 
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -125,7 +126,8 @@ class SolutionExportManager:
         if not solutions:
             return []
 
-        results = []
+        results = [] # results to convert to gtfs / json
+        summary_rows = [] # csv with objective value of each run
 
         for i, solution_data in enumerate(solutions, 1):
             # Generate consistent solution ID
@@ -150,6 +152,18 @@ class SolutionExportManager:
             )
 
             results.append(result)
+
+            # Prepare row for CSV summary
+            summary_rows.append({
+                "solution_id": solution_id,
+                "swarm_id": solution_data.get("run_id", ""),
+                "rank": i,
+                "objective": solution_data.get("objective", ""),
+                "generation_found": solution_data.get("generation_found", ""),
+                "violations": solution_data.get("violations", ""),
+            })
+        # write csv summary of results
+        self._export_solution_summary_csv(summary_rows, base_output_dir, solution_prefix)
 
         return results
 
@@ -213,3 +227,61 @@ class SolutionExportManager:
             'format': 'json',
             'pt_reference': metadata.get('pt_gtfs_reference')
         }
+
+
+    def extract_solutions_for_export(self, result, output_cfg: dict) -> list[dict]:
+        """
+        Extract solutions for export based on result type and output config.
+        The results of optimize() or optimize_multi_run() can vary in structure.
+        this method standardizes the extraction of solutions to be exported.
+        It also gives more control over which solutions to export in multi-run scenarios.
+        Options:
+            - best_run: Whether to export the best run's solutions only (default: True). If
+                False, exports solutions from all runs ranked by objective.
+            - max_to_save: Maximum number of solutions to export (default: None, meaning all).
+
+        Args:
+            result: OptimizationResult or MultiRunResult
+            output_cfg: Output config dict (should contain 'best_run', 'max_to_save')
+
+        Returns:
+            List of solution dicts with 'solution' and 'objective'
+        """
+        best_run = output_cfg.get("best_run", True)
+        max_to_save = output_cfg.get("max_to_save", None)
+
+        # MultiRunResult
+        if hasattr(result, "num_runs_completed"):  # Only exists in MultiRunResult
+            if best_run:
+                # Export best run's solutions
+                sols = getattr(result.best_result, "best_feasible_solutions", [])
+                # Sort by objective (lower is better)
+                sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
+                if max_to_save is not None:
+                    sols = sols[:max_to_save]
+            else:
+                # Export best_feasible_solutions_all_runs (ranked)
+                sols = getattr(result, "best_feasible_solutions_all_runs", [])
+                # Sort by objective (lower is better)
+                sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
+                if max_to_save is not None:
+                    sols = sols[:max_to_save]
+        else:
+            # Single run: OptimizationResult
+            sols = getattr(result, "best_feasible_solutions", [])
+            # Sort by objective (lower is better)
+            sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
+            if max_to_save is not None:
+                sols = sols[:max_to_save]
+
+        return sols
+
+    def _export_solution_summary_csv(self, rows, output_dir, solution_prefix):
+        """Export a CSV summary of solutions with their objectives and ranks."""
+        csv_path = Path(output_dir) / f"{solution_prefix}_summary.csv"
+        fieldnames = ["solution_id", "rank", "swarm_id", "objective", "generation_found", "violations"]
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"✅ Solution summary CSV written: {csv_path}")
