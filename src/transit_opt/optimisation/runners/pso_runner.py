@@ -349,7 +349,11 @@ class MultiRunResult:
                                                            = solution_dict. Each solution
                                                            contains full solution matrix,
                                                            objective, generation_found, etc.
-                                                           
+
+        best_feasible_solutions_all_runs (list[dict]): Combined list of best feasible
+                                                     solutions from all runs. Each entry
+                                                     contains full solution data. 
+
         statistical_summary (dict[str, Any]): Comprehensive statistical analysis
                                              computed from run summaries. Includes
                                              objective statistics, timing analysis,
@@ -406,8 +410,8 @@ class MultiRunResult:
     num_runs_completed: int                            # Number of successful runs
 
     best_feasible_solutions_per_run: list[list[dict]] = field(default_factory=list)  # [run_idx][solution_idx] = solution_dict
-
-
+    # Top n best feasible solutions from all runs, combined and ranked
+    best_feasible_solutions_all_runs: list[dict] = field(default_factory=list)
 
 
 class PSORuntimeCallback(Callback):
@@ -932,7 +936,6 @@ class PSORunner:
                             - Constraint violation analysis
                             - Generation-by-generation history
                             - Performance and convergence statistics
-                            - **NEW**: best_feasible_solutions list with top N feasible solutions
                             
         Raises:
             ValueError: If optimization_data is invalid or incomplete
@@ -979,6 +982,13 @@ class PSORunner:
 
         # Setup optimization problem
         self.optimization_data = optimization_data
+
+        # Resolve sampling descriptors (if any) into concrete seed arrays
+        try:
+            self.config_manager.resolve_sampling_base_solutions(optimization_data)
+        except Exception as e:
+            print(f"   ⚠️ Failed to resolve sampling.base_solutions: {e}")
+            raise
         self._create_problem()
 
         start_time = time.time()
@@ -1087,6 +1097,8 @@ class PSORunner:
                         - best_result: Complete OptimizationResult for best solution
                         - run_summaries: Lightweight per-run statistics (replaces all_results)
                         - best_feasible_solutions_per_run: Top N feasible solutions per run
+                        - best_feasible_solutions_all_runs: Top N feasible solutions of all runs 
+                                                            combined and ranked
                         - statistical_summary: Comprehensive statistical analysis
                         - total_time: Combined time for all runs
                         - num_runs_completed: Number of successful runs
@@ -1291,7 +1303,6 @@ class PSORunner:
         total_time = time.time() - start_time
 
         # Check if any runs succeeded
-        # Check if any runs succeeded
         if not run_summaries:
             raise RuntimeError("All optimization runs failed")
 
@@ -1301,6 +1312,19 @@ class PSORunner:
         # Find best result
         best_result = overall_best_result
 
+        # Combine top N solutions from all runs and rank them = [ ]
+        best_feasible_solutions_all_runs = []
+        for run_idx, run_sols in enumerate(best_feasible_solutions_per_run):
+            for sol in run_sols:
+                best_feasible_solutions_all_runs.append({
+                    "solution": sol["solution"],
+                    "objective": sol["objective"],
+                    "generation_found": sol["generation_found"],
+                    "violations": sol["violations"],
+                    "run_id": run_idx + 1
+                })
+        # Sort
+        best_feasible_solutions_all_runs.sort(key=lambda s: s["objective"])
 
         # Print summary statistics
         print("\n🎯 MULTI-RUN OPTIMIZATION COMPLETED")
@@ -1318,6 +1342,7 @@ class PSORunner:
             best_result=best_result,
             run_summaries=run_summaries,
             best_feasible_solutions_per_run=best_feasible_solutions_per_run,
+            best_feasible_solutions_all_runs=best_feasible_solutions_all_runs,
             statistical_summary=statistical_summary,
             total_time=total_time,
             num_runs_completed=len(run_summaries)
