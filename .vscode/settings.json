@@ -1,19 +1,20 @@
 {
   "[python]": {
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "ms-python.python"   // Black is called via Python extension
+    "editor.defaultFormatter": "ms-python.black-formatter"  // Use Black formatter extension directly
   },
-
-  "python.formatting.provider": "black",           // tells Python extension to use Black
   "editor.codeActionsOnSave": {
-
-    "source.fixAll": "explicit",
+    "source.fixAll": "never",
     "source.organizeImports": "explicit"
   },
 
   "notebook.formatOnSave.enabled": true,
 
-  "files.insertFinalNewline": false,
+  "files.insertFinalNewline": true,
   "files.trimFinalNewlines": true,
-  "files.trimTrailingWhitespace": false
+  "files.trimTrailingWhitespace": true,
+
+  // prevent race conditions
+  "editor.formatOnSaveMode": "file",
+  "files.autoSave": "off" // or afterDelay with longer delay
 }
