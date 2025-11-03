@@ -1,8 +1,8 @@
 """
 PSO Runner for Transit Optimization.
 
-This module provides a complete, production-ready PSO optimization runner
-that integrates with the existing transit optimization system. It handles:
+This module provides a PSO optimization runner that integrates with the existing 
+transit optimization system. It handles:
 
 - Configuration management and validation
 - Problem creation from optimization data
@@ -12,12 +12,11 @@ that integrates with the existing transit optimization system. It handles:
 - Integration with existing constraint and objective systems
 
 The runner is designed to be the main entry point for PSO-based transit
-optimization, providing a clean interface while leveraging pymoo's robust
+optimization, providing a clean interface while leveraging pymoo's
 optimization framework and the existing transit optimization components.
 
 Key Features:
 - Uses configuration system for all parameters
-- Supports adaptive inertia weight PSO
 - Integrates with existing TransitOptimizationProblem
 - Supports both single and multi-run optimization  
 - Uses pymoo's built-in progress reporting and history tracking
@@ -53,6 +52,7 @@ This provides a complete optimization solution without duplicating existing
 functionality or requiring changes to your current constraint/objective code.
 """
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,8 +67,8 @@ from pymoo.termination.max_time import TimeBasedTermination
 from ..config.config_manager import OptimizationConfigManager
 from ..problems.transit_problem import TransitOptimizationProblem
 
+logger = logging.getLogger(__name__)
 
-@dataclass
 @dataclass
 class OptimizationResult:
     """
@@ -585,7 +585,7 @@ class PenaltySchedulingCallback(Callback):
         if gen % 25 == 0 and hasattr(algorithm, 'pop'):
             if hasattr(algorithm.problem, 'use_penalty_method') and algorithm.problem.use_penalty_method:
                 # For penalty method: show both penalty weight AND feasible solutions
-                print(f"   Gen {gen}: Penalty weight = {self.current_penalty:.1f}")
+                logger.debug(f"   Gen {gen}: Penalty weight = {self.current_penalty:.1f}")
 
                 # Calculate feasible solutions for penalty method
                 # Need to check if solutions would satisfy original constraints
@@ -609,13 +609,14 @@ class PenaltySchedulingCallback(Callback):
                             feasible_count += 1
 
                 pop_size = len(algorithm.pop)
-                print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
+                logger.debug(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
 
             else:
                 # For hard constraints: existing logic
                 feasible_count = np.sum(algorithm.pop.get("CV") <= 1e-6)
                 pop_size = len(algorithm.pop)
-                print(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
+                logger.debug(f"   Gen {gen}: Feasible solutions = {feasible_count}/{pop_size}")
+
 
 class CallbackCollection(Callback):
     """
@@ -846,11 +847,16 @@ class PSORunner:
             - Ready to accept optimization_data for problem creation
         """
         self.config_manager = config_manager    # Configuration source for all parameters
+        logger.info("PSORunner initialized with config")
+        logger.debug("Config manager type: %s", type(config_manager).__name__)
         self.optimization_data = None          # Will be set during optimize() calls
         self.problem = None                   # Will be created during problem setup
 
         # Validate configuration early to catch issues before optimization
         self._validate_configuration()
+        logger.info("Configuration validation complete")
+        logger.debug("PSO algorithm config: %s", self.config_manager.get_pso_config())
+        logger.debug("Termination config: %s", self.config_manager.get_termination_config())
 
     def _validate_configuration(self):
         """
@@ -880,10 +886,13 @@ class PSORunner:
 
         # Validate population size (too small causes poor optimization)
         if pso_config.pop_size < 5:
+            logger.error("Invalid PSO population size: %d. Must be >= 5", pso_config.pop_size)
             raise ValueError("PSO requires population size >= 5")
+        logger.debug("PSO configuration validated: pop_size=%d", pso_config.pop_size)
 
         # Validate termination criteria (must allow at least one generation)
         if term_config.max_generations < 1:
+            logger.error("Invalid max_generations: %d. Must be >= 1", term_config.max_generations)
             raise ValueError("PSO requires max_generations >= 1")
 
 
@@ -978,7 +987,7 @@ class PSORunner:
             # etc.
             ```
         """
-        print("🚀 STARTING PSO OPTIMIZATION")
+        logger.info("Starting PSO optimization")
 
         # Setup optimization problem
         self.optimization_data = optimization_data
@@ -987,9 +996,10 @@ class PSORunner:
         try:
             self.config_manager.resolve_sampling_base_solutions(optimization_data)
         except Exception as e:
-            print(f"   ⚠️ Failed to resolve sampling.base_solutions: {e}")
+            logger.error(f"   ⚠️ Failed to resolve sampling.base_solutions: {e}")
             raise
         self._create_problem()
+        logger.debug("Problem created: %d variables, %d constraints", self.problem.n_var, self.problem.n_constr)
 
         start_time = time.time()
 
@@ -1025,7 +1035,7 @@ class PSORunner:
             callback_wrapper = CallbackCollection(callbacks)
 
             # Execute optimization using pymoo
-            print("\n📊 Running optimization (pymoo will show progress)...")
+            logger.info("Running optimization with pymoo")
             result = minimize(
                 self.problem,            # Problem definition
                 algorithm,               # PSO algorithm instance
@@ -1036,6 +1046,7 @@ class PSORunner:
             )
 
             optimization_time = time.time() - start_time
+            logger.info("Optimization completed in %.1f seconds", optimization_time)
 
             # Process pymoo result into domain-specific format
             return self._process_single_result(result, runtime_callback, optimization_time)
@@ -1155,9 +1166,7 @@ class PSORunner:
         if runs_to_perform < 1:
             raise ValueError("Number of runs must be at least 1")
 
-        print(f"🔄 STARTING MULTI-RUN PSO OPTIMIZATION ({runs_to_perform} runs)")
-        if parallel:
-            print("   🚀 Parallel execution enabled")
+        logger.info("Starting multi-run PSO optimization: %d runs, parallel=%s", runs_to_perform, parallel)
 
         start_time = time.time()
 
@@ -1181,10 +1190,9 @@ class PSORunner:
 
             # Determine number of workers (leave some cores free)
             max_workers = min(runs_to_perform, max(1, mp.cpu_count() - 1))
-            print("🚀 PARALLEL EXECUTION:")
-            print(f"   👥 Using {max_workers} parallel workers")
-            print("   🔇 Individual run output suppressed for clarity")
-            print("   📊 Progress will be shown as runs complete\n")
+            logger.info("Using parallel execution with %d workers", max_workers)
+            logger.info("Individual run output suppressed for clarity")
+            logger.info("Progress will be shown as runs complete\n")
 
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all runs with unique seeds
@@ -1238,14 +1246,12 @@ class PSORunner:
                         violations_text = f"Violations={run_summary['violations']}" if not run_summary['feasible'] else f"FeasibleSols={run_summary['best_feasible_solutions_count']}"
                         feasible_status = "✅ Feasible" if run_summary['feasible'] else "❌ Infeasible"
 
-                        print(f"[{completed_runs:2d}/{runs_to_perform}] Run {run_idx:2d}: "
-                            f"Objective={run_summary['objective']:.6f}, "
-                            f"Gens={run_summary['generations']:2d}, "
-                            f"Time={run_summary['time']:5.1f}s, "
-                            f"{violations_text}, {feasible_status}")
+                        logger.info("Run %d/%d completed: objective=%.5f, time=%.1fs, violations=%s, feasible=%s",
+                                    completed_runs, runs_to_perform, run_summary['objective'], run_summary['time'],
+                                    violations_text, feasible_status)
 
                     except Exception as e:
-                        print(f"❌ Run {run_idx:2d}: FAILED - {str(e)}")
+                        logger.error("❌ Run %d: FAILED - %s", run_idx, str(e))
 
                         # Clean up result
                         if result is not None:
@@ -1253,7 +1259,7 @@ class PSORunner:
                         continue
             # Clean up environment variable
             os.environ.pop('PARALLEL_EXECUTION', None)
-            print("\n✅ All parallel runs completed!")
+            logger.info("\n✅ All parallel runs completed!")
 
         else:
             # Ensure environment variable is not set for sequential execution
@@ -1262,9 +1268,7 @@ class PSORunner:
 
             # Execute independent runs
             for run_idx in range(runs_to_perform):
-                print(f"\n{'='*60}")
-                print(f"🏃 RUN {run_idx + 1}/{runs_to_perform}")
-                print(f"{'='*60}")
+                logger.info(f"🏃 RUN {run_idx + 1}/{runs_to_perform}")
 
                 try:
                     # Run single optimization (each run is independent)
@@ -1293,11 +1297,12 @@ class PSORunner:
                     if result is not overall_best_result:
                         del result
 
-                    print(f"✅ Run {run_idx + 1} completed: objective = {result.best_objective:.6f}")
+                    logger.info("Run %d/%d completed: objective=%.5f",
+                                run_idx + 1, runs_to_perform, run_summary['objective'])
 
                 except Exception as e:
                     # Log failure but continue with remaining runs
-                    print(f"❌ Run {run_idx + 1} failed: {str(e)}")
+                    logger.error("❌ Run %d failed: %s", run_idx + 1, str(e))
                     continue
 
         total_time = time.time() - start_time
@@ -1327,16 +1332,13 @@ class PSORunner:
         best_feasible_solutions_all_runs.sort(key=lambda s: s["objective"])
 
         # Print summary statistics
-        print("\n🎯 MULTI-RUN OPTIMIZATION COMPLETED")
-        print(f"   Successful runs: {len(run_summaries)}/{runs_to_perform}")
-        print(f"   Total time: {total_time:.1f}s")
-        print(f"   Best objective: {best_result.best_objective:.6f}")
-        print(f"   Mean objective: {statistical_summary['objective_mean']:.6f}")
-        print(f"   Std objective: {statistical_summary['objective_std']:.6f}")
+        logger.info("Multi-run optimization completed: %d/%d runs successful", len(run_summaries), runs_to_perform)
+        logger.info("Best objective: %.6f, Mean: %.6f, Std: %.6f",
+                    best_result.best_objective, statistical_summary['objective_mean'], statistical_summary['objective_std'])
 
         # Show summary with feasible solutions
         total_feasible_solutions = sum(len(solutions) for solutions in best_feasible_solutions_per_run)
-        print(f"   Total feasible solutions tracked: {total_feasible_solutions}")
+        logger.info("Total feasible solutions tracked: %d", total_feasible_solutions)
 
         return MultiRunResult(
             best_result=best_result,
@@ -1373,15 +1375,36 @@ class PSORunner:
         fresh_runner = PSORunner(fresh_config_manager)
 
         if is_parallel:
-            # Suppress ALL output during parallel execution
+            # Capture output but log at debug level instead of suppressing
+            logger.debug("=" * 60)
+            logger.debug("Starting parallel run %d with seed %d", run_index + 1, unique_seed)
+            logger.debug("=" * 60)
+
+            # Redirect stdout/stderr to capture detailed output
             old_stdout = sys.stdout
             old_stderr = sys.stderr
-            devnull = StringIO()
-            sys.stdout = devnull
-            sys.stderr = devnull
+            stdout_capture = StringIO()
+            stderr_capture = StringIO()
+            sys.stdout = stdout_capture
+            sys.stderr = stderr_capture
 
             try:
                 result = fresh_runner.optimize(optimization_data, track_best_n = track_best_n)
+
+                # Log captured output at debug level
+                captured_stdout = stdout_capture.getvalue()
+                captured_stderr = stderr_capture.getvalue()
+
+                if captured_stdout:
+                    logger.debug("Run %d stdout:\n%s", run_index + 1, captured_stdout)
+                if captured_stderr:
+                    logger.debug("Run %d stderr:\n%s", run_index + 1, captured_stderr)
+
+                logger.debug("Run %d completed: objective=%.6f, time=%.1fs",
+                        run_index + 1, result.best_objective, result.optimization_time)
+                logger.debug("=" * 60)
+
+
 
             finally:
                 # Always restore output
@@ -1393,7 +1416,7 @@ class PSORunner:
                 gc.collect()
         else:
             # Normal execution with output for sequential runs
-            print(f"   🎲 Run {run_index + 1}: Using seed {unique_seed}")
+            logger.info("   🎲 Run %d: Using seed %d", run_index + 1, unique_seed)
             result = fresh_runner.optimize(optimization_data, track_best_n= track_best_n)
 
         return result
@@ -1423,6 +1446,7 @@ class PSORunner:
             # Restore stdout even on error
             if 'old_stdout' in locals():
                 sys.stdout = old_stdout
+            logger.error(f"Run {run_number} failed: {str(e)}")
             raise RuntimeError(f"Run {run_number} failed: {str(e)}") from e
 
 
@@ -1482,6 +1506,7 @@ class PSORunner:
             ```
         """
         if self.optimization_data is None:
+            logger.error("Optimization data must be set before creating problem")
             raise ValueError("Optimization data must be set before creating problem")
 
         try:
@@ -1548,42 +1573,44 @@ class PSORunner:
                 objective = WaitingTimeObjective(**objective_kwargs)
 
             else:
+                logger.error(f"Unknown objective type: {objective_type}")
                 raise ValueError(f"Unknown objective type: {objective_type}")
 
             # === CONSTRAINT HANDLER CREATION ===
             constraints = []
             constraint_configs = problem_config.get('constraints', [])
 
-            print(f"   📋 Creating {len(constraint_configs)} constraint handler(s)...")
+            logger.info("   📋 Creating %d constraint handler(s)...", len(constraint_configs))
 
             for i, constraint_config in enumerate(constraint_configs):
                 constraint_type = constraint_config.get('type')
                 # Extract constraint-specific parameters (exclude 'type' field)
                 constraint_kwargs = {k: v for k, v in constraint_config.items() if k != 'type'}
-                print(f"      Creating constraint {i+1}: {constraint_type}")
+                logger.info("      Creating constraint %d: %s", i + 1, constraint_type)
 
                 # Create appropriate constraint handler based on type
                 if constraint_type == 'FleetTotalConstraintHandler':
                     from ..problems.base import FleetTotalConstraintHandler
                     constraint = FleetTotalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
-                    print(f"         ✓ FleetTotal: {constraint.n_constraints} constraint(s)")
+                    logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == 'FleetPerIntervalConstraintHandler':
-                    from ..problems.base import FleetPerIntervalConstraintHandler
+                    from ..problems.base import \
+                        FleetPerIntervalConstraintHandler
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
-                    print(f"         ✓ FleetPerInterval: {constraint.n_constraints} constraint(s)")
+                    logger.info("         ✓ FleetPerInterval: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == 'MinimumFleetConstraintHandler':
                     from ..problems.base import MinimumFleetConstraintHandler
                     constraint = MinimumFleetConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
-                    print(f"         ✓ MinimumFleet: {constraint.n_constraints} constraint(s)")
+                    logger.info("         ✓ MinimumFleet: %d constraint(s)", constraint.n_constraints)
 
                 else:
                     # Graceful handling of unknown constraint types
-                    print(f"         ⚠️  Warning: Unknown constraint type '{constraint_type}' - skipping")
+                    logger.warning("         ⚠️  Warning: Unknown constraint type '%s' - skipping", constraint_type)
                     continue
 
             # Get penalty configuration from PSO config
@@ -1609,17 +1636,17 @@ class PSORunner:
             )
 
             # Print problem construction summary
-            print("✅ Problem created successfully:")
-            print(f"   📊 Variables: {self.problem.n_var}")
-            print(f"   🚦 Total constraints: {self.problem.n_constr} (from {len(constraints)} handler(s))")
-            print(f"   🎯 Objective: {objective_type}")
-            print(f"   📋 Constraint types: {[c.__class__.__name__ for c in constraints]}")
+            logger.info("Problem created: %d variables, %d constraints, objective=%s",
+            self.problem.n_var, self.problem.n_constr, objective_type)
+            logger.info("Constraints: %s", [c.__class__.__name__ for c in constraints])
+
             if hasattr(self.problem, 'use_penalty_method'):
-                print(f"   🎯 Method: {'Penalty' if self.problem.use_penalty_method else 'Hard constraints'}")
+                logger.info("   🎯 Method: %s", 'Penalty' if self.problem.use_penalty_method else 'Hard constraints')
 
 
         except Exception as e:
             # Provide context for problem creation failures
+            logger.error(f"Failed to create optimization problem: {str(e)}")
             raise ValueError(f"Failed to create optimization problem: {str(e)}") from e
 
     def _get_constraint_penalty_weights(self) -> dict[str, float]:
@@ -1668,7 +1695,9 @@ class PSORunner:
 
         # Add custom sampling if enabled
         if sampling_config.enabled:
-            print("🔧 Creating custom initial population...")
+            logger.info("Creating custom initial population with %d samples", pso_config.pop_size)
+            logger.debug("Gaussian fraction: %.1%%, Sigma: %.2f",
+                        sampling_config.frac_gaussian_pert * 100, sampling_config.gaussian_sigma)
 
             from ..utils.population_builder import PopulationBuilder
             from ..utils.solution_loader import SolutionLoader
@@ -1687,9 +1716,9 @@ class PSORunner:
             )
 
             algorithm.initialization.sampling = initial_population
-            print(f"✅ Custom population set: shape {initial_population.shape}")
-            print(f"   📊 Gaussian fraction: {sampling_config.frac_gaussian_pert:.1%}")
-            print(f"   📊 LHS fraction: {sampling_config.frac_lhs:.1%} (calculated)")
+            logger.info("✅ Custom population set: shape %s", initial_population.shape)
+            logger.info("   📊 Gaussian fraction: %.1%%", sampling_config.frac_gaussian_pert * 100)
+            logger.info("   📊 LHS fraction: %.1%% (calculated)", sampling_config.frac_lhs * 100)
 
         return algorithm
 
@@ -1752,24 +1781,24 @@ class PSORunner:
         pso_config = self.config_manager.get_pso_config()
         term_config = self.config_manager.get_termination_config()
 
-        print("\n📋 OPTIMIZATION CONFIGURATION:")
-        print(f"   Algorithm: PSO ({'adaptive' if pso_config.adaptive else 'canonical'})")
-        print(f"   Population size: {pso_config.pop_size}")
+        logger.info("\n📋 OPTIMIZATION CONFIGURATION:")
+        logger.info("   Algorithm: PSO (%s)", 'adaptive' if pso_config.adaptive else 'canonical')
+        logger.info("   Population size: %d", pso_config.pop_size)
 
         # Display inertia weight information
         if pso_config.adaptive:
-            print(f"   Initial parameters: w={pso_config.inertia_weight:.1f}, c1={pso_config.cognitive_coeff:.1f}, c2={pso_config.social_coeff:.1f}")
-            print("   Adaptation: PyMOO adjusts parameters based on swarm diversity")
+            logger.info("   Initial parameters: w=%.1f, c1=%.1f, c2=%.1f", pso_config.inertia_weight, pso_config.cognitive_coeff, pso_config.social_coeff)
+            logger.info("   Adaptation: PyMOO adjusts parameters based on swarm diversity")
         else:
-            print(f"   Fixed parameters: w={pso_config.inertia_weight:.1f}, c1={pso_config.cognitive_coeff:.1f}, c2={pso_config.social_coeff:.1f}")
+            logger.info("   Fixed parameters: w=%.1f, c1=%.1f, c2=%.1f", pso_config.inertia_weight, pso_config.cognitive_coeff, pso_config.social_coeff)
 
-        print(f"   Max generations: {term_config.max_generations}")
+        logger.info("   Max generations: %d", term_config.max_generations)
 
         # Display time limit if configured
         if term_config.max_time_minutes:
-            print(f"   Max time: {term_config.max_time_minutes} minutes")
+            logger.info("   Max time: %d minutes", term_config.max_time_minutes)
 
-        print(f"   Problem size: {self.problem.n_var} variables, {self.problem.n_constr} constraints")
+        logger.info("   Problem size: %d variables, %d constraints", self.problem.n_var, self.problem.n_constr)
 
     def _process_single_result(self, pymoo_result, callback: PSORuntimeCallback,
                             optimization_time: float) -> OptimizationResult:
@@ -1843,23 +1872,23 @@ class PSORunner:
         best_feasible_solutions = callback.feasible_tracker.get_best_solutions()
 
         # === COMPLETION SUMMARY ===
-        print("\n✅ OPTIMIZATION COMPLETED")
-        print(f"   Best objective: {best_objective:.6f}")
-        print(f"   Generations: {len(optimization_history)}")
-        print(f"   Time: {optimization_time:.1f}s")
-        # print(f"   Avg time/gen: {optimization_time/len(optimization_history):.3f}s")
+        logger.info("\n✅ OPTIMIZATION COMPLETED")
+        logger.info("   Best objective: %.6f", best_objective)
+        logger.info("   Generations: %d", len(optimization_history))
+        logger.info("   Time: %.1f s", optimization_time)
+        # logger.info("   Avg time/gen: %.3f s", optimization_time/len(optimization_history))
         if len(optimization_history) > 0:
-            print(f"   Avg time/gen: {optimization_time/len(optimization_history):.3f}s")
+            logger.info("   Avg time/gen: %.3f s", optimization_time/len(optimization_history))
         else:
-            print("   Avg time/gen: N/A (no history)")
+            logger.info("   Avg time/gen: N/A (no history)")
 
         # Show feasible solutions tracked
-        print(f"   Best feasible solutions tracked: {len(best_feasible_solutions)}")
+        logger.info("   Best feasible solutions tracked: %d", len(best_feasible_solutions))
 
         if constraint_violations['total_violations'] > 0:
-            print(f"   ⚠️  Constraint violations: {constraint_violations['total_violations']}")
+            logger.warning("   ⚠️  Constraint violations: %d", constraint_violations['total_violations'])
         else:
-            print("   ✅ All constraints satisfied")
+            logger.info("   ✅ All constraints satisfied")
 
         # === RESULT ASSEMBLY ===
         return OptimizationResult(
@@ -2088,3 +2117,11 @@ class PSORunner:
             'success_rate': 1.0,
             'feasibility_rate': feasible_count / len(run_summaries)
         }
+
+
+
+
+
+
+
+
