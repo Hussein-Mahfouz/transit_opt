@@ -6,6 +6,7 @@ handling both PT-only and combined PT+DRT solutions with minimal metadata embedd
 """
 
 import csv
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +15,12 @@ import numpy as np
 from transit_opt.gtfs.drt import DRTSolutionExporter
 from transit_opt.gtfs.gtfs import SolutionConverter
 
+logger = logging.getLogger(__name__)
 
 class SolutionExportManager:
     """
     Coordinates export of optimization solutions to standardized formats.
-    
+
     Manages the conversion and export of optimization results, supporting:
     - PT-only solutions → GTFS format
     - Combined PT+DRT solutions → GTFS + JSON formats
@@ -28,7 +30,7 @@ class SolutionExportManager:
     def __init__(self, optimization_data: dict[str, Any]):
         """
         Initialize export manager based on optimization problem configuration.
-        
+
         Args:
             optimization_data: Complete optimization setup from GTFSDataPreparator
         """
@@ -52,13 +54,13 @@ class SolutionExportManager:
     ) -> dict[str, Any]:
         """
         Export a single optimization solution with minimal metadata.
-        
+
         Args:
             solution: Solution matrix (PT-only) or dict with 'pt'/'drt' keys
             solution_id: Unique identifier for this solution
             output_dir: Directory where files should be created
             metadata: Optional minimal metadata (objective_value, timestamp, etc.)
-            
+
         Returns:
             Export summary with file paths and minimal metadata
         """
@@ -113,13 +115,13 @@ class SolutionExportManager:
     ) -> list[dict[str, Any]]:
         """
         Export multiple solutions with consistent naming and minimal metadata.
-        
+
         Args:
             solutions: List of solution dicts with 'solution' and 'objective' keys
             base_output_dir: Base directory for all solution files
             solution_prefix: Prefix for solution IDs (e.g., "best_solution")
             metadata: Optional common metadata (kept minimal)
-            
+
         Returns:
             List of export results for each solution
         """
@@ -284,4 +286,4 @@ class SolutionExportManager:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
-        print(f"✅ Solution summary CSV written: {csv_path}")
+        logger.info("✅ Solution summary CSV written: %s", csv_path)

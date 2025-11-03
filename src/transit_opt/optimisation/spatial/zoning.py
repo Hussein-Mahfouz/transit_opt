@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional
 
 import geopandas as gpd
@@ -5,6 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from libpysal.weights import Queen, lag_spatial
+
+logger = logging.getLogger(__name__)
+
 from shapely.geometry import Point
 
 from transit_opt.optimisation.spatial.boundaries import StudyAreaBoundary
@@ -104,22 +108,22 @@ class HexagonalZoneSystem:
 
         # Apply boundary filtering if provided
         if self.boundary is not None:
-            print(f"🎯 Applying boundary filter to {len(self.stops_gdf)} stops...")
+            logger.info("🎯 Applying boundary filter to %d stops...", len(self.stops_gdf))
             self.stops_gdf = self.boundary.filter_points(
                 self.stops_gdf, output_crs=self.crs
             )
-            print(f"✅ Filtered to {len(self.stops_gdf)} stops within boundary")
+            logger.info("✅ Filtered to %d stops within boundary", len(self.stops_gdf))
 
         # Generate hexagonal grid
         self.hex_grid = self._create_hexagonal_grid()
 
         # Optionally filter grid to boundary as well
         if self.boundary is not None:
-            print(f"🎯 Applying boundary filter to {len(self.hex_grid)} grid cells...")
+            logger.info("🎯 Applying boundary filter to %d grid cells...", len(self.hex_grid))
             self.hex_grid = self.boundary.filter_grid(
                 self.hex_grid, predicate="intersects", output_crs=self.crs
             )
-            print(f"✅ Filtered to {len(self.hex_grid)} grid cells within boundary")
+            logger.info("✅ Filtered to %d grid cells within boundary", len(self.hex_grid))
 
         # OPTIMIZED: Use spatial join instead of nested loops
         self.stop_zone_mapping = self._fast_map_stops_to_zones()
@@ -145,17 +149,17 @@ class HexagonalZoneSystem:
             if hasattr(crs_info.axis_info[0], "unit_name"):
                 unit = crs_info.axis_info[0].unit_name.lower()
                 if "metre" not in unit and "meter" not in unit:
-                    print(
+                    logger.warning(
                         f"⚠️  Warning: CRS {self.crs} may not be metric (units: {unit})"
                     )
-                    print(
+                    logger.info(
                         "   Consider using EPSG:3857 (Web Mercator) or a local UTM zone"
                     )
 
         except ImportError:
-            print("⚠️  pyproj not available - cannot validate CRS units")
+            logger.warning("⚠️  pyproj not available - cannot validate CRS units")
         except Exception as e:
-            print(f"⚠️  Could not validate CRS {self.crs}: {e}")
+            logger.warning(f"⚠️  Could not validate CRS {self.crs}: {e}")
 
     def _create_stops_geodataframe(self) -> gpd.GeoDataFrame:
         """Create stops GeoDataFrame and reproject to metric CRS."""
@@ -171,7 +175,7 @@ class HexagonalZoneSystem:
         # Reproject to target metric CRS
         stops_gdf = stops_gdf.to_crs(self.crs)
 
-        print(f"🗺️  Reprojected {len(stops_gdf)} stops to {self.crs}")
+        logger.info("🗺️  Reprojected %d stops to %s", len(stops_gdf), self.crs)
         return stops_gdf
 
     def _create_hexagonal_grid(self) -> gpd.GeoDataFrame:
@@ -195,11 +199,11 @@ class HexagonalZoneSystem:
         x_steps = int((maxx - minx) / hex_size_m) + 1
         y_steps = int((maxy - miny) / hex_size_m) + 1
 
-        print(f"🔧 Creating {x_steps} × {y_steps} = {x_steps * y_steps} grid cells")
-        print(
+        logger.info(f"🔧 Creating {x_steps} × {y_steps} = {x_steps * y_steps} grid cells")
+        logger.info(
             f"   Grid bounds: ({minx:.0f}, {miny:.0f}) to ({maxx:.0f}, {maxy:.0f}) meters"
         )
-        print(f"   Cell size: {hex_size_m}m × {hex_size_m}m")
+        logger.info(f"   Cell size: {hex_size_m}m × {hex_size_m}m")
 
         zone_id = 0
         for i in range(x_steps):
@@ -227,12 +231,12 @@ class HexagonalZoneSystem:
             {"zone_id": zone_ids, "geometry": hex_polygons}, crs=self.crs
         )
 
-        print(f"✅ Created {len(hex_gdf)} hexagonal zones in {self.crs}")
+        logger.info("✅ Created %d hexagonal zones in %s", len(hex_gdf), self.crs)
         return hex_gdf
 
     def _fast_map_stops_to_zones(self) -> dict[str, str]:
         """OPTIMIZED: Use spatial join - O(S + Z) instead of O(S × Z)."""
-        print("🚀 Using spatial join for zone mapping...")
+        logger.info("Using spatial join for zone mapping...")
 
         # Spatial join: finds containing zone for each stop in one operation
         # stops_with_zones = gpd.sjoin(
@@ -263,13 +267,13 @@ class HexagonalZoneSystem:
                     nearest_zone_idx, "zone_id"
                 ]
 
-        print(f"✅ Mapped {len(stop_zone_map)} stops to zones")
+        logger.info("✅ Mapped %d stops to zones", len(stop_zone_map))
         return stop_zone_map
 
     def _precompute_route_stop_mappings(self):
         """OPTIMIZED: Pre-compute all route → stops mappings to avoid repeated filtering."""
 
-        print("🚀 Pre-computing route-stop mappings...")
+        logger.info("Pre-computing route-stop mappings...")
 
         self.route_stops_cache = {}
 
@@ -292,7 +296,7 @@ class HexagonalZoneSystem:
 
             self.route_stops_cache[route_id] = route_stops
 
-        print(f"✅ Cached stops for {len(self.route_stops_cache)} routes")
+        logger.info("✅ Cached stops for %d routes", len(self.route_stops_cache))
 
     def _create_contiguity_matrix(self):
         """
@@ -305,7 +309,7 @@ class HexagonalZoneSystem:
             libpysal.weights.W: Spatial weights matrix
         """
 
-        print(f"🔧 Creating Queen contiguity matrix for {len(self.hex_grid)} zones...")
+        logger.info(f"🔧 Creating Queen contiguity matrix for {len(self.hex_grid)} zones...")
 
         # Create weights directly from GeoDataFrame
         w = Queen.from_dataframe(self.hex_grid, ids=self.hex_grid["zone_id"])
@@ -314,10 +318,10 @@ class HexagonalZoneSystem:
         w.transform = "r"  # Row standardization (each row sums to 1)
 
         # Verify the matrix
-        print("✅ Contiguity matrix created:")
-        print(f"   Zones: {w.n}")
-        print(f"   Links: {w.s0}")
-        print(f"   Islands: {len(w.islands)} zones")
+        logger.info("✅ Contiguity matrix created:")
+        logger.info("   Zones: %d", w.n)
+        logger.info("   Links: %d", w.s0)
+        logger.info("   Islands: %d zones", len(w.islands))
 
         return w
 
@@ -345,10 +349,13 @@ class HexagonalZoneSystem:
         # Direct calculation - libpysal maintains GeoDataFrame order
         spatial_lag = lag_spatial(w, vehicles_per_zone)
 
-        print("📊 Spatial lag calculated:")
-        print(f"   Input mean: {np.mean(vehicles_per_zone):.2f}")
-        print(f"   Spatial lag mean: {np.mean(spatial_lag):.2f}")
-        print(f"   Non-zero lags: {np.sum(spatial_lag > 0)}")
+        logger.info(
+            f"""📊 Spatial lag calculated:
+            • Input mean: {np.mean(vehicles_per_zone):.2f}
+            • Spatial lag mean: {np.mean(spatial_lag):.2f}
+            • Non-zero lags: {np.sum(spatial_lag > 0)}
+            """
+            )
 
         return spatial_lag
 
@@ -375,13 +382,13 @@ class HexagonalZoneSystem:
         # Blend direct service with neighbor accessibility
         accessibility_scores = vehicles_per_zone + alpha * spatial_lag
 
-        print(f"📊 Spatial lag calculated (α={alpha}):")
-        print(f"   Mean direct service: {np.mean(vehicles_per_zone):.2f}")
-        print(f"   Mean neighbor service: {np.mean(spatial_lag):.2f}")
-        print(f"   Mean accessibility: {np.mean(accessibility_scores):.2f}")
-        print(
-            f"   Zones with improved access: {np.sum(accessibility_scores > vehicles_per_zone)}"
-        )
+        logger.info(f"""
+        📊 Spatial lag calculated (α={alpha:.2f}):
+            • Mean direct service: {np.mean(vehicles_per_zone):.2f}
+            • Mean neighbor service: {np.mean(spatial_lag):.2f}
+            • Mean accessibility: {np.mean(accessibility_scores):.2f}
+            • Zones with improved access: {np.sum(accessibility_scores > vehicles_per_zone)}
+        """)
 
         return accessibility_scores
 
@@ -426,7 +433,7 @@ class HexagonalZoneSystem:
          Calculate vehicles per zone with all aggregation types (PT + DRT).
 
         Args:
-            solution_matrix: 
+            solution_matrix:
                 - PT-only: Decision matrix (n_routes × n_intervals)
                 - PT+DRT: Dict with 'pt' and 'drt' keys
             optimization_data: Optimization data structure from GTFSDataPreparator
@@ -451,7 +458,7 @@ class HexagonalZoneSystem:
         # PT + DRT case
         if drt_enabled and isinstance(solution_matrix, dict):
             if should_print:
-                print(f"📊 Calculating PT+DRT vehicles per zone... (eval #{self._evaluation_count})")
+                logger.debug("📊 Calculating PT+DRT vehicles per zone... (eval #%d)", self._evaluation_count)
             # Calculate PT vehicles
             pt_vehicles_data = self._calculate_pt_vehicles_by_interval(
                 solution_matrix['pt'], optimization_data
@@ -467,7 +474,7 @@ class HexagonalZoneSystem:
         # PT only case
         else:
             if should_print:
-                print(f"📊 Calculating PT-only vehicles per zone... (eval #{self._evaluation_count})")
+                logger.debug("📊 Calculating PT-only vehicles per zone... (eval #%d)", self._evaluation_count)
             if isinstance(solution_matrix, dict):
                 # Extract PT part if dict format used
                 solution_matrix = solution_matrix['pt']
@@ -480,7 +487,7 @@ class HexagonalZoneSystem:
     ) -> dict[str, np.ndarray]:
         """
         Calculate PT vehicles per zone for each interval.
-        
+
         """
         n_zones = len(self.hex_grid)
         n_intervals = optimization_data["n_intervals"]
@@ -547,35 +554,35 @@ class HexagonalZoneSystem:
         Step 1:Calculate Time to Cross a zone (zone: STUDY AREA zone, not DRT zone):
         - time = diameter / speed
         - This provides a basic estimate of how long a vehicle might spend traversing
-          a zone. Using the diameter is a simple way to capture the zone's spatial 
+          a zone. Using the diameter is a simple way to capture the zone's spatial
           scale. Assuming a constant speed is a necessary simplification without network details.
 
-        Step 2: Calculate Coverage (Average Vehicles per Zone): 
+        Step 2: Calculate Coverage (Average Vehicles per Zone):
         - Coverage = Total Fleet Size / Number of Zones in Service Area
-        - This distributes the total fleet across the service area, 
-          giving an average vehicle density per zone at any moment in time. 
-          It assumes uniform distribution, which is a simplification but a 
+        - This distributes the total fleet across the service area,
+          giving an average vehicle density per zone at any moment in time.
+          It assumes uniform distribution, which is a simplification but a
           sensible starting point without demand data.
 
         Step 3: Calculate Vehicle Activity per Zone per Interval:
         - Vehicles per Zone = (Interval Length / Time to Cross Zone) * Coverage
-        - This step combines the spatial density (Coverage) with the temporal aspect 
+        - This step combines the spatial density (Coverage) with the temporal aspect
           (how many times a zone could be crossed in the interval).
-        - Interpretation: The result isn't strictly the number of unique vehicles passing 
-          through, nor the number simultaneously present. It's better interpreted as a measure of 
-          total vehicle activity or vehicle-presence-time within that zone during the interval. 
-          For example, a result of '12' could mean 1 vehicle spending 12 times the crossing duration in the zone, 
-          or 12 different vehicles each crossing once, or some combination. It represents the equivalent number 
+        - Interpretation: The result isn't strictly the number of unique vehicles passing
+          through, nor the number simultaneously present. It's better interpreted as a measure of
+          total vehicle activity or vehicle-presence-time within that zone during the interval.
+          For example, a result of '12' could mean 1 vehicle spending 12 times the crossing duration in the zone,
+          or 12 different vehicles each crossing once, or some combination. It represents the equivalent number
           of full zone crossings occurring during the interval, scaled by the average vehicle density.
-        
+
         Args:
             drt_solution_matrix: DRT fleet decisions (n_drt_zones × n_intervals)
             optimization_data: Complete optimization data
-            
+
         Returns:
             Dictionary with same structure as PT vehicles data:
-            - 'intervals': Array of shape (n_intervals, n_hex_zones) 
-            - 'average': Array of shape (n_hex_zones,) 
+            - 'intervals': Array of shape (n_intervals, n_hex_zones)
+            - 'average': Array of shape (n_hex_zones,)
             - 'peak': Array of shape (n_hex_zones,)
             - 'sum': Array of shape (n_hex_zones,)
             - 'interval_labels': List of interval labels
@@ -655,12 +662,12 @@ class HexagonalZoneSystem:
     ) -> dict[str, np.ndarray]:
         """
         Combine PT and DRT vehicle data with temporally consistent peak calculation.
-        
+
         Peak Calculation Logic:
         - Identifies the interval with highest total system demand (PT + DRT combined)
         - Returns vehicle counts from that specific interval for temporal consistency
         - Ensures PT and DRT peak values represent the SAME interval/time period
-        
+
         """
         # Combine interval data first
         combined_intervals = pt_data['intervals'] + drt_data['intervals']  # [intervals, zones]
@@ -669,9 +676,9 @@ class HexagonalZoneSystem:
         total_vehicles_by_interval = np.sum(combined_intervals, axis=1)  # [intervals]
         peak_interval_idx = np.argmax(total_vehicles_by_interval)
         if should_print:
-            print("🔍 System peak analysis:")
-            print(f"   Peak interval: {peak_interval_idx} ({pt_data['interval_labels'][peak_interval_idx]})")
-            print(f"   Peak total vehicles: {total_vehicles_by_interval[peak_interval_idx]:.1f}")
+            logger.debug("🔍 System peak analysis:")
+            logger.debug("   Peak interval: %d (%s)", peak_interval_idx, pt_data['interval_labels'][peak_interval_idx])
+            logger.debug("   Peak total vehicles: %.1f", total_vehicles_by_interval[peak_interval_idx])
 
         # Peak = vehicles needed during system peak interval (temporally consistent)
         peak_combined = combined_intervals[peak_interval_idx, :]
@@ -694,7 +701,7 @@ class HexagonalZoneSystem:
         # Access DRT zones from existing location
         drt_zones = opt_data['drt_config']['zones']
 
-        print(f"🗺️ Computing spatial intersections for {len(drt_zones)} DRT zones...")
+        logger.info("🗺️ Computing spatial intersections for %d DRT zones...", len(drt_zones))
 
         for drt_zone in drt_zones:
             # Use vectorized spatial operations instead of loops
@@ -705,7 +712,7 @@ class HexagonalZoneSystem:
             affected_hex_indices = self.hex_grid.index[mask].tolist()
 
             drt_zone['affected_hex_zones'] = affected_hex_indices
-            print(f"   DRT zone {drt_zone['zone_id']} affects {len(affected_hex_indices)} hexagonal zones")
+            logger.debug("   DRT zone %d affects %d hexagonal zones", drt_zone['zone_id'], len(affected_hex_indices))
 
     def _set_drt_zone_mappings(self, drt_config: dict):
         """Set DRT zone mappings from config during initialization (after boundary filtering)."""
@@ -713,8 +720,8 @@ class HexagonalZoneSystem:
             return
 
         drt_zones = drt_config['zones']
-        print(f"🗺️ Computing DRT spatial intersections for {len(drt_zones)} zones...")
-        print(f"   Hexagonal grid size: {len(self.hex_grid)} zones")
+        logger.info("🗺️ Computing DRT spatial intersections for %d zones...", len(drt_zones))
+        logger.info("   Hexagonal grid size: %d zones", len(self.hex_grid))
 
         for drt_zone in drt_zones:
             drt_geometry = drt_zone['geometry']  # Already in correct CRS
@@ -731,14 +738,14 @@ class HexagonalZoneSystem:
             if affected_positions:
                 max_pos = max(affected_positions)
                 if max_pos >= len(self.hex_grid):
-                    print(f"   ❌ ERROR: Position {max_pos} exceeds grid size {len(self.hex_grid)}")
+                    logger.error("   ❌ ERROR: Position %d exceeds grid size %d", max_pos, len(self.hex_grid))
                     # Filter out invalid positions as safety net
                     drt_zone['affected_hex_zones'] = [
                         pos for pos in affected_positions
                         if 0 <= pos < len(self.hex_grid)
                     ]
 
-            print(f"   Zone {drt_zone['zone_id']}: affects {len(drt_zone['affected_hex_zones'])} hexagonal zones")
+            logger.debug("   Zone %d: affects %d hexagonal zones", drt_zone['zone_id'], len(drt_zone['affected_hex_zones']))
 
 
     def get_zone_statistics(
@@ -851,40 +858,40 @@ class HexagonalZoneSystem:
     ):
         """
         Generic method to visualize any per-zone data as a choropleth map.
-        
+
         This is the core visualization infrastructure used by both vehicle coverage
         and waiting time visualizations. It provides consistent styling, legends,
         and geographic handling across all objective types.
-        
+
         **Technical Implementation**:
         1. **Data Preparation**: Attaches data to hexagonal grid GeoDataFrame
         2. **CRS Conversion**: Converts from metric CRS to EPSG:4326 for plotting
         3. **Choropleth Rendering**: Uses GeoPandas plot() with specified colormap
         4. **Overlay Addition**: Adds transit stops and DRT zones if requested
         5. **Annotation**: Adds statistics text box and legends
-        
+
         **Geographic Workflow**:
         - Analysis CRS (metric): Used for distance calculations and spatial operations
         - Display CRS (EPSG:4326): Used for final map visualization
         - Automatic conversion ensures accuracy without user intervention
-        
+
         **Color Scale Handling**:
         - If vmin/vmax provided: Uses fixed scale (good for comparisons)
         - If None: Auto-scales to data range (good for single maps)
         - Consistent color bars with proper labeling
-        
+
         **DRT Zone Display Logic**:
         - show_drt_zones=None: Auto-detect from optimization_data['drt_enabled']
         - show_drt_zones=True: Force display DRT zones
         - show_drt_zones=False: Hide DRT zones even if available
         - DRT zones shown as dashed colored boundaries with legend
-        
+
         **Legend Management**:
         - Color bar: Shows data scale and units
         - Point legend: Transit stops (if enabled)
         - Line legend: DRT zones (if available and enabled)
         - Combined legend positioned to avoid overlap
-        
+
         Args:
             data_per_zone: Array of data values for each hexagonal zone
             data_column_name: Column name for the data in GeoDataFrame
@@ -898,15 +905,15 @@ class HexagonalZoneSystem:
             ax: Optional matplotlib axis to plot on
             vmin: Minimum value for color scale
             vmax: Maximum value for color scale
-            
+
         Returns:
             Tuple of (figure, axis) objects
-            
+
         **Used By**:
         - visualize_spatial_coverage(): Vehicle density maps
         - visualize_waiting_times(): Waiting time choropleth
         - Future objectives: Can reuse this infrastructure
-        
+
         """
         # Auto-detect DRT visualization if not specified
         if show_drt_zones is None:

@@ -5,24 +5,27 @@ Provides shared functionality for interpolating population raster data
 onto hexagonal zone grids and calculating population-weighted metrics.
 """
 
+import logging
 from typing import Any
 
 import numpy as np
 import rasterio
 from rasterstats import zonal_stats
 
+logger = logging.getLogger(__name__)
+
 
 def interpolate_population_to_zones(spatial_system, population_layer: Any) -> np.ndarray:
     """
     Assign population from raster to hexagons using zonal_stats.
-    
+
     Shared implementation for both service coverage and waiting time objectives.
     Uses raster population data from WorldPop or similar sources.
-    
+
     Args:
         spatial_system: HexagonalZoneSystem with hex_grid attribute
         population_layer: Path to population raster file
-        
+
     Returns:
         np.ndarray: Population count for each zone
     """
@@ -34,8 +37,8 @@ def interpolate_population_to_zones(spatial_system, population_layer: Any) -> np
         vector_crs = hexgrid.crs
 
         if raster_crs != vector_crs:
-            print(f"⚠️ CRS mismatch: Raster {raster_crs} != Vector{vector_crs}")
-            print(" Creating transformed hexgrid with raster CRS for zonal stats.")
+            logger.warning(f"⚠️ CRS mismatch: Raster {raster_crs} != Vector{vector_crs}")
+            logger.info(" Creating transformed hexgrid with raster CRS for zonal stats.")
             hexgrid_transformed = hexgrid.to_crs(raster_crs)
         else:
             hexgrid_transformed = hexgrid
@@ -51,7 +54,8 @@ def interpolate_population_to_zones(spatial_system, population_layer: Any) -> np
     pop_array = np.array([item['sum'] if item['sum'] is not None else 0 for item in stats])
     # Replace negative values with 0 (WorldPop can have negatives)
     pop_array = np.maximum(pop_array, 0)
-    print(f"📊 Population per zone: min={np.min(pop_array)}, max={np.max(pop_array)}, mean={np.mean(pop_array):.2f}")
+    logger.info("📊 Population per zone: min=%d, max=%d, mean=%.2f",
+                np.min(pop_array), np.max(pop_array), np.mean(pop_array))
     return pop_array
 
 
@@ -62,14 +66,14 @@ def calculate_population_weighted_variance(
 ) -> float:
     """
     Calculate population-weighted variance of values across zones.
-    
+
     Generic implementation that works for both vehicles_per_zone and waiting_times.
-    
+
     Args:
         values: Array of values per zone (vehicles, waiting times, etc.)
         population: Array of population per zone
         population_power: Exponent for population weighting
-        
+
     Returns:
         float: Population-weighted variance
     """
@@ -96,28 +100,31 @@ def calculate_population_weighted_total(
 ) -> float:
     """
     Calculate population-weighted total of values across zones.
-    
+
     Currently used by waiting time objective, available for future objectives.
-    
+
     Args:
         values: Array of values per zone (waiting times, costs, etc.)
         population: Array of population per zone
         population_power: Exponent for population weighting
-        
+
     Returns:
         float: Population-weighted total
     """
 
-    print("🔍 Pop-weighted total DEBUG:")
-    print(f"   Values: {values}")
-    print(f"   Population: {population}")
-    print(f"   Power: {population_power}")
+    logger.debug(f"""
+        🔍 Pop-weighted total DEBUG:
+        * Values: {values}
+        * Population: {population}
+        * Power: {population_power}
+    """)
 
     if population is None:
+        logger.error("Population data not available")
         raise ValueError("Population data not available")
 
     pop_weighted = np.power(population, population_power)
-    print(f"   Population weights: {pop_weighted}")
+    logger.info("Population weights: %s", pop_weighted)
 
     # Handle infinite values (from waiting time objective)
     finite_mask = np.isfinite(values)
@@ -134,13 +141,14 @@ def calculate_population_weighted_total(
 def validate_population_config(population_weighted: bool, population_layer: Any) -> None:
     """
     Validate population weighting configuration.
-    
+
     Args:
         population_weighted: Whether population weighting is enabled
         population_layer: Population raster path or None
-        
+
     Raises:
         ValueError: If configuration is invalid
     """
     if population_weighted and population_layer is None:
+        logger.error("Population layer must be provided if population_weighted is True")
         raise ValueError("Population layer must be provided if population_weighted is True")

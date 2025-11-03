@@ -1,9 +1,11 @@
 # Add this new cell to test the objective classes
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 class BaseObjective(ABC):
     """Base class for all optimization objectives."""
@@ -87,8 +89,9 @@ class BaseSpatialObjective(BaseObjective):
 
     def setup_data(self):
         """Set up common spatial infrastructure."""
-        print(
-            f"🗺️ Setting up spatial analysis with {self.spatial_resolution}km resolution"
+        logger.info(
+            "🗺️ Setting up spatial analysis with %skm resolution",
+            self.spatial_resolution
         )
 
         # Get GTFS feed from your opt_data structure
@@ -114,7 +117,7 @@ class BaseSpatialObjective(BaseObjective):
     ):
         """
         Generic visualization method for all spatial objectives.
-        
+
         This method should be overridden by each objective to provide
         objective-specific data conversion and visualization parameters.
         """

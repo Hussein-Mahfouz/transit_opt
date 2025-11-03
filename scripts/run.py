@@ -6,6 +6,8 @@ from pathlib import Path
 import geopandas as gpd
 import yaml
 
+from transit_opt.logging import setup_logger
+
 # put src on path
 project_root = Path(__file__).resolve().parent
 src = project_root / "src"
@@ -20,7 +22,6 @@ from transit_opt.optimisation.runners.pso_runner import PSORunner
 from transit_opt.optimisation.spatial.boundaries import StudyAreaBoundary
 from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_config(path: str) -> dict:
@@ -51,8 +52,7 @@ def prepare_opt_data(cfg: dict) -> dict:
         gtfs_path = gtfs_path[0]
     preparator = GTFSDataPreparator(
         gtfs_path=gtfs_path,
-        interval_hours=inp.get("interval_hours"),
-        log_level=cfg.get("logging", {}).get("console_level", "INFO"),
+        interval_hours=inp.get("interval_hours")
     )
     allowed_headways = inp.get("allowed_headways")
     drt_cfg = inp.get("drt") or inp.get("drt_config") or {}
@@ -98,8 +98,22 @@ def export_results(opt_data: dict, res, cfg: dict) -> None:
 
 
 def main(config_path: str):
-    # 1. Load config
+    # 1. Load config and set up logging
     cfg = load_config(config_path)
+    # Set up logging
+    log_cfg = cfg.get("logging", {})
+    log_dir = log_cfg.get("log_dir", "logs")
+    log_file = log_cfg.get("log_file", "run.log")
+    console_level = log_cfg.get("console_level", "INFO")
+    file_level = log_cfg.get("file_level", "DEBUG")
+    setup_logger(
+        name="transit_opt",
+        log_dir=log_dir,
+        log_file=log_file,
+        console_level=console_level,
+        file_level=file_level
+    )
+
     # 2. Add study area boundary for clipping gtfs / zones
     inject_boundary_if_path(cfg)
     # 3. Prepare optimization data

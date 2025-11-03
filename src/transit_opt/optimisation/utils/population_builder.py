@@ -4,30 +4,32 @@ Population builder for custom PSO sampling.
 This module implements the pre-built population array approach for PyMOO sampling.
 It creates complete (pop_size, n_var) arrays that can be passed directly to PSO algorithms.
 
-It is used when we want to pass an initial population to the PSO problem, instead of relying 
+It is used when we want to pass an initial population to the PSO problem, instead of relying
 exclusively on Latin Hypercube Sampling
 """
 
+import logging
 from typing import Any
 
 import numpy as np
 
 from .solution_loader import SolutionLoader
 
+logger = logging.getLogger(__name__)
 
 class PopulationBuilder:
     """
     Build complete initial populations for PSO optimization using base solutions + perturbations + LHS.
-    
+
     This class implements the "Pre-built Full Population Array" approach where we construct
     the complete (pop_size, n_var) initial population before passing it to PyMOO algorithms.
     This approach is more reliable and explicit than custom Sampling classes.
-    
+
     Population Composition:
     1. Base solutions (loaded from various sources)
     2. Gaussian perturbations around base solutions
     3. LHS samples to fill remaining population slots
-    
+
     Example:
         pop_size=40, base_solutions=2, frac_gaussian_pert=0.6
         → 2 base + 24 gaussian perturbations + 14 LHS samples = 40 total
@@ -49,7 +51,7 @@ class PopulationBuilder:
     ) -> np.ndarray:
         """
         Build complete (pop_size, n_var) initial population array.
-        
+
         Args:
             problem: TransitOptimizationProblem instance for encoding/bounds
             pop_size: Total population size required
@@ -58,17 +60,17 @@ class PopulationBuilder:
             frac_gaussian_pert: Fraction of population for gaussian perturbations
             gaussian_sigma: Standard deviation for gaussian perturbations
             random_seed: Random seed for reproducibility
-            
+
         Returns:
             Complete population array of shape (pop_size, n_var)
         """
 
-        print(f"🔧 Building initial population (size={pop_size}):")
+        logger.info("🔧 Building initial population (size=%d):", pop_size)
 
         # Set random seed if provided
         if random_seed is not None:
             np.random.seed(random_seed)
-            print(f"   🎲 Random seed set to: {random_seed}")
+            logger.info("   🎲 Random seed set to: %d", random_seed)
 
 
         # Step 1: Load and encode base solutions
@@ -78,10 +80,10 @@ class PopulationBuilder:
         for i, solution in enumerate(base_solutions):
             encoded = problem.encode_solution(solution)
             encoded_base_solutions.append(encoded)
-            print(f"   📋 Base solution {i+1}: shape {encoded.shape}")
+            logger.info("   📋 Base solution %d: shape %s", i+1, encoded.shape)
 
         n_base = len(encoded_base_solutions)
-        print(f"   ✅ Loaded {n_base} base solutions")
+        logger.info("   ✅ Loaded %d base solutions", n_base)
 
         # Step 2: Calculate population distribution
         n_gaussian = int(frac_gaussian_pert * pop_size)
@@ -90,10 +92,12 @@ class PopulationBuilder:
         if n_lhs < 0:
             raise ValueError(f"Population size ({pop_size}) too small for {n_base} base + {n_gaussian} gaussian")
 
-        print("   📊 Population distribution:")
-        print(f"      Base solutions: {n_base}")
-        print(f"      Gaussian perturbations: {n_gaussian}")
-        print(f"      LHS samples: {n_lhs}")
+        logger.info(f"""
+           📊 Population distribution:
+            • Base solutions: {n_base}
+            • Gaussian perturbations: {n_gaussian}
+            • LHS samples: {n_lhs}
+        """)
 
         # Step 3: Build population components
         population_parts = []
@@ -116,8 +120,8 @@ class PopulationBuilder:
         # Step 4: Stack into final array
         final_population = np.vstack(population_parts)
 
-        print(f"   ✅ Final population shape: {final_population.shape}")
-        print("   🎯 Ready for PSO algorithm")
+        logger.info("Final population shape: %s", final_population.shape)
+        logger.info("Ready for PSO algorithm")
 
         return final_population
 

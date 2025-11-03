@@ -2081,16 +2081,16 @@ class TestPSORunnerPenaltyMethod:
 class TestPSORunnerWithSeeding:
     """
     Test PSO runner with custom sampling/seeding functionality.
-    Seeding is used to provide initial solutions to PYMOO PSO problem. 
-    Default without seeding is to use Latin Hypercube Sampling. 
+    Seeding is used to provide initial solutions to PYMOO PSO problem.
+    Default without seeding is to use Latin Hypercube Sampling.
 
      The number of solutions seeded should be equal to pop_size.
      With seeding, we set:
-    - base_solutions: "from_data" (this means use the current initial_solutions, 
-                       and make variations of it using a combination of gaussian 
+    - base_solutions: "from_data" (this means use the current initial_solutions,
+                       and make variations of it using a combination of gaussian
                        noise and LHS())
-    - base_solutions: List (use a List of base solutions, probably from a previous 
-                      run. Fill in the remaining number of initial solutons using 
+    - base_solutions: List (use a List of base solutions, probably from a previous
+                      run. Fill in the remaining number of initial solutons using
                       a combination of gaussian noise and LHS())
     """
 

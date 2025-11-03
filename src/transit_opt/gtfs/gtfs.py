@@ -12,7 +12,7 @@ class SolutionConverter:
     def __init__(self, optimization_data: dict):
         """
         Initialize converter with optimization data structure.
-        
+
         Args:
             optimization_data: Complete optimization data from GTFSDataPreparator
         """
@@ -27,8 +27,8 @@ class SolutionConverter:
         self.gtfs_feed = optimization_data['reconstruction']['gtfs_feed']
         self.route_mapping = optimization_data['reconstruction']['route_mapping']
 
-        logger.info(f"SolutionConverter initialized for {len(self.route_ids)} routes, "
-                   f"{len(self.interval_labels)} intervals")
+        logger.info("SolutionConverter initialized for %d routes, %d intervals",
+                    len(self.route_ids), len(self.interval_labels))
 
 
     # ========== CORE CONVERSION METHODS ========== #
@@ -37,13 +37,13 @@ class SolutionConverter:
     def solution_to_headways(self, solution_matrix: np.ndarray) -> dict[str, dict[str, float | None]]:
         """
         Convert solution matrix to actual headway values per route/interval.
-        
+
         Args:
             solution_matrix: Array of shape (n_routes, n_intervals) containing headway indices
-            
+
         Returns:
             Dict mapping route_id -> interval_label -> headway_minutes (or None for no service)
-            
+
         Example:
             {
                 'route_123': {
@@ -69,8 +69,8 @@ class SolutionConverter:
 
                 # Validate headway index
                 if headway_index < 0 or headway_index >= len(self.allowed_headways):
-                    logger.warning(f"Invalid headway index {headway_index} for route {route_id}, "
-                                 f"interval {interval_label}. Using no service.")
+                    logger.warning("Invalid headway index %d for route %s, interval %s. Using no service.",
+                                   headway_index, route_id, interval_label)
                     headway_minutes = None
                 elif headway_index == self.no_service_index:
                     headway_minutes = None  # No service
@@ -81,14 +81,14 @@ class SolutionConverter:
 
             headways_dict[route_id] = route_headways
 
-        logger.debug(f"Converted solution matrix to headways for {len(headways_dict)} routes")
+        logger.debug("Converted solution matrix to headways for %d routes", len(headways_dict))
         return headways_dict
 
 
     def extract_route_templates(self) -> dict[str, dict[str, Any]]:
         """
         Extract template trips for each route with time-of-day variation.
-        
+
         Returns:
             Dict mapping route_id -> interval_label -> template_data
             Format: {
@@ -103,13 +103,13 @@ class SolutionConverter:
         template_trips = {}
 
         for route_id in self.route_ids:
-            print(f"🔍 Processing route {route_id}...")
+            logger.debug(f"🔍 Processing route {route_id}...")
 
             # Get all trips for this route
             route_trips = self.gtfs_feed.trips[self.gtfs_feed.trips.route_id == route_id]
 
             if route_trips.empty:
-                logger.warning(f"No trips found for route {route_id}")
+                logger.warning("No trips found for route %s", route_id)
                 continue
 
             # Get all stop times for this route
@@ -118,7 +118,7 @@ class SolutionConverter:
             ].copy()
 
             if route_stop_times.empty:
-                logger.warning(f"No stop times found for route {route_id}")
+                logger.warning("No stop times found for route %s", route_id)
                 continue
 
             # Extract templates for each interval
@@ -136,12 +136,18 @@ class SolutionConverter:
                     # Extract template for this specific interval
                     template = self._extract_interval_template(interval_trips, interval_label)
                     route_templates[interval_label] = template
-                    print(f"   ✅ {interval_label}: {template['duration_minutes']:.1f}min template")
+                    logger.debug("   ✅ %s: %.1fmin template", interval_label, template['duration_minutes'])
                 else:
                     # No trips in this interval - use fallback
                     fallback_template = self._get_fallback_template(route_trips, route_stop_times)
                     route_templates[interval_label] = fallback_template
-                    print(f"   ⚠️  {interval_label}: Using fallback template ({fallback_template['duration_minutes']:.1f}min)")
+                    logger.warning("   ⚠️  Route %s, %s: No trips found in this interval, using fallback template from another period (trip_id=%s, %.1fmin)",
+                             route_id,
+                             interval_label,
+                             fallback_template['trip_id'],
+                             fallback_template['duration_minutes'])
+
+
 
             template_trips[route_id] = route_templates
 
@@ -156,10 +162,10 @@ class SolutionConverter:
                 cleaned_count = len(template['stop_times'])
 
                 if cleaned_count != original_count:
-                    logger.debug(f"Cleaned stop times for {route_id} {interval_label}: "
-                            f"{original_count} -> {cleaned_count} stops")
+                    logger.debug("Cleaned stop times for %s %s: %d -> %d stops",
+                                 route_id, interval_label, original_count, cleaned_count)
 
-        logger.info(f"Extracted time-varying templates for {len(template_trips)} routes")
+        logger.info("Extracted time-varying templates for %d routes", len(template_trips))
         return template_trips
 
 
@@ -169,12 +175,12 @@ class SolutionConverter:
                                 service_id: str = 'optimized_service') -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Generate new trips and stop_times based on optimized headways with time-of-day templates.
-        
+
         Args:
             headways_dict: Route headways by interval
             templates: Template data for each route (now with interval-specific templates)
             service_id: Service ID to use for all generated trips
-            
+
         Returns:
             tuple: (new_trips_df, new_stop_times_df)
         """
@@ -187,7 +193,7 @@ class SolutionConverter:
 
         for route_id, route_headways in headways_dict.items():
             if route_id not in templates:
-                logger.warning(f"No template found for route {route_id}, skipping")
+                logger.warning("No template found for route %s, skipping", route_id)
                 continue
 
             route_templates = templates[route_id]  # Now contains templates per interval
@@ -196,14 +202,15 @@ class SolutionConverter:
                 if headway is None:  # No service in this interval
                     continue
 
-                # ✅ NEW: Get interval-specific template
+                # Get interval-specific template
                 if interval_label in route_templates:
                     template = route_templates[interval_label]
-                    print(f"🕐 Using {interval_label} template for route {route_id}: {template['duration_minutes']:.1f}min")
+                    logger.debug("🚌 Using %s template for route %s: %.1fmin", interval_label, route_id, template['duration_minutes'])
                 else:
                     # Fallback to first available template
                     template = list(route_templates.values())[0]
-                    logger.warning(f"No template for {interval_label}, using fallback for route {route_id}")
+                    logger.warning("No template for route %s in interval %s, using fallback from another interval",
+                                   route_id, interval_label)
 
                 template_stop_times = template['stop_times']
                 trip_duration_minutes = template['duration_minutes']
@@ -231,7 +238,8 @@ class SolutionConverter:
         trips_df = pd.DataFrame(new_trips) if new_trips else pd.DataFrame()
         stop_times_df = pd.DataFrame(new_stop_times) if new_stop_times else pd.DataFrame()
 
-        logger.info(f"Generated {len(trips_df)} trips with {len(stop_times_df)} stop times using time-varying templates")
+        logger.info("Generated %d trips with %d stop times using time-varying templates",
+                    len(trips_df), len(stop_times_df))
         return trips_df, stop_times_df
 
 
@@ -245,17 +253,17 @@ class SolutionConverter:
                         zip_output: bool = False) -> str:  # ✅ NEW parameter
         """
         Build complete GTFS feed from optimization solution.
-        
+
         Args:
             headways_dict: Route headways by interval
-            templates: Template data for each route  
+            templates: Template data for each route
             output_dir: Output directory for GTFS files
             service_id: Service ID to use for generated trips
             start_date: Optional start date (YYYYMMDD format)
             end_date: Optional end date (YYYYMMDD format)
             copy_calendar_dates: Whether to copy calendar_dates.txt (default: False)
             zip_output: If True, create ZIP file instead of directory (default: False)
-            
+
         Returns:
             Path to created GTFS directory or ZIP file
         """
@@ -269,12 +277,12 @@ class SolutionConverter:
             # Create temporary directory for files
             temp_dir = tempfile.mkdtemp(prefix='gtfs_temp_')
             working_dir = temp_dir
-            print(f"📦 Creating ZIP output: {output_dir}.zip")
+            logger.info("📦 Creating ZIP output: %s.zip", output_dir)
         else:
             # Create regular output directory
             os.makedirs(output_dir, exist_ok=True)
             working_dir = output_dir
-            print(f"📁 Creating directory output: {output_dir}")
+            logger.info("📁 Creating directory output: %s", output_dir)
 
         # 1. Generate new trips and stop times with configurable service_id
         new_trips_df, new_stop_times_df = self.generate_trips_and_stop_times(
@@ -289,22 +297,22 @@ class SolutionConverter:
         # Ensure parent_station references are valid. Some parent stops may have been removed in preprocessing of original GTFS
         fixed_stops = self._fix_parent_station_references(original_stops)
         fixed_stops.to_csv(os.path.join(working_dir, 'stops.txt'), index=False)
-        print(f"✅ Fixed and copied stops.txt: {len(fixed_stops)} stops")
+        logger.info("✅ Fixed and copied stops.txt: %d stops", len(fixed_stops))
 
         # Write routes.txt (unchanged)
         original_gtfs.routes.to_csv(os.path.join(working_dir, 'routes.txt'), index=False)
-        print(f"✅ Copied routes.txt: {len(original_gtfs.routes)} routes")
+        logger.info("✅ Copied routes.txt: %d routes", len(original_gtfs.routes))
 
         # Write agency.txt (unchanged)
         original_gtfs.agency.to_csv(os.path.join(working_dir, 'agency.txt'), index=False)
-        print(f"✅ Copied agency.txt: {len(original_gtfs.agency)} agencies")
+        logger.info("✅ Copied agency.txt: %d agencies", len(original_gtfs.agency))
 
         # 3. Write new trip files
         new_trips_df.to_csv(os.path.join(working_dir, 'trips.txt'), index=False)
-        print(f"✅ Generated trips.txt: {len(new_trips_df)} trips")
+        logger.info("✅ Generated trips.txt: %d trips", len(new_trips_df))
 
         new_stop_times_df.to_csv(os.path.join(working_dir, 'stop_times.txt'), index=False)
-        print(f"✅ Generated stop_times.txt: {len(new_stop_times_df)} stop times")
+        logger.info("✅ Generated stop_times.txt: %d stop times", len(new_stop_times_df))
 
         # 4. Smart calendar.txt creation
         calendar_start_date, calendar_end_date = self._determine_calendar_dates(start_date, end_date)
@@ -317,29 +325,29 @@ class SolutionConverter:
             'end_date': calendar_end_date
         }])
         calendar_df.to_csv(os.path.join(working_dir, 'calendar.txt'), index=False)
-        print(f"✅ Generated calendar.txt: {service_id} ({calendar_start_date} to {calendar_end_date})")
+        logger.info("✅ Generated calendar.txt: %s (%s to %s)", service_id, calendar_start_date, calendar_end_date)
 
         # 5. Copy shapes.txt if it exists
         if hasattr(original_gtfs, 'shapes') and not original_gtfs.shapes.empty:
             original_gtfs.shapes.to_csv(os.path.join(working_dir, 'shapes.txt'), index=False)
-            print(f"✅ Copied shapes.txt: {len(original_gtfs.shapes)} shape points")
+            logger.info("✅ Copied shapes.txt: %d shape points", len(original_gtfs.shapes))
 
             # Validate shape references
             shapes_used = set(new_trips_df['shape_id'].dropna()) if 'shape_id' in new_trips_df.columns else set()
             shapes_available = set(original_gtfs.shapes['shape_id'].unique())
             missing_shapes = shapes_used - shapes_available
             if missing_shapes:
-                print(f"⚠️  Missing shapes: {missing_shapes}")
+                logger.warning("⚠️  Missing shapes: %s", missing_shapes)
             else:
-                print(f"✅ All {len(shapes_used)} shape references validated")
+                logger.info("✅ All %d shape references validated", len(shapes_used))
 
         # 6. Handle calendar_dates.txt
         if copy_calendar_dates and hasattr(original_gtfs, 'calendar_dates') and not original_gtfs.calendar_dates.empty:
-            print("⚠️  WARNING: Copying calendar_dates.txt with original service IDs")
+            logger.info("⚠️  WARNING: Copying calendar_dates.txt with original service IDs")
             original_gtfs.calendar_dates.to_csv(os.path.join(working_dir, 'calendar_dates.txt'), index=False)
-            print(f"✅ Copied calendar_dates.txt: {len(original_gtfs.calendar_dates)} exceptions")
+            logger.info("✅ Copied calendar_dates.txt: %d exceptions", len(original_gtfs.calendar_dates))
         else:
-            print("✅ Skipped calendar_dates.txt: Using simplified calendar only")
+            logger.info("✅ Skipped calendar_dates.txt: Using simplified calendar only")
 
         # ✅ 7. Handle ZIP creation
         if zip_output:
@@ -365,13 +373,13 @@ class SolutionConverter:
             with zipfile.ZipFile(zip_path, 'r') as zipf:
                 file_list = zipf.namelist()
 
-            print(f"\n📦 ZIP FILE CREATED: {zip_path}")
-            print(f"   File size: {zip_size:,} bytes")
-            print(f"   Contains: {', '.join(file_list)}")
+            logger.info("📦 ZIP FILE CREATED: %s", zip_path)
+            logger.info("   File size: %d bytes", zip_size)
+            logger.info("   Contains: %s", ', '.join(file_list))
 
             return zip_path
         else:
-            print(f"\n🎯 COMPLETE GTFS FEED CREATED: {working_dir}")
+            logger.info("🎯 COMPLETE GTFS FEED CREATED: %s", working_dir)
             return working_dir
 
 
@@ -381,10 +389,10 @@ class SolutionConverter:
     def validate_solution(self, solution_matrix: np.ndarray) -> dict[str, Any]:
         """
         Validate that solution matrix contains reasonable values.
-        
+
         Args:
             solution_matrix: Array of headway indices
-            
+
         Returns:
             Dict with validation results and statistics
         """
@@ -498,8 +506,10 @@ class SolutionConverter:
             'value_range': (min_val, max_val)
         }
 
-        logger.info(f"Solution validation: {'PASSED' if validation_result['valid'] else 'FAILED'} "
-                   f"({len(validation_result['errors'])} errors, {len(validation_result['warnings'])} warnings)")
+        logger.info("Solution validation: %s (%d errors, %d warnings)",
+                    'PASSED' if validation_result['valid'] else 'FAILED',
+                    len(validation_result['errors']),
+                    len(validation_result['warnings']))
 
         return validation_result
 
@@ -507,10 +517,10 @@ class SolutionConverter:
     def get_solution_summary(self, solution_matrix: np.ndarray) -> dict[str, Any]:
             """
             Get a comprehensive summary of the solution.
-            
+
             Args:
                 solution_matrix: Solution to summarize
-                
+
             Returns:
                 Dict with solution summary statistics
             """
@@ -557,10 +567,10 @@ class SolutionConverter:
     def get_interval_time_bounds(self, interval_label: str) -> tuple[int, int]:
         """
         Get start and end times (in seconds) for a time interval.
-        
+
         Args:
             interval_label: Label like 'Morning Peak', 'Midday', etc.
-            
+
         Returns:
             Tuple of (start_seconds, end_seconds)
         """
@@ -569,6 +579,7 @@ class SolutionConverter:
             start_hour, end_hour = self.interval_hours[interval_idx]
             return start_hour * 3600, end_hour * 3600
         except ValueError:
+            logger.error("Unknown interval label: %s", interval_label)
             raise ValueError(f"Unknown interval label: {interval_label}")
 
 
@@ -690,11 +701,11 @@ class SolutionConverter:
     def _determine_calendar_dates(self, start_date: str = None, end_date: str = None) -> tuple[str, str]:
         """
         Determine calendar start and end dates with smart defaults.
-        
+
         Args:
             start_date: Optional start date (YYYYMMDD). If None, uses min from original
             end_date: Optional end date (YYYYMMDD). If None, uses max from original
-            
+
         Returns:
             Tuple of (start_date, end_date) in YYYYMMDD format
         """
@@ -703,30 +714,30 @@ class SolutionConverter:
         # Handle start_date
         if start_date is not None:
             calendar_start_date = start_date
-            print(f"📅 Using provided start_date: {start_date}")
+            logger.info("📅 Using provided start_date: %s", start_date)
         else:
             # Find minimum start_date from original calendar
             if hasattr(original_gtfs, 'calendar') and not original_gtfs.calendar.empty:
                 min_start_date = original_gtfs.calendar['start_date'].min()
                 calendar_start_date = str(min_start_date)
-                print(f"📅 Using min original start_date: {calendar_start_date}")
+                logger.info("📅 Using min original start_date: %s", calendar_start_date)
             else:
                 calendar_start_date = '20240101'
-                print(f"📅 Using default start_date: {calendar_start_date}")
+                logger.info("📅 Using default start_date: %s", calendar_start_date)
 
         # Handle end_date
         if end_date is not None:
             calendar_end_date = end_date
-            print(f"📅 Using provided end_date: {end_date}")
+            logger.info("📅 Using provided end_date: %s", end_date)
         else:
             # Find maximum end_date from original calendar
             if hasattr(original_gtfs, 'calendar') and not original_gtfs.calendar.empty:
                 max_end_date = original_gtfs.calendar['end_date'].max()
                 calendar_end_date = str(max_end_date)
-                print(f"📅 Using max original end_date: {calendar_end_date}")
+                logger.info("📅 Using max original end_date: %s", calendar_end_date)
             else:
                 calendar_end_date = '20241231'
-                print(f"📅 Using default end_date: {calendar_end_date}")
+                logger.info("📅 Using default end_date: %s", calendar_end_date)
 
         return calendar_start_date, calendar_end_date
 
@@ -734,10 +745,10 @@ class SolutionConverter:
     def _fix_parent_station_references(self, stops_df: pd.DataFrame) -> pd.DataFrame:
         """
         Fix parent_station foreign key violations by clearing invalid references.
-        
+
         Args:
             stops_df: DataFrame with stops data
-            
+
         Returns:
             DataFrame with fixed parent_station references
         """
@@ -760,15 +771,14 @@ class SolutionConverter:
             invalid_count = invalid_mask.sum()
             invalid_refs = stops_df.loc[invalid_mask, 'parent_station'].unique()
 
-            logger.warning(f"Found {invalid_count} stops with invalid parent_station references: {invalid_refs}")
-            print(f"⚠️  Found {invalid_count} stops with invalid parent_station references")
-            print(f"   Missing parent stations: {list(invalid_refs)}")
+            logger.warning("Found %d stops with invalid parent_station references: %s", invalid_count, invalid_refs)
+            logger.info("   Missing parent stations: %s", list(invalid_refs))
 
             # Clear the invalid parent_station references
             stops_df.loc[invalid_mask, 'parent_station'] = ''
-            print(f"✅ Cleared {invalid_count} invalid parent_station references")
+            logger.info("✅ Cleared %d invalid parent_station references", invalid_count)
         else:
-            print("✅ All parent_station references are valid")
+            logger.info("✅ All parent_station references are valid")
 
         return stops_df
 
@@ -777,13 +787,13 @@ class SolutionConverter:
                                start_hour: int, end_hour: int) -> pd.DataFrame:
         """
         Find trips that start within a specific time interval.
-        
+
         Args:
             route_stop_times: Stop times for the route
-            route_trips: Trip records for the route  
+            route_trips: Trip records for the route
             start_hour: Interval start hour (0-23)
             end_hour: Interval end hour (0-23)
-            
+
         Returns:
             DataFrame with stop times for trips starting in the interval
         """
@@ -803,17 +813,17 @@ class SolutionConverter:
             route_stop_times['trip_id'].isin(trips_in_interval)
         ].copy()
 
-        logger.debug(f"Found {len(trips_in_interval)} trips starting between {start_hour:02d}:00-{end_hour:02d}:00")
+        logger.debug("Found %d trips starting between %02d:00-%02d:00", len(trips_in_interval), start_hour, end_hour)
         return interval_stop_times
 
     def _extract_interval_template(self, interval_stop_times: pd.DataFrame, interval_label: str) -> dict[str, Any]:
         """
         Extract a representative template from trips in a specific time interval.
-        
+
         Args:
             interval_stop_times: Stop times for trips in this interval
             interval_label: Name of the time interval
-            
+
         Returns:
             Template trip data dictionary
         """
@@ -861,8 +871,8 @@ class SolutionConverter:
         template_data['trip_id'] = best_trip_id
         template_data['interval_label'] = interval_label
 
-        logger.debug(f"Selected template trip {best_trip_id} for {interval_label}: "
-                    f"{template_data['duration_minutes']:.1f}min duration")
+        logger.debug("Selected template trip %d for %s: %.1fmin duration",
+                     best_trip_id, interval_label, template_data['duration_minutes'])
 
         return template_data
 
@@ -870,11 +880,11 @@ class SolutionConverter:
         """
         Get fallback template when no trips exist in a specific interval.
         Uses the first available trip for the route.
-        
+
         Args:
             route_trips: All trips for the route
             route_stop_times: All stop times for the route
-            
+
         Returns:
             Template trip data dictionary
         """
@@ -907,13 +917,13 @@ class SolutionConverter:
     def _clean_stop_times(self, stop_times_df: pd.DataFrame) -> pd.DataFrame:
         """
         Clean stop times data by filling NaN values with reasonable estimates.
-        
+
         For missing arrival/departure times, attempts to interpolate from neighboring stops.
         Falls back to zero if no neighboring data is available.
-        
+
         Args:
             stop_times_df: DataFrame with stop times data
-            
+
         Returns:
             DataFrame with cleaned stop times
         """
@@ -953,5 +963,3 @@ class SolutionConverter:
             cleaned_df = cleaned_df[np.isfinite(cleaned_df['departure_seconds'])]
 
         return cleaned_df
-
-

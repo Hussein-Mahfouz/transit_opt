@@ -94,14 +94,13 @@ optimization:
     cognitive_coeff: 2.0
     social_coeff: 2.0
     adaptive: true # whether to use adaptive PSO parameters (default pymoo implementation)
-    velocity_clamp: true
     use_penalty_method: true
     penalty_weight: 100
     adaptive_penalty: false # whether to increase penalty weights incrementally during optimization
     penalty_increase_rate: 1.1 # factor by which to increase penalty weights if adaptive_penalty: true
 
-  seeding:
-    enabled: false
+  sampling:
+    enabled: true
     # Options are 'from_data' or a List of solutions
     base_solutions: 'from_data'
     # base_solutions:
@@ -141,6 +140,6 @@ output:
 
 logging:
   console_level: "INFO"
-  file_level: "DEBUG"
+  file_level: "INFO"
   log_file: "transit_opt_run_2.log"
   log_dir: "output/test_run_py"

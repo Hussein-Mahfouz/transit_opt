@@ -7,26 +7,28 @@ for reuse in future optimization runs or integration with external simulation fr
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 class DRTSolutionExporter:
     """
     Export DRT optimization solutions to human-readable JSON format.
-    
+
     This class handles the conversion of DRT solution matrices (containing fleet size indices)
     back to actual fleet deployment schedules with metadata for reuse and external integration.
-    
+
     Key Features:
     - Converts indices back to actual fleet sizes
     - Preserves some zone metadata and operational parameters
     - Validation of solution data
     - Support for metadata attachment
-    
+
     Usage:
         >>> exporter = DRTSolutionExporter(optimization_data)
         >>> path = exporter.export_solution(
@@ -39,7 +41,7 @@ class DRTSolutionExporter:
     def __init__(self, optimization_data: dict[str, Any]):
         """
         Initialize DRT solution exporter.
-        
+
         Args:
             optimization_data: Complete optimization data structure from GTFSDataPreparator
                               Must contain DRT configuration and interval information
@@ -66,15 +68,15 @@ class DRTSolutionExporter:
     ) -> str:
         """
         Export DRT solution to JSON file for future reuse.
-        
+
         Args:
             solution: Combined PT+DRT solution dict with 'drt' key containing the DRT matrix
             output_path: Path for JSON output file (can be relative or absolute)
             metadata: Optional metadata to include in the output file
-            
+
         Returns:
             Absolute path to created JSON file
-            
+
         Raises:
             ValueError: If solution format is invalid or DRT data is missing
             IOError: If file cannot be written
@@ -160,20 +162,20 @@ class DRTSolutionExporter:
             for deployment in zone_data['fleet_deployment'].values()
         )
 
-        print(f"✅ Exported DRT solution to: {output_file.absolute()}")
-        print(f"   Zones: {len(drt_solutions)}")
-        print(f"   Total deployments: {total_deployments}")
-        print(f"   Total vehicle-intervals: {total_vehicles}")
+        logger.info("✅ Exported DRT solution to: %s", output_file.absolute())
+        logger.info("   Zones: %d", len(drt_solutions))
+        logger.info("   Total deployments: %d", total_deployments)
+        logger.info("   Total vehicle-intervals: %d", total_vehicles)
 
         return str(output_file.absolute())
 
     def validate_solution_matrix(self, drt_matrix: np.ndarray) -> dict[str, Any]:
         """
         Validate DRT solution matrix format and values.
-        
+
         Args:
             drt_matrix: DRT solution matrix to validate
-            
+
         Returns:
             Dictionary with validation results and statistics
         """
@@ -232,4 +234,3 @@ class DRTSolutionExporter:
             validation['warnings'].append(f"Very high DRT utilization: {utilization_rate:.1%}")
 
         return validation
-

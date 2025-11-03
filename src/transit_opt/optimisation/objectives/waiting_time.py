@@ -1,28 +1,32 @@
+import logging
 from typing import Any, Optional
 
 import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (calculate_population_weighted_total,
-                                calculate_population_weighted_variance,
-                                interpolate_population_to_zones)
+from ..utils.population import (
+    calculate_population_weighted_total,
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+)
 from .base import BaseSpatialObjective
 
+logger = logging.getLogger(__name__)
 
 class WaitingTimeObjective(BaseSpatialObjective):
     """
     Waiting time objective using hexagonal zones with population weighting.
-    
+
     This objective minimizes user waiting time by optimizing service frequency
-    in zones. Waiting time is estimated as headway/2 for the top-N routes 
+    in zones. Waiting time is estimated as headway/2 for the top-N routes
     serving each zone.
-    
+
     Features:
     - **Population weighting**: Weight by zone population for equity
     - **Multiple metrics**: Total waiting time vs variance in waiting time
     - **Time aggregation**: Average, peak, sum, or interval-specific analysis
-    
+
     Args:
         optimization_data: Complete optimization data from preparator
         spatial_resolution_km: Hexagon size in kilometers
@@ -90,12 +94,12 @@ class WaitingTimeObjective(BaseSpatialObjective):
     def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
         """
             Evaluate waiting time objective for given solution.
-            
+
             Args:
-                solution_matrix: 
+                solution_matrix:
                 - PT-only: Decision matrix (n_routes × n_intervals)
                 - PT+DRT: Dict with 'pt' and 'drt' keys
-                
+
             Returns:
                 Objective value (lower is better)
             """
@@ -103,7 +107,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
         # ALWAYS calculate per-interval waiting times first
         vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
 
-        print(f"   Vehicle data keys: {list(vehicles_data.keys())}")
+        logger.debug("   Vehicle data keys: %s", list(vehicles_data.keys()))
 
         # Calculate waiting times for each interval
         interval_waiting_times = []
@@ -184,7 +188,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
         Args:
             vehicle_count: Number of vehicles serving this zone
             interval_length_minutes: Pre-computed interval length to avoid repeated calls
-            
+
         Returns:
             Waiting time in minutes
         """
@@ -229,7 +233,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
     def _get_peak_interval_waiting_times(self, interval_waiting_times: np.ndarray, vehicles_intervals: np.ndarray) -> np.ndarray:
         """
         Get waiting times from the system-wide peak interval.
-        
+
         Peak interval = interval with most total vehicles across all zones.
         All zones use waiting times from this same interval.
         """
@@ -308,17 +312,17 @@ class WaitingTimeObjective(BaseSpatialObjective):
     ) -> np.ndarray:
         """
         Get waiting times per zone for visualization and analysis.
-        
-        This method converts vehicle counts to waiting times using the standard 
+
+        This method converts vehicle counts to waiting times using the standard
         transit formula: waiting_time = headway / 2, where headway = interval_length / vehicles.
-        
+
         Args:
             solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
             aggregation: How to aggregate across time intervals:
                         - 'average': Mean vehicle count across intervals
-                        - 'peak': Maximum vehicle count across intervals  
+                        - 'peak': Maximum vehicle count across intervals
                         - str(interval_idx): Specific interval by index
-            
+
         Returns:
             Array of waiting times per zone in minutes. Higher values = worse service.
         """
@@ -360,7 +364,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
     ):
         """
         Visualize waiting times spatially.
-        
+
         Args:
             solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
             aggregation: Time aggregation method ('average', 'peak', 'intervals')
@@ -371,7 +375,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
             ax: Optional matplotlib axis to plot on
             vmin: Minimum value for color scale (auto-calculated if None)
             vmax: Maximum value for color scale (auto-calculated if None)
-            
+
         Returns:
             Tuple of (figure, axis) objects
         """

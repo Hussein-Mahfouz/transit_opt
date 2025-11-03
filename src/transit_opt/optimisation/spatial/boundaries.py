@@ -6,9 +6,12 @@ boundaries. It handles CRS validation, spatial
 filtering, and coordinate transformations.
 """
 
+import logging
 from typing import Literal
 
 import geopandas as gpd
+
+logger = logging.getLogger(__name__)
 
 
 class StudyAreaBoundary:
@@ -131,7 +134,7 @@ class StudyAreaBoundary:
                         f"CRS {crs} uses non-metric units ({unit}). Please use a metric CRS."
                     )
 
-            print(f"✅ Validated metric CRS: {crs}")
+            logger.info("✅ Validated metric CRS: %s", crs)
             return crs
 
         except ImportError:
@@ -177,7 +180,7 @@ class StudyAreaBoundary:
 
         # Convert to target CRS if different
         if original_crs != self.target_crs:
-            print(f"🔄 Converting boundary CRS: {original_crs} → {self.target_crs}")
+            logger.info("🔄 Converting boundary CRS: %s → %s", original_crs, self.target_crs)
             boundary_gdf = boundary_gdf.to_crs(self.target_crs)
 
         # Apply buffer if specified
@@ -189,7 +192,7 @@ class StudyAreaBoundary:
             boundary_gdf = boundary_gdf.dissolve().reset_index(drop=True)
 
         self.boundary_gdf = boundary_gdf
-        print(f"✅ Study area set: {len(boundary_gdf)} polygon(s) in {self.target_crs}")
+        logger.info("✅ Study area set: %d polygon(s) in %s", len(boundary_gdf), self.target_crs)
 
     @classmethod
     def from_file(
@@ -232,12 +235,13 @@ class StudyAreaBoundary:
         try:
             boundary_gdf = gpd.read_file(file_path)
 
-            print(f"📁 Loaded boundary from {file_path}")
-            print(f"   Original CRS: {boundary_gdf.crs}, Features: {len(boundary_gdf)}")
+            logger.info("📁 Loaded boundary from %s", file_path)
+            logger.info("   Original CRS: %s, Features: %d", boundary_gdf.crs, len(boundary_gdf))
 
             return cls(boundary_gdf, crs, buffer_km)
 
         except Exception as e:
+            logger.error("❌ Error loading boundary from %s: %s", file_path, e)
             raise ValueError(f"Could not load boundary from {file_path}: {e}")
 
     @classmethod
@@ -396,7 +400,7 @@ class StudyAreaBoundary:
         buffered = boundary_gdf.copy()
         buffered.geometry = boundary_gdf.geometry.buffer(buffer_m)
 
-        print(f"📏 Applied {buffer_radius}km buffer")
+        logger.info("📏 Applied %dkm buffer to boundary layer", buffer_radius)
         return buffered
 
     def filter_points(
@@ -455,10 +459,10 @@ class StudyAreaBoundary:
 
         # Convert to desired output CRS if different
         if filtered_points.crs != output_crs:
-            print(f"🔄 Converting output to {output_crs}")
+            logger.info("🔄 Converting output to %s", output_crs)
             filtered_points = filtered_points.to_crs(output_crs)
 
-        print(f"🔍 Filtered {len(points_gdf)} → {len(filtered_points)} points")
+        logger.info("🔍 Filtered %d → %d points", len(points_gdf), len(filtered_points))
         return filtered_points
 
     def filter_grid(
@@ -517,10 +521,10 @@ class StudyAreaBoundary:
 
         # Convert to desired output CRS if different
         if filtered_grid.crs != output_crs:
-            print(f"🔄 Converting output to {output_crs}")
+            logger.info("🔄 Converting output to %s", output_crs)
             filtered_grid = filtered_grid.to_crs(output_crs)
 
-        print(f"🔍 Filtered {len(grid_gdf)} → {len(filtered_grid)} grid cells")
+        logger.info("🔍 Filtered %d → %d grid cells", len(grid_gdf), len(filtered_grid))
         return filtered_grid
 
     def get_boundary(self, output_crs: str | None = None) -> gpd.GeoDataFrame:
@@ -548,7 +552,7 @@ class StudyAreaBoundary:
         if output_crs is None or output_crs == self.boundary_gdf.crs:
             return self.boundary_gdf.copy()
         else:
-            print(f"🔄 Converting boundary: {self.boundary_gdf.crs} → {output_crs}")
+            logger.info("🔄 Converting boundary: %s → %s", self.boundary_gdf.crs, output_crs)
             return self.boundary_gdf.to_crs(output_crs)
 
     def add_buffer(
@@ -583,7 +587,7 @@ class StudyAreaBoundary:
         if update_boundary:
             self.boundary_gdf = buffered
             self.buffer_km = buffer_km
-            print(f"✅ Updated boundary with {buffer_km}km buffer")
+            logger.info("✅ Updated boundary with %dkm buffer", buffer_km)
 
         return buffered
 

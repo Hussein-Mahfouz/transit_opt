@@ -383,6 +383,165 @@ class TestFleetTotalConstraintHandler:
         print("✅ Average measure constraint test passed!")
 
 
+    def test_fleet_total_constraint_with_drt_integration(self):
+        """Test FleetTotalConstraintHandler with PT+DRT combined fleet calculation."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create DRT-enabled optimization data
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60, 120]
+
+        # DRT configuration
+        drt_config = {
+            'enabled': True,
+            'target_crs': 'EPSG:3857',
+            'default_drt_speed_kmh': 25.0,
+            'zones': [
+                {
+                    'zone_id': 'drt_duke_1',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    'allowed_fleet_sizes': [0, 10, 20, 30],
+                    'zone_name': 'Duke Area 1',
+                    'drt_speed_kmh': 20.0
+                },
+                {
+                    'zone_id': 'drt_duke_2',
+                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    'allowed_fleet_sizes': [0, 5, 15, 25],
+                    'zone_name': 'Duke Area 2'
+                }
+            ]
+        }
+
+        # Extract PT+DRT optimization data
+        opt_data = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
+
+        # Verify DRT is enabled
+        assert opt_data['drt_enabled'] is True
+        assert opt_data['n_drt_zones'] == 2
+
+        # Create constraint handler
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.30,
+            'measure': 'peak'
+        }
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # ===== FIX: Use initial solution from opt_data (matches dimensions) =====
+        initial_solution = opt_data['initial_solution']
+
+        # For PT+DRT, initial_solution is already a flat array that needs decoding
+        # Create a proper PT+DRT solution dict using the problem encoder
+        from transit_opt.optimisation.objectives import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
+
+        # Create a minimal problem to access encoding/decoding
+        dummy_objective = StopCoverageObjective(
+            optimization_data=opt_data,
+            spatial_resolution_km=2.0
+        )
+        problem = TransitOptimizationProblem(
+            optimization_data=opt_data,
+            objective=dummy_objective,
+            constraints=[]
+        )
+
+        # Decode the initial solution to get proper PT+DRT dict format
+        solution_dict = problem.decode_solution(initial_solution)
+
+        print("\n🚌 Testing PT+DRT solution structure...")
+        assert isinstance(solution_dict, dict)
+        assert 'pt' in solution_dict
+        assert 'drt' in solution_dict
+
+        # Test constraint evaluation with proper dict format
+        violations = constraint.evaluate(solution_dict)
+        assert len(violations) == 1
+
+        print(f"✅ Combined PT+DRT constraint violation: {violations[0]:.3f}")
+
+        # ===== Verify PT and DRT components are both considered =====
+        pt_fleet = constraint._calculate_fleet_from_solution(solution_dict['pt'])
+        drt_fleet = constraint._calculate_drt_fleet_from_solution(solution_dict['drt'])
+
+        print(f"   PT fleet by interval: {pt_fleet}")
+        print(f"   DRT fleet by interval: {drt_fleet}")
+
+        # Combined fleet should be sum of both
+        combined_fleet = pt_fleet + drt_fleet
+        baseline_pt_peak = opt_data['constraints']['fleet_analysis']['total_current_fleet_peak']
+        fleet_limit = baseline_pt_peak * (1 + constraint_config['tolerance'])
+
+        print(f"   PT baseline peak: {baseline_pt_peak}")
+        print(f"   Fleet limit (with tolerance): {fleet_limit}")
+        print(f"   Combined peak fleet: {np.max(combined_fleet)}")
+
+        # Verify the calculation is correct
+        expected_violation = np.max(combined_fleet) - fleet_limit
+        assert abs(violations[0] - expected_violation) < 1e-6
+
+        print("✅ PT+DRT constraint integration test passed!")
+
+
+    def test_fleet_total_constraint_drt_disabled_compatibility(self):
+        """Test that FleetTotalConstraintHandler works correctly when DRT is disabled."""
+        from pathlib import Path
+
+        from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
+
+        # Create PT-only optimization data
+        test_data_dir = Path(__file__).parent / "data"
+        gtfs_path = str(test_data_dir / "duke-nc-us.zip")
+
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)
+        allowed_headways = [15, 30, 60, 120]
+
+        # Extract PT-only data (no DRT config)
+        opt_data = preparator.extract_optimization_data(allowed_headways)
+
+        # Verify DRT is disabled
+        assert opt_data.get('drt_enabled', False) is False
+
+        # Create constraint handler
+        constraint_config = {
+            'baseline': 'current_peak',
+            'tolerance': 0.20,
+            'measure': 'peak'
+        }
+        constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
+
+        # ===== FIX: Use initial solution from opt_data (matches dimensions) =====
+        pt_solution = opt_data['initial_solution']
+
+        print(f"\n🚌 Testing PT-only solution...")
+        print(f"   Solution shape: {pt_solution.shape}")
+        print(f"   Expected shape: ({opt_data['n_routes']}, {opt_data['n_intervals']})")
+
+        # Test 1: Standard matrix format (PT-only)
+        violations_matrix = constraint.evaluate(pt_solution)
+        assert len(violations_matrix) == 1
+
+        print(f"✅ Matrix format violation: {violations_matrix[0]:.3f}")
+
+        # Test 2: Dict format with 'pt' key (should also work)
+        solution_dict = {'pt': pt_solution}
+        violations_dict = constraint.evaluate(solution_dict)
+        assert len(violations_dict) == 1
+
+        print(f"✅ Dict format violation: {violations_dict[0]:.3f}")
+
+        # Both should give same result
+        np.testing.assert_array_almost_equal(violations_matrix, violations_dict)
+
+        print("✅ PT-only constraint compatibility verified!")
+
+
 # ================================================================================================
 # FLEET PER-INTERVAL CONSTRAINT HANDLER TESTS
 # ================================================================================================
@@ -1128,4 +1287,5 @@ if __name__ == "__main__":
     This will run all tests with verbose output and print statements.
     """
     print("🚀 Running constraint handler tests with detailed output...")
+    pytest.main([__file__, "-v", "-s"])
     pytest.main([__file__, "-v", "-s"])
