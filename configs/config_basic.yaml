@@ -13,7 +13,7 @@ input:
     enabled: true
     target_crs: "EPSG:3857"  # Web Mercator for consistency
     default_drt_speed_kmh: 25.0  # Default speed for all DRT zones
-    zones: 
+    zones:
       - zone_id: drt_ne
         service_area_path: data/external/drt/drt_ne.shp
         allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Fleet size options for this zone
@@ -23,14 +23,14 @@ input:
         service_area_path: data/external/drt/drt_nw.shp
         allowed_fleet_sizes: [0, 15, 30, 60, 120]  # Different fleet options
         zone_name: "Leeds NW DRT"
-          
+
 problem:
   objective:
     type: WaitingTimeObjective # StopCoverageObjective, WaitingTimeObjective
     spatial_resolution_km: 2.0 # The size of each zone in the grid
     crs: "EPSG:3857"
     time_aggregation: average
-    metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total]. 
+    metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total].
     population_weighted: true
     # Tif file from worldpop. Used when population_weighted: true
     population_layer: data/external/population/gbr_pop_2025_CN_1km_R2025A_UA_v1.tif
@@ -38,28 +38,28 @@ problem:
     spatial_lag: false  # No spatial lag
     # An alpha of 0 means no spatial lag, and an alpha of 1 means that the objective value for a zone is the average of the objective values of all neighboring zones. Values between 0 and 1 are a weighted average of the zone's own value and the average of its neighbors.
     alpha: 0.0
-    
+
   constraints:
     - type: FleetTotalConstraintHandler
       # baseline: How to determine baseline fleet
       #    - 'current_peak': Use peak fleet from current GTFS
       #    - 'current_average': Use average fleet from current GTFS
       #    - 'manual': Use manually specified value
-      baseline: current_peak 
+      baseline: current_peak
       # if value = 0.35 then 35% increase allowed
-      tolerance: 0.35 
+      tolerance: 0.35
       # measure: Which measure to constrain
       #    - 'peak': Constrain peak interval fleet
       #    - 'average': Constrain average across intervals
       #    - 'total': Constrain sum across all intervals (default)
-      measure: peak 
+      measure: peak
     - type: MinimumFleetConstraintHandler
       # baseline: Which original fleet measure to use as reference
       #    - 'current_peak': Reference original peak fleet
       #    - 'current_by_interval': Reference original per-interval fleet
       #    - 'current_average': Reference original average fleet
       baseline: current_peak
-      min_fleet_fraction: 0.95 # Maintain at least X% of current service
+      min_fleet_fraction: 0.55 # Maintain at least X% of current service
       # level: Constraint application level
       #    - 'system': Single constraint for entire system
       #    - 'interval': One constraint per time interval
@@ -89,18 +89,21 @@ problem:
 optimization:
   algorithm:
     type: PSO
-    pop_size: 35
+    pop_size: 50
     inertia_weight: 0.9
     cognitive_coeff: 2.0
     social_coeff: 2.0
+    adaptive: true # whether to use adaptive PSO parameters (default pymoo implementation)
+    velocity_clamp: true
     use_penalty_method: true
     penalty_weight: 100
-    adaptive_penalty: true
-    
+    adaptive_penalty: false # whether to increase penalty weights incrementally during optimization
+    penalty_increase_rate: 1.1 # factor by which to increase penalty weights if adaptive_penalty: true
+
   seeding:
     enabled: false
     # Options are 'from_data' or a List of solutions
-    base_solutions: 'from_data' 
+    base_solutions: 'from_data'
     # base_solutions:
     #    gtfs_paths:
     #        - "output/combined_solution_01_gtfs.zip"
@@ -114,31 +117,30 @@ optimization:
 
   run:
     multi_swarm: true # if true, run multiple swarms in parallel
-    num_runs: 3 # How many swarms to run. Only used if multi_swarm: true
+    num_runs: 4 # How many swarms to run. Only used if multi_swarm: true
     parallel: true # Run swarms in parallel or sequential. Only used if multi_swarm: true
-    track_best_n: 3  # Track the best n results
-    
+    track_best_n: 5  # Track the best n results
+
   termination:
-    max_generations: 10   # Total number of particles = pop_size x max_generations (x num_runs if multi_swarm: true)
+    max_generations: 50   # Total number of particles = pop_size x max_generations (x num_runs if multi_swarm: true)
     max_time_minutes: 60 # Stop after this time even if we haven't completed all generations
-    
+
   monitoring:
     progress_frequency: 5
     save_history: false
-    
- 
+
+
 output:
   # Where to write optimization outputs and exports (mirrors 3_write_solutions_to_file.ipynb)
   save_results: true
   results_dir: "output/test_run_py"     # base directory for all exports
   solution_prefix: "combined_solution"          # prefix to be used for all files
-  best_run: false # Whether to export only the best run's solutions (true) or all runs (false)
-  max_to_save: 2 # Maximum number of solutions to export. Default: None (all)
+  best_run: false      # Whether to export only the best run's solutions (true) or all runs (false)
+  max_to_save: 2      # Maximum number of solutions to export. Default: None (all)
 
 
 logging:
   console_level: "INFO"
   file_level: "DEBUG"
-  log_file: "logs/transit_opt_run.log"
- 
-  
+  log_file: "transit_opt_run_2.log"
+  log_dir: "output/test_run_py"
