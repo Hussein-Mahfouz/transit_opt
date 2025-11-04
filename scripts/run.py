@@ -1,3 +1,7 @@
+# Run script for entire pipeline
+# Run from repo root:  python3 scripts/run.py --config configs/config_template.yaml
+# Replace config_template with your config name
+
 import argparse
 import logging
 import sys
