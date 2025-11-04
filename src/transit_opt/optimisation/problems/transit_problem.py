@@ -970,32 +970,3 @@ class TransitOptimizationProblem(Problem):
                 return False
 
         return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
-        return True  # All constraints satisfied
