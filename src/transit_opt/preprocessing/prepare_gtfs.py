@@ -1863,20 +1863,3 @@ class GTFSDataPreparator:
             logger.info(f"   Invalid deployments: {invalid_deployments}")
 
         return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
