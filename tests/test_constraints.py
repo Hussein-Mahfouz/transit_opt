@@ -1288,4 +1288,3 @@ if __name__ == "__main__":
     """
     print("🚀 Running constraint handler tests with detailed output...")
     pytest.main([__file__, "-v", "-s"])
-    pytest.main([__file__, "-v", "-s"])
