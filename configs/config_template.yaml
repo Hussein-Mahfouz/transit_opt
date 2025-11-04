@@ -6,7 +6,7 @@ input:
   interval_hours: 6
   # The PT and zoning layer are clipped to this boundary
   boundary_geojson: data/external/boundaries/study_area_boundary.geojson
-  boundary_buffer_km: 2.0 # How much to buffer the boundary layer by
+  boundary_buffer_km: 2.0 # How much to buffer the boundary layer by (km)
 
   # drt config used to define drt zones and fleet size options in each zone
   drt:
@@ -15,10 +15,10 @@ input:
     default_drt_speed_kmh: 25.0  # Default speed for all DRT zones
     zones:
       - zone_id: drt_ne
-        service_area_path: data/external/drt/drt_ne.shp
+        service_area_path: data/external/drt/drt_ne.shp # Service area shapefile for this DRT zone
         allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Fleet size options for this zone
         zone_name: "Leeds NE DRT" # name is used in the saved .json file
-        drt_speed_kmh: 20.0  # Zone-specific speed (Will use default_drt_speed_kmh (25.0) if zone-specific speed is not provided)
+        drt_speed_kmh: 20.0  # Zone-specific speed (Will use default_drt_speed_kmh if zone-specific speed is not provided)
       - zone_id: drt_nw
         service_area_path: data/external/drt/drt_nw.shp
         allowed_fleet_sizes: [0, 15, 30, 60, 120]  # Different fleet options
@@ -29,14 +29,25 @@ problem:
     type: WaitingTimeObjective # StopCoverageObjective, WaitingTimeObjective
     spatial_resolution_km: 2.0 # The size of each zone in the grid
     crs: "EPSG:3857"
-    time_aggregation: average
+    # time_Aggregation: How to aggregate values across time intervals
+    # WaitingTimeObjective: [average, peak, sum, intervals]
+        # average:  Average waiting time across intervals for each zone
+        # sum: sum waiting times across intervals for each zone
+        # peak: Use waiting time from interval with most vehicles per zone
+        # intervals: Calculate objective for each interval, then average
+    # StopCoverageObjective [average, peak, sum]
+        # average:  Average vehicles across intervals for each zone
+        # sum: sum vehicles across intervals for each zone
+        # peak: Use vehicles per zone from interval with most vehicles per zone
+    time_aggregation: average # WaitingTimeObjective: [average, peak, sum, intervals]. StopCoverageObjective [average, peak, sum]
     metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total].
-    population_weighted: true
+    population_weighted: true # Weight objective values per zone by population or not
     # Tif file from worldpop. Used when population_weighted: true
     population_layer: data/external/population/gbr_pop_2025_CN_1km_R2025A_UA_v1.tif
     population_power: 1 # Population weighting exponent
     spatial_lag: false  # No spatial lag
-    # An alpha of 0 means no spatial lag, and an alpha of 1 means that the objective value for a zone is the average of the objective values of all neighboring zones. Values between 0 and 1 are a weighted average of the zone's own value and the average of its neighbors.
+    # An alpha of 0 means no spatial lag, and an alpha of 1 means that the objective value for a zone is the average of the objective values of all neighboring zones.
+    # Values between 0 and 1 are a weighted average of the zone's own value and the average of its neighbors.
     alpha: 0.0
 
   constraints:
@@ -82,18 +93,20 @@ problem:
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
   penalty_weights:
-    fleet_total: 10
-    minimum_fleet: 15
-    fleet_per_interval: 20
+    fleet_total: 10           # FleetTotalConstraintHandler
+    minimum_fleet: 15         # MinimumFleetConstraintHandler
+    fleet_per_interval: 20    # FleetPerIntervalConstraintHandler
 
 optimization:
   algorithm:
+    # See pymoo documentation: https://pymoo.org/algorithms/soo/pso.html
     type: PSO
-    pop_size: 50
+    pop_size: 50  # number of particales to use
     inertia_weight: 0.9
     cognitive_coeff: 2.0
     social_coeff: 2.0
     adaptive: true # whether to use adaptive PSO parameters (default pymoo implementation)
+    # Penalty method is a custom implementation that guides the search, as PSO is not meant for constrained optimization
     use_penalty_method: true
     penalty_weight: 100
     adaptive_penalty: false # whether to increase penalty weights incrementally during optimization
@@ -110,8 +123,9 @@ optimization:
     #    drt_solution_paths:
     #        - "output/combined_solution_01_drt.json"
     #        - "output/combined_solution_02_drt.json"
-    frac_gaussian_pert: 0.1
-    gaussian_sigma: 1.5
+    # Our initial population = pop_size. If sampling, we use base_solutions, and fill the rest (pop_size  base_solutions)
+    frac_gaussian_pert: 0.1 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
+    gaussian_sigma: 1.5 # If sigma = 1.5, then 66% of values will be within 1.5 of original value. IMPORTANT: we use index values, so a change of 1 means jumping to the next headway / DRT fleet size
     #random_seed: 50 # Do not specify if using optimize_multi_swarm() i.e. if optimization["run"]["multi_swarm"]: true
 
   run:
@@ -126,7 +140,7 @@ optimization:
 
   monitoring:
     progress_frequency: 5
-    save_history: false
+    save_history: false    # Whether to save Pymoo PSO optimization history (all solutions per generation)
 
 
 output:
@@ -136,10 +150,10 @@ output:
   solution_prefix: "combined_solution"          # prefix to be used for all files
   best_run: false      # Whether to export only the best run's solutions (true) or all runs (false)
   max_to_save: 2      # Maximum number of solutions to export. Default: None (all)
-
+  save_config: true   # Save the config in the output directory
 
 logging:
   console_level: "INFO"
   file_level: "INFO"
-  log_file: "transit_opt_run_2.log"
-  log_dir: "output/test_run_py"
+  log_file: "transit_opt_run_2.log"    # log file name
+  log_dir: "output/test_run_py"        # where to store log file (should be same dir/ as data output)
