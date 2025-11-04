@@ -218,14 +218,3 @@ def usa_population_path():
     test_data_dir = Path(__file__).parent.parent / "data"
     pop_data = test_data_dir / "usa_pop_2025_CN_1km_R2025A_UA_v1.tif"
     return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
-    return str(pop_data)
