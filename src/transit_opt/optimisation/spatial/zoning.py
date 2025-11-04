@@ -100,6 +100,11 @@ class HexagonalZoneSystem:
         self._evaluation_count = 0
         self._print_frequency = 50  # Print every N evaluations (TODO: make configurable)
 
+        # reusable buffers for per-evaluation arrays to avoid repeated allocations
+        self._pt_vehicles_buffer = None   # shape: (n_intervals, n_zones) allocated on first use
+        self._drt_vehicles_buffer = None  # shape: (n_intervals, n_hex_zones) allocated on first use
+
+
         # Validate that CRS is metric
         self._validate_metric_crs()
 
@@ -485,23 +490,29 @@ class HexagonalZoneSystem:
     def _calculate_pt_vehicles_by_interval(
         self, pt_solution_matrix: np.ndarray, optimization_data: dict[str, Any]
     ) -> dict[str, np.ndarray]:
-        """
-        Calculate PT vehicles per zone for each interval.
-
-        """
+        """Calculate PT vehicles per zone for each interval."""
         n_zones = len(self.hex_grid)
         n_intervals = optimization_data["n_intervals"]
 
-        # Extract data from optimization structure
+        # STEP 1: Allocate or reuse buffer
+        if self._pt_vehicles_buffer is None or self._pt_vehicles_buffer.shape != (n_intervals, n_zones):
+            logger.debug("Allocating PT vehicles buffer: shape (%d, %d)", n_intervals, n_zones)
+            self._pt_vehicles_buffer = np.zeros((n_intervals, n_zones), dtype=float)
+        else:
+            # Reset buffer to zeros (much faster than new allocation)
+            self._pt_vehicles_buffer.fill(0.0)
+
+        # STEP 2: Compute into the reusable buffer
+        vehicles_by_intervals = self._pt_vehicles_buffer
+
+        # STEP 3: Extract data from optimization structure
         route_ids = optimization_data["routes"]["ids"]
         allowed_headways = optimization_data["allowed_headways"]
         round_trip_times = optimization_data["routes"]["round_trip_times"]
         no_service_index = optimization_data["no_service_index"]
         interval_labels = optimization_data["intervals"]["labels"]
 
-        # Calculate vehicles per zone for each interval (existing logic unchanged)
-        vehicles_by_intervals = np.zeros((n_intervals, n_zones))
-
+        # STEP 4: Main computation loop (unchanged logic, different output location)
         for interval_idx in range(n_intervals):
             zone_counts = {zone_id: 0 for zone_id in self.hex_grid["zone_id"]}
 
@@ -530,18 +541,20 @@ class HexagonalZoneSystem:
                     for zone_id in zones_served:
                         zone_counts[zone_id] += vehicles_in_interval
 
+            # STEP 5: Write zone counts into buffer row
             vehicles_by_intervals[interval_idx, :] = list(zone_counts.values())
 
-        # identify time interval with peak total vehicles
+        # STEP 6: Identify peak interval
         total_vehicles_by_interval = np.sum(vehicles_by_intervals, axis=1)
-        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        peak_interval_idx = int(np.argmax(total_vehicles_by_interval))
 
-        # Return all aggregation types
+        # STEP 7: Return copies (not the buffer itself!)
+        # This ensures callers can't accidentally keep the buffer alive
         return {
-            "intervals": vehicles_by_intervals,  # [n_intervals, n_zones]
-            "average": np.mean(vehicles_by_intervals, axis=0),  # [n_zones]
-            "peak": vehicles_by_intervals[peak_interval_idx, :],  # [n_zones]
-            "sum": np.sum(vehicles_by_intervals, axis=0),       # [n_zones]
+            "intervals": vehicles_by_intervals.copy(),
+            "average": np.mean(vehicles_by_intervals, axis=0).copy(),
+            "peak": vehicles_by_intervals[peak_interval_idx, :].copy(),
+            "sum": np.sum(vehicles_by_intervals, axis=0).copy(),
             "interval_labels": interval_labels,
         }
 
@@ -551,32 +564,33 @@ class HexagonalZoneSystem:
         """
         Calculate DRT vehicles per zone for each interval
 
-        Step 1:Calculate Time to Cross a zone (zone: STUDY AREA zone, not DRT zone):
+        Step 1: Calculate Time to Cross a zone (zone: STUDY AREA zone, not DRT zone):
         - time = diameter / speed
         - This provides a basic estimate of how long a vehicle might spend traversing
-          a zone. Using the diameter is a simple way to capture the zone's spatial
-          scale. Assuming a constant speed is a necessary simplification without network details.
+        a zone. Using the diameter is a simple way to capture the zone's spatial
+        scale. Assuming a constant speed is a necessary simplification without network details.
 
         Step 2: Calculate Coverage (Average Vehicles per Zone):
         - Coverage = Total Fleet Size / Number of Zones in Service Area
         - This distributes the total fleet across the service area,
-          giving an average vehicle density per zone at any moment in time.
-          It assumes uniform distribution, which is a simplification but a
-          sensible starting point without demand data.
+        giving an average vehicle density per zone at any moment in time.
+        It assumes uniform distribution, which is a simplification but a
+        sensible starting point without demand data.
 
         Step 3: Calculate Vehicle Activity per Zone per Interval:
         - Vehicles per Zone = (Interval Length / Time to Cross Zone) * Coverage
         - This step combines the spatial density (Coverage) with the temporal aspect
-          (how many times a zone could be crossed in the interval).
+        (how many times a zone could be crossed in the interval).
         - Interpretation: The result isn't strictly the number of unique vehicles passing
-          through, nor the number simultaneously present. It's better interpreted as a measure of
-          total vehicle activity or vehicle-presence-time within that zone during the interval.
-          For example, a result of '12' could mean 1 vehicle spending 12 times the crossing duration in the zone,
-          or 12 different vehicles each crossing once, or some combination. It represents the equivalent number
-          of full zone crossings occurring during the interval, scaled by the average vehicle density.
+        through, nor the number simultaneously present. It's better interpreted as a measure of
+        total vehicle activity or vehicle-presence-time within that zone during the interval.
+        For example, a result of '12' could mean 1 vehicle spending 12 times the crossing duration in the zone,
+        or 12 different vehicles each crossing once, or some combination. It represents the equivalent number
+        of full zone crossings occurring during the interval, scaled by the average vehicle density.
 
         Args:
-            drt_solution_matrix: DRT fleet decisions (n_drt_zones × n_intervals)
+            drt_solution_matrix: DRT fleet decisions (n_drt_zones × n_intervals) with
+                            fleet size choice indices
             optimization_data: Complete optimization data
 
         Returns:
@@ -598,25 +612,39 @@ class HexagonalZoneSystem:
                 'interval_labels': optimization_data['intervals']['labels']
             }
 
+        # STEP 1: Allocate or reuse DRT buffer
         drt_zones = optimization_data['drt_config']['zones']
         n_intervals = optimization_data['n_intervals']
         n_hex_zones = len(self.hex_grid)
 
+        if self._drt_vehicles_buffer is None or self._drt_vehicles_buffer.shape != (n_intervals, n_hex_zones):
+            logger.debug("Allocating DRT vehicles buffer: shape (%d, %d)", n_intervals, n_hex_zones)
+            self._drt_vehicles_buffer = np.zeros((n_intervals, n_hex_zones), dtype=float)
+        else:
+            # Reset buffer to zeros (much faster than new allocation)
+            self._drt_vehicles_buffer.fill(0.0)
+
+        # STEP 2: Compute into the reusable buffer
+        drt_vehicles_by_interval = self._drt_vehicles_buffer
+
         # Use study area grid zone diameter (from spatial resolution)
         study_area_zone_diameter_km = self.hex_size_km  # This matches the hex grid size
 
-        # Initialize: [intervals, hex_zones] - SAME structure as PT
-        drt_vehicles_by_interval = np.zeros((n_intervals, n_hex_zones))
-
-        # Process each DRT zone and interval
+        # STEP 3: Process each DRT zone and interval
         for drt_zone_idx, drt_zone in enumerate(drt_zones):
             # Get DRT speed for this zone
-            drt_speed_kmh = drt_zone['drt_speed_kmh']
+            drt_speed_kmh = drt_zone.get('drt_speed_kmh', optimization_data['drt_config'].get('default_drt_speed_kmh', 25.0))
 
             for interval_idx in range(n_intervals):
                 # Get fleet size for this DRT zone and interval
                 fleet_choice_idx = drt_solution_matrix[drt_zone_idx, interval_idx]
-                fleet_size = drt_zone['allowed_fleet_sizes'][fleet_choice_idx]
+                allowed_fleet_sizes = drt_zone.get('allowed_fleet_sizes', [0])
+
+                # Handle out-of-bounds fleet choice indices
+                if fleet_choice_idx < 0 or fleet_choice_idx >= len(allowed_fleet_sizes):
+                    fleet_size = 0
+                else:
+                    fleet_size = allowed_fleet_sizes[int(fleet_choice_idx)]
 
                 if fleet_size == 0:
                     continue
@@ -638,21 +666,20 @@ class HexagonalZoneSystem:
                 # Add to affected hexagonal zones for this interval
                 affected_hex_zones = drt_zone.get('affected_hex_zones', [])
                 for hex_zone_idx in affected_hex_zones:
-                    drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
+                    if 0 <= hex_zone_idx < n_hex_zones:  # Safety check for bounds
+                        drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
 
-
-        # identify time interval with peak total vehicles
+        # STEP 4: Identify time interval with peak total vehicles
         total_vehicles_by_interval = np.sum(drt_vehicles_by_interval, axis=1)
-        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        peak_interval_idx = int(np.argmax(total_vehicles_by_interval)) if np.any(total_vehicles_by_interval > 0) else 0
 
-        # CONSISTENT: Apply same aggregations as PT
+        # STEP 5: Return copies (not the buffer itself!)
+        # This ensures callers can't accidentally keep the buffer alive
         return {
-            'intervals': drt_vehicles_by_interval,
-            'average': np.mean(drt_vehicles_by_interval, axis=0),
-            #TODO: consider fixing peak so that it is the same interval with PT peak, not a different one.
-            # Not important as drt peak not used directly on its own
-            'peak': drt_vehicles_by_interval[peak_interval_idx, :],
-            'sum': np.sum(drt_vehicles_by_interval, axis=0),
+            'intervals': drt_vehicles_by_interval.copy(),
+            'average': np.mean(drt_vehicles_by_interval, axis=0).copy(),
+            'peak': drt_vehicles_by_interval[peak_interval_idx, :].copy(),
+            'sum': np.sum(drt_vehicles_by_interval, axis=0).copy(),
             'interval_labels': optimization_data['intervals']['labels']
         }
 
@@ -667,28 +694,28 @@ class HexagonalZoneSystem:
         - Identifies the interval with highest total system demand (PT + DRT combined)
         - Returns vehicle counts from that specific interval for temporal consistency
         - Ensures PT and DRT peak values represent the SAME interval/time period
-
         """
-        # Combine interval data first
-        combined_intervals = pt_data['intervals'] + drt_data['intervals']  # [intervals, zones]
+        # STEP 1: Combine interval data
+        combined_intervals = pt_data['intervals'] + drt_data['intervals']
 
-        # Find system-wide peak interval (when total vehicles needed is highest)
-        total_vehicles_by_interval = np.sum(combined_intervals, axis=1)  # [intervals]
-        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        # STEP 2: Find system-wide peak interval (when total vehicles needed is highest)
+        total_vehicles_by_interval = np.sum(combined_intervals, axis=1)
+        peak_interval_idx = int(np.argmax(total_vehicles_by_interval))
+
         if should_print:
-            logger.debug("🔍 System peak analysis:")
-            logger.debug("   Peak interval: %d (%s)", peak_interval_idx, pt_data['interval_labels'][peak_interval_idx])
-            logger.debug("   Peak total vehicles: %.1f", total_vehicles_by_interval[peak_interval_idx])
+            logger.debug("🔄 Combined peak interval: %d (total vehicles: %.0f)",
+                        peak_interval_idx, total_vehicles_by_interval[peak_interval_idx])
 
-        # Peak = vehicles needed during system peak interval (temporally consistent)
-        peak_combined = combined_intervals[peak_interval_idx, :]
+        # STEP 3: Get peak vehicles from the system peak interval
+        peak_combined = combined_intervals[peak_interval_idx, :].copy()
 
+        # STEP 4: Return combined results
         return {
-            'intervals': combined_intervals,                           # [intervals, zones]
-            'average': np.mean(combined_intervals, axis=0),           # [zones] - time-averaged
-            'peak': peak_combined,                                    # [zones] - from peak interval
-            'sum': np.sum(combined_intervals, axis=0),               # [zones] - total across time
-            'interval_labels': pt_data['interval_labels']            # Same labels
+            'intervals': combined_intervals,
+            'average': np.mean(combined_intervals, axis=0).copy(),
+            'peak': peak_combined,
+            'sum': np.sum(combined_intervals, axis=0).copy(),
+            'interval_labels': pt_data['interval_labels']
         }
 
 

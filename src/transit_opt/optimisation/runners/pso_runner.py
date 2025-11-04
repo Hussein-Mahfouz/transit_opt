@@ -559,9 +559,12 @@ class PSORuntimeCallback(Callback):
 
         # Track memory every N generations
         if algorithm.n_gen % 10 == 0:
+            import gc
             import os
 
             import psutil
+
+            gc.collect()
             process = psutil.Process(os.getpid())
             mem_mb = process.memory_info().rss / 1024**2
             self.memory_usage.append((algorithm.n_gen, mem_mb))
@@ -1034,6 +1037,9 @@ class PSORunner:
             callbacks.append(penalty_callback)
             logger.info("   🎯 Adaptive penalty method enabled: %d → increasing", pso_config.penalty_weight)
 
+         # Get monitoring config to access save_history setting
+        monitoring_config = self.config_manager.get_monitoring_config()
+
         try:
             # Create algorithm components
             algorithm = self._create_algorithm()        # Configured PSO instance
@@ -1053,7 +1059,7 @@ class PSORunner:
                 termination,            # When to stop optimization
                 callback=callback_wrapper,    # Runtime monitoring
                 verbose=True,           # Enable pymoo's progress output
-                save_history=True       # Enable generation-by-generation tracking
+                save_history=monitoring_config.save_history   # Enable generation-by-generation tracking
             )
 
             optimization_time = time.time() - start_time
