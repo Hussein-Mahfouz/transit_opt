@@ -86,10 +86,10 @@ problem:
       #    - 'current_peak': Use current peak fleet for all intervals
       #    - 'manual': Use manually specified values
       baseline: current_by_interval
-    #   # tolerance: increase allowed per interval
+      # tolerance: increase allowed per interval
       tolerance: 0.4 # If 0.1, then 10% increase allowed per interval
-    #   # min_fraction: Allowed reduction below baseline per interval
-    #   min_fraction: 0.5  # If 0.7, then maintain at least 70% of current service per interval
+      # min_fraction: Allowed reduction below baseline per interval
+      min_fraction: 0.5  # If 0.7, then maintain at least 70% of current service per interval
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
   penalty_weights:
