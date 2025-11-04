@@ -326,9 +326,15 @@ class SolutionLoader:
                 # try to infer interval_hours from optimization_data
                 interval_hours = 24 // optimization_data.get("n_intervals")
 
+                # Get allowed headways without no service value (as it is added by extract_optimization_data)
+                allowed_headways_with_no_service = optimization_data.get('allowed_headways')
+                allowed_headways = [h for h in allowed_headways_with_no_service if h != 9999.0]
+
+
                 logger.info(f"📂 Loading {len(gtfs_paths)} GTFS solutions...")
                 logger.info(f"   Interval hours: {interval_hours}")
                 logger.info(f"   DRT enabled: {optimization_data.get('drt_enabled')}")
+                logger.info(f"   Allowed headways: {optimization_data.get('allowed_headways')}")
 
                 try:
                     preparator = GTFSDataPreparator(
@@ -338,8 +344,8 @@ class SolutionLoader:
 
                     opt_data_list = preparator.extract_multiple_gtfs_solutions(
                         gtfs_paths=gtfs_paths,
-                        allowed_headways=optimization_data.get("allowed_headways"),
-                        drt_config=optimization_data.get("drt_config"),
+                        allowed_headways=allowed_headways, # Pass without 9999 value (no service value)
+                        drt_config=optimization_data.get('drt_config'),
                         drt_solution_paths=drt_paths,
                     )
                     # Validate that we got valid data

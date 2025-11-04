@@ -333,13 +333,23 @@ class GTFSDataPreparator:
         logger.info(f"Successfully extracted {n_routes} routes for optimization")
 
         # Create headway mappings
-        allowed_values = np.array(allowed_headways + [9999.0], dtype=np.float64)
+        # Only add 9999.0 if it's not already present
+        allowed_headways_list = list(allowed_headways) if isinstance(allowed_headways, np.ndarray) else allowed_headways
+
+        if 9999.0 not in allowed_headways_list:
+            allowed_values = np.array(allowed_headways_list + [9999.0], dtype=np.float64)
+            logger.debug("Added no-service option (9999.0) to allowed headways")
+        else:
+            allowed_values = np.array(allowed_headways_list, dtype=np.float64)
+            logger.debug("No-service option (9999.0) already present in allowed headways")
+
         headway_to_index = {float(h): i for i, h in enumerate(allowed_values)}
         no_service_index = len(allowed_values) - 1
 
         logger.debug(
             f"Created discrete choice mapping: {len(allowed_values)} choices (including no-service)"
         )
+        logger.debug(f"Headway to index mapping: {headway_to_index}")
 
         # Create aligned arrays
         route_ids = [r["route_id"] for r in route_data]
@@ -930,7 +940,8 @@ class GTFSDataPreparator:
             constraints or bounds - those are handled by optimization problem classes that
             use this baseline data to set their own constraint levels.
         """
-        from ..optimisation.utils.fleet_calculations import calculate_fleet_requirements
+        from ..optimisation.utils.fleet_calculations import \
+            calculate_fleet_requirements
 
         logger.debug("Analyzing current GTFS fleet requirements by interval")
         logger.debug(
@@ -1851,4 +1862,21 @@ class GTFSDataPreparator:
         if invalid_deployments > 0:
             logger.info(f"   Invalid deployments: {invalid_deployments}")
 
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
+        return drt_matrix
         return drt_matrix
