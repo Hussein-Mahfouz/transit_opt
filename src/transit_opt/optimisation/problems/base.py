@@ -522,7 +522,14 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         """Calculate constraints: intervals × (ceiling + floor constraints)."""
         n_ceiling = self.n_intervals if self.config.get('tolerance') is not None else 0
         n_floor = self.n_intervals if self.config.get('min_fraction') is not None else 0
-        return n_ceiling + n_floor
+        total = n_ceiling + n_floor
+
+        logger.debug(f"FleetPerIntervalConstraintHandler constraint count calculation:")
+        logger.debug(f"  tolerance specified: {self.config.get('tolerance') is not None} → {n_ceiling} ceiling constraints")
+        logger.debug(f"  min_fraction specified: {self.config.get('min_fraction') is not None} → {n_floor} floor constraints")
+        logger.debug(f"  TOTAL: {total} constraints")
+
+        return total
 
     def _validate_config(self) -> None:
         """Validate per-interval fleet constraint configuration."""
