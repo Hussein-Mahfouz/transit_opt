@@ -22,7 +22,6 @@ from transit_opt.optimisation.runners.pso_runner import PSORunner
 from transit_opt.optimisation.spatial.boundaries import StudyAreaBoundary
 from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
 
-logger = logging.getLogger(__name__)
 
 def load_config(path: str) -> dict:
     path = Path(path)
@@ -32,6 +31,7 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 def inject_boundary_if_path(cfg: dict) -> None:
+    logger = logging.getLogger("transit_opt.scripts.run")
     # Check if Boundary exists
     obj = cfg.setdefault("problem", {}).setdefault("objective", {})
     bpath = cfg.get("input", {}).get("boundary_geojson")
@@ -66,6 +66,8 @@ def prepare_opt_data(cfg: dict) -> dict:
 
 
 def export_results(opt_data: dict, res, cfg: dict) -> None:
+    logger = logging.getLogger("transit_opt.scripts.run")
+
     out_cfg = cfg.get("output", {})
     if not out_cfg.get("save_results", False):
         return
@@ -96,7 +98,6 @@ def export_results(opt_data: dict, res, cfg: dict) -> None:
         for k, v in r["exports"].items():
             logger.info("  %s -> %s", k, v["path"])
 
-
 def main(config_path: str):
     # 1. Load config and set up logging
     cfg = load_config(config_path)
@@ -113,6 +114,23 @@ def main(config_path: str):
         console_level=console_level,
         file_level=file_level
     )
+    logger = logging.getLogger("transit_opt.scripts.run")
+    logger.info("🚀 Starting transit optimization run")
+    logger.info("📋 Config file:\n%s", yaml.dump(cfg, sort_keys=False, default_flow_style=False))
+
+    # Save config to output directory (copy original file)
+    out_cfg = cfg.get("output", {})
+    if out_cfg.get("save_results", False):
+        import shutil
+
+        out_dir = Path(out_cfg.get("results_dir"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        cfg_dest = out_dir / "config.yaml"
+
+        shutil.copy2(config_path, cfg_dest)
+        logger.info(f"💾 Saved config to {cfg_dest}")
+
+
 
     # 2. Add study area boundary for clipping gtfs / zones
     inject_boundary_if_path(cfg)
@@ -147,7 +165,8 @@ def main(config_path: str):
     # 6. Export results to file
     export_results(opt_data, res, cfg)
 
-    print("Done. Best objective:", getattr(res, "best_objective", None))
+    logger.info("✅ Optimization complete!")
+
 
 
 if __name__ == "__main__":
