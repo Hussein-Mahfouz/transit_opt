@@ -745,7 +745,7 @@ class HexagonalZoneSystem:
                         if 0 <= pos < len(self.hex_grid)
                     ]
 
-            logger.debug("   Zone %d: affects %d hexagonal zones", drt_zone['zone_id'], len(drt_zone['affected_hex_zones']))
+            logger.debug("   Zone %s: affects %d hexagonal zones", drt_zone['zone_id'], len(drt_zone['affected_hex_zones']))
 
 
     def get_zone_statistics(

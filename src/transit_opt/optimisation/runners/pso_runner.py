@@ -472,6 +472,7 @@ class PSORuntimeCallback(Callback):
 
         # Track best feasible solutions during optimization
         self.feasible_tracker = BestFeasibleSolutionsTracker(track_best_n)
+        self.memory_usage = []
 
 
 
@@ -555,6 +556,16 @@ class PSORuntimeCallback(Callback):
                 self.feasible_tracker.add_generation_solutions(
                     solution_matrices, objectives, generations, feasibles, violations
                 )
+
+        # Track memory every N generations
+        if algorithm.n_gen % 10 == 0:
+            import os
+
+            import psutil
+            process = psutil.Process(os.getpid())
+            mem_mb = process.memory_info().rss / 1024**2
+            self.memory_usage.append((algorithm.n_gen, mem_mb))
+            logger.info(f"🧠 Memory usage at Gen {algorithm.n_gen}: {mem_mb:.1f} MB")
 
 class PenaltySchedulingCallback(Callback):
     """Adaptive penalty weight scheduling for constraint handling."""
@@ -1696,7 +1707,7 @@ class PSORunner:
         # Add custom sampling if enabled
         if sampling_config.enabled:
             logger.info("Creating custom initial population with %d samples", pso_config.pop_size)
-            logger.debug("Gaussian fraction: %.1%%, Sigma: %.2f",
+            logger.debug("Gaussian fraction: %.1f%%, Sigma: %.2f",
                         sampling_config.frac_gaussian_pert * 100, sampling_config.gaussian_sigma)
 
             from ..utils.population_builder import PopulationBuilder
@@ -1717,8 +1728,8 @@ class PSORunner:
 
             algorithm.initialization.sampling = initial_population
             logger.info("✅ Custom population set: shape %s", initial_population.shape)
-            logger.info("   📊 Gaussian fraction: %.1%%", sampling_config.frac_gaussian_pert * 100)
-            logger.info("   📊 LHS fraction: %.1%% (calculated)", sampling_config.frac_lhs * 100)
+            logger.info("   📊 Gaussian fraction: %.1f%%", sampling_config.frac_gaussian_pert * 100)
+            logger.info("   📊 LHS fraction: %.1f%% (calculated)", sampling_config.frac_lhs * 100)
 
         return algorithm
 
