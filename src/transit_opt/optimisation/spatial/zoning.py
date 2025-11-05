@@ -633,21 +633,16 @@ class HexagonalZoneSystem:
         # STEP 3: Process each DRT zone and interval
         for drt_zone_idx, drt_zone in enumerate(drt_zones):
             # Get DRT speed for this zone
-            drt_speed_kmh = drt_zone.get('drt_speed_kmh', optimization_data['drt_config'].get('default_drt_speed_kmh', 25.0))
+            drt_speed_kmh = drt_zone.get('drt_speed_kmh')
+            if drt_speed_kmh is None:
+                drt_speed_kmh = optimization_data['drt_config'].get('default_drt_speed_kmh', 25.0)
+                logger.debug("Using default DRT speed %s km/h for zone %s", drt_speed_kmh, drt_zone.get('id'))
 
             for interval_idx in range(n_intervals):
                 # Get fleet size for this DRT zone and interval
                 fleet_choice_idx = drt_solution_matrix[drt_zone_idx, interval_idx]
-                allowed_fleet_sizes = drt_zone.get('allowed_fleet_sizes', [0])
 
-                # Handle out-of-bounds fleet choice indices
-                if fleet_choice_idx < 0 or fleet_choice_idx >= len(allowed_fleet_sizes):
-                    fleet_size = 0
-                else:
-                    fleet_size = allowed_fleet_sizes[int(fleet_choice_idx)]
-
-                if fleet_size == 0:
-                    continue
+                fleet_size = drt_zone['allowed_fleet_sizes'][int(fleet_choice_idx)]  # IndexError for out-of-range, negative
 
                 # Calculate vehicle activity
                 interval_length_minutes = optimization_data['intervals']['duration_minutes']
@@ -668,6 +663,8 @@ class HexagonalZoneSystem:
                 for hex_zone_idx in affected_hex_zones:
                     if 0 <= hex_zone_idx < n_hex_zones:  # Safety check for bounds
                         drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
+                    else:
+                        logger.warning("Affected hex zone index %s out of bounds (0..%d); skipping", hex_zone_idx, n_hex_zones-1)
 
         # STEP 4: Identify time interval with peak total vehicles
         total_vehicles_by_interval = np.sum(drt_vehicles_by_interval, axis=1)
