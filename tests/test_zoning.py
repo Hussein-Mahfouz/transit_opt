@@ -1,13 +1,13 @@
 """
 Unit tests for HexagonalZoneSystem calculation methods.
 
-This test suite validates the core spatial calculation logic used in 
+This test suite validates the core spatial calculation logic used in
 transit optimization objectives. Tests focus on mathematical correctness
 and edge case handling rather than integration.
 
 Test Coverage:
 - DRT vehicle activity calculations
-- PT+DRT data combination logic  
+- PT+DRT data combination logic
 - Spatial intersection mapping
 - Vehicle counting and aggregation
 - Edge cases and error handling
@@ -29,7 +29,7 @@ class TestHexagonalZoneSystemCalculations:
     def drt_test_setup(self):
         """
         Unified fixture providing complete DRT test setup.
-        
+
         Returns a dictionary with:
         - optimization_data: Complete PT+DRT optimization data
         - zone_system: HexagonalZoneSystem with DRT mappings already applied
@@ -146,7 +146,9 @@ class TestHexagonalZoneSystemCalculations:
             drt_vehicles['average'], calculated_average, decimal=10
         )
 
-        calculated_peak = np.max(drt_vehicles['intervals'], axis=0)
+        total_vehicles_by_interval = np.sum(drt_vehicles['intervals'], axis=1)
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        calculated_peak = drt_vehicles['intervals'][peak_interval_idx, :]
         np.testing.assert_array_equal(drt_vehicles['peak'], calculated_peak)
 
         # Verify we actually have some activity (since mappings are guaranteed)
@@ -331,7 +333,9 @@ class TestHexagonalZoneSystemCalculations:
         calculated_avg = np.mean(pt_vehicles['intervals'], axis=0)
         np.testing.assert_array_almost_equal(pt_vehicles['average'], calculated_avg, decimal=10)
 
-        calculated_peak = np.max(pt_vehicles['intervals'], axis=0)
+        total_vehicles_by_interval = np.sum(pt_vehicles['intervals'], axis=1)
+        peak_interval_idx = np.argmax(total_vehicles_by_interval)
+        calculated_peak = pt_vehicles['intervals'][peak_interval_idx, :]
         np.testing.assert_array_equal(pt_vehicles['peak'], calculated_peak)
 
         print("✅ PT-only compatibility verified")

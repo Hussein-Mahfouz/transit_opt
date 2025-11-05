@@ -647,7 +647,7 @@ class TestGTFSDataPreparator:
         # Verify the test file exists
         assert drt_json_path.exists(), f"Test DRT solution file not found: {drt_json_path}"
 
-        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6, log_level="ERROR")
+        preparator = GTFSDataPreparator(gtfs_path, interval_hours=6)
 
         # Create DRT config matching the JSON file
         drt_config = {
@@ -708,18 +708,18 @@ class TestGTFSDataPreparator:
     def test_extract_multiple_gtfs_solutions_with_real_drt_data(self, sample_gtfs_path):
         """
         Test extract_multiple_gtfs_solutions with real DRT solution file.
-        
+
         **Test Purpose**:
         Verify that the method correctly loads GTFS data, creates complete optimization
-        data structures, and properly applies DRT solutions from JSON files to the 
+        data structures, and properly applies DRT solutions from JSON files to the
         initial solution within each opt_data.
-        
+
         **What We're Testing**:
         1. GTFS → complete opt_data structure creation
-        2. DRT solution JSON → DRT matrix loading  
+        2. DRT solution JSON → DRT matrix loading
         3. DRT matrix → initial_solution integration within opt_data
         4. Data consistency between baseline (no DRT file) and loaded (with DRT file) solutions
-        
+
         """
         test_data_dir = Path(__file__).parent / "data"
         drt_json_path = test_data_dir / "drt" / "drt_solution.json"
@@ -728,7 +728,7 @@ class TestGTFSDataPreparator:
         assert Path(sample_gtfs_path).exists(), f"GTFS file not found: {sample_gtfs_path}"
         assert drt_json_path.exists(), f"DRT solution file not found: {drt_json_path}"
 
-        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6, log_level="ERROR")
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
 
         # DRT configuration matching the saved JSON file
         drt_config = {
