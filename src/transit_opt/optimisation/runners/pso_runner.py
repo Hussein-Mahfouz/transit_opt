@@ -1037,7 +1037,7 @@ class PSORunner:
             callbacks.append(penalty_callback)
             logger.info("   🎯 Adaptive penalty method enabled: %d → increasing", pso_config.penalty_weight)
 
-         # Get monitoring config to access save_history setting
+        # Get monitoring config to access save_history setting
         monitoring_config = self.config_manager.get_monitoring_config()
 
         try:
