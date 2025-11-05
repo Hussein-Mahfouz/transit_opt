@@ -125,7 +125,8 @@ class TestPSORunnerIntegration:
         in the expected format. This structure is used throughout the system
         for solution analysis, constraint validation, and performance assessment.
         """
-        from transit_opt.optimisation.runners.pso_runner import OptimizationResult
+        from transit_opt.optimisation.runners.pso_runner import \
+            OptimizationResult
 
         # Create sample result
         result = OptimizationResult(
@@ -154,7 +155,8 @@ class TestPSORunnerIntegration:
         across runs and provide statistical summaries. This enables robust
         optimization assessment and confidence interval analysis.
         """
-        from transit_opt.optimisation.runners.pso_runner import MultiRunResult, OptimizationResult
+        from transit_opt.optimisation.runners.pso_runner import (
+            MultiRunResult, OptimizationResult)
 
         # Create sample results
         result1 = OptimizationResult(
@@ -625,7 +627,8 @@ class TestPSORunnerWithRealData:
                 }
             }
         }
-        from transit_opt.optimisation.config.config_manager import OptimizationConfigManager
+        from transit_opt.optimisation.config.config_manager import \
+            OptimizationConfigManager
         from transit_opt.optimisation.runners.pso_runner import PSORunner
 
         config_manager = OptimizationConfigManager(config_dict=config)
@@ -657,7 +660,8 @@ def test_best_feasible_solutions_tracker():
     The class tracks the best feasible solutions found during optimisation, updating
     with each generation
     """
-    from transit_opt.optimisation.runners.pso_runner import BestFeasibleSolutionsTracker
+    from transit_opt.optimisation.runners.pso_runner import \
+        BestFeasibleSolutionsTracker
 
     tracker = BestFeasibleSolutionsTracker(max_solutions=3)
 
@@ -886,7 +890,8 @@ class TestPSORunnerMultipleConstraints:
 
         Validates that FleetTotal, FleetPerInterval, and MinimumFleet constraints
         can operate together correctly. Uses lenient tolerances to ensure
-        feasible solutions while testing the constraint integration machinery.
+        feasible solutions while testing the constraint integration machinery. Also uses
+        sampling to ensure we start with at least one feasible solution
 
         This demonstrates the complete constraint composition system that
         would be used in production optimization scenarios.
@@ -905,14 +910,14 @@ class TestPSORunnerMultipleConstraints:
                     {
                         "type": "FleetTotalConstraintHandler",
                         "baseline": "current_peak",
-                        "tolerance": 0.70,  # Lenient - 50% increase allowed
+                        "tolerance": 0.50,  # Lenient - 50% increase allowed
                         "measure": "peak",
                     },
                     # Constraint 2: Per-interval operational limits
                     {
                         "type": "FleetPerIntervalConstraintHandler",
                         "baseline": "current_by_interval",
-                        "tolerance": 0.80,  # Lenient - 50% increase per interval
+                        "tolerance": 0.50,  # Lenient - 50% increase per interval
                     },
                     # Constraint 3: Minimum service requirement
                     {
@@ -932,6 +937,9 @@ class TestPSORunnerMultipleConstraints:
                     "adaptive": True,
                 },
                 "termination": {"max_generations": 10},  # Very short for testing
+                "sampling": {"enabled": True,
+                             "base_solutions": "from_data",
+                             "frac_gaussian_pert": 0.1}
             },
         }
 
@@ -1108,21 +1116,24 @@ class TestPSORunnerMultipleConstraints:
                     {
                         "type": "FleetTotalConstraintHandler",
                         "baseline": "current_peak",
-                        "tolerance": -0.2,  # 20% REDUCTION required
+                        "tolerance": 0.2,  # 20% increase limit
                         "measure": "peak",
                     },
                     # Tight per-interval constraints
                     {
                         "type": "FleetPerIntervalConstraintHandler",
                         "baseline": "current_by_interval",
-                        "tolerance": 100.0,  # 10% increase per interval
+                        "tolerance": 0.1,  # 10% increase per interval
                     },
                 ],
             },
             "optimization": {
                 "algorithm": {"type": "PSO",
                               "pop_size": 10},
-                "termination": {"max_generations": 2},
+                "termination": {"max_generations": 5},
+                "sampling": {"enabled": True,
+                             "base_solutions": "from_data",
+                             "frac_gaussian_pert": 0.1}
             },
         }
 
@@ -1577,7 +1588,8 @@ class TestPSORunnerPenaltyMethod:
         automatic exploration-to-exploitation transition mechanism.
         """
 
-        from transit_opt.optimisation.runners.pso_runner import PenaltySchedulingCallback
+        from transit_opt.optimisation.runners.pso_runner import \
+            PenaltySchedulingCallback
 
         print("\n📈 TESTING ADAPTIVE PENALTY CALLBACK:")
 
