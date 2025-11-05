@@ -717,7 +717,7 @@ class GTFSDataPreparator:
                     mapping_stats[choice_idx] += 1
 
                 else:
-                    # Find nearest allowed headway from valid optiona
+                    # Find nearest allowed headway from valid options
                     distances = [abs(current_headway - h) for h in allowed_headway_values]
                     best_idx = np.argmin(distances)
                     best_headway = allowed_headway_values[best_idx]
