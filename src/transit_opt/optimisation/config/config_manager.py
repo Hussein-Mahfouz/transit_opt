@@ -51,11 +51,16 @@ runner = ProductionPSORunner(config_manager)
 ```
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from transit_opt.optimisation.utils.solution_loader import SolutionLoader
+
+logger = logging.getLogger(__name__)
 
 # Replace the PSOConfig class definition around line 50
 
@@ -768,6 +773,31 @@ class OptimizationConfigManager:
     def get_full_config(self) -> dict[str, Any]:
         """Get complete configuration dictionary."""
         return self.config.copy()
+
+    def resolve_sampling_base_solutions(self, optimization_data: dict) -> None:
+        """
+        Resolve sampling.base_solutions descriptor (if provided) into concrete list
+        of flat solution arrays and inject into sampling config.
+        """
+        sampling = getattr(self, "sampling_config", None)
+        if sampling is None or not sampling.enabled:
+            logger.info("Sampling is not enabled")
+            return
+
+        base = sampling.base_solutions
+
+        # If already a concrete list of arrays, do nothing
+        if isinstance(base, list) and base and hasattr(base[0], "shape"):
+            logger.info("Sampling base_solutions already resolved")
+            return
+
+        loader = SolutionLoader()
+        resolved = loader.resolve_base_solutions_descriptor(base, optimization_data)
+
+        # Inject resolved list back into sampling_config and config dict
+        self.sampling_config.base_solutions = resolved
+        self.config.setdefault("optimization", {}).setdefault("sampling", {})["base_solutions"] = resolved
+        logger.info(f"Resolved sampling base_solutions: {len(resolved)} solutions loaded")
 
     def print_summary(self):
         """Print configuration summary for verification."""

@@ -15,7 +15,7 @@ class TestSolutionExportManager:
     def pt_only_opt_data(self, sample_gtfs_path):
         """Create real PT-only optimization data."""
         print("🔧 Creating PT-only optimization data from real GTFS")
-        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6, log_level="ERROR")
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
         return preparator.extract_optimization_data([15, 30, 60, 120])
 
     @pytest.fixture
@@ -24,7 +24,7 @@ class TestSolutionExportManager:
         print("🔧 Creating PT+DRT optimization data from real GTFS")
         test_data_dir = Path(__file__).parent / "data"
 
-        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6, log_level="ERROR")
+        preparator = GTFSDataPreparator(sample_gtfs_path, interval_hours=6)
 
         drt_config = {
             'enabled': True,
@@ -50,7 +50,7 @@ class TestSolutionExportManager:
     def test_initialization_for_different_problem_types(self, pt_only_opt_data, drt_opt_data):
         """
         Test SolutionExportManager initialization for both PT-only and PT+DRT problems.
-        
+
         🎯 Purpose: Verify that the manager correctly identifies problem type and initializes
         the appropriate converters based on whether DRT is enabled.
         """
@@ -94,7 +94,7 @@ class TestSolutionExportManager:
     def test_export_single_pt_solution(self, pt_only_opt_data):
         """
         Test export of a single PT-only solution with minimal metadata.
-        
+
         🎯 Purpose: Verify that PT-only solution export creates GTFS files
         without unnecessary metadata embedding.
         """
@@ -172,7 +172,7 @@ class TestSolutionExportManager:
     def test_export_combined_pt_drt_solution(self, drt_opt_data):
         """
         Test export of a combined PT+DRT solution with minimal metadata.
-        
+
         🎯 Purpose: Verify that combined solutions create both GTFS and DRT JSON files
         with only essential cross-references.
         """

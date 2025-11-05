@@ -1,13 +1,18 @@
+import logging
 from typing import Any, Optional
 
 import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.population import (calculate_population_weighted_variance,
-                                interpolate_population_to_zones,
-                                validate_population_config)
+from ..utils.population import (
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+    validate_population_config,
+)
 from .base import BaseSpatialObjective
+
+logger = logging.getLogger(__name__)
 
 
 class StopCoverageObjective(BaseSpatialObjective):
@@ -82,7 +87,7 @@ class StopCoverageObjective(BaseSpatialObjective):
             spatial_lag=True,
             alpha=0.15  # 15% neighbor influence
         )
-        # With population weighting 
+        # With population weighting
         pop_equity_obj = StopCoverageObjective(
             optimization_data=opt_data,
             spatial_resolution_km=2.0,
@@ -154,12 +159,12 @@ class StopCoverageObjective(BaseSpatialObjective):
     def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
         """
         Minimize variance in vehicle distribution across hexagons.
-        
+
         Args:
-                solution_matrix: 
+                solution_matrix:
                 - PT-only: Decision matrix (n_routes × n_intervals)
                 - PT+DRT: Dict with 'pt' and 'drt' keys
-                
+
             Returns:
                 Objective value (lower is better)
         """
@@ -202,11 +207,15 @@ class StopCoverageObjective(BaseSpatialObjective):
             else:
                 variance = np.var(vehicles_per_zone)  # Standard variance
 
-            print(
-                f"📊 Vehicles per zone ({self.time_aggregation}): "
-                f"min={np.min(vehicles_per_zone)}, "
-                f"max={np.max(vehicles_per_zone)}, "
-                f"var={variance:.2f}"
+            logger.debug(
+                "📊 Vehicles per zone (%s): "
+                "min=%d, "
+                "max=%d, "
+                "var=%.2f",
+                self.time_aggregation,
+                np.min(vehicles_per_zone),
+                np.max(vehicles_per_zone),
+                variance
             )
             return float(variance)
         else:
@@ -312,7 +321,7 @@ class StopCoverageObjective(BaseSpatialObjective):
     ):
         """
         Visualize spatial coverage (vehicle distribution).
-        
+
         Args:
             solution_matrix: Decision matrix (PT-only) or dict with 'pt'/'drt' keys
             aggregation: 'average', 'peak', or 'intervals'
@@ -323,7 +332,7 @@ class StopCoverageObjective(BaseSpatialObjective):
             ax: Optional matplotlib axis to plot on
             vmin: Minimum value for color scale (auto-calculated if None)
             vmax: Maximum value for color scale (auto-calculated if None)
-            
+
         Returns:
             Tuple of (figure, axis) objects
         """

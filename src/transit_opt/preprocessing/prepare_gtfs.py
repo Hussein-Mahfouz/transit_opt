@@ -87,7 +87,6 @@ class GTFSDataPreparator:
         default_round_trip_time: float = 60.0,
         max_round_trip_minutes: float = 240.0,
         no_service_threshold_minutes: float = 480,
-        log_level: str = "INFO",
     ):
         """
         Initialize GTFS data preparator with validation and caching.
@@ -110,9 +109,6 @@ class GTFSDataPreparator:
         Raises:
             ValueError: If interval_hours doesn't divide 24 evenly OR is < 3
         """
-        # Configure logging
-        self._setup_logging(log_level)
-
         # Hardcoded constraint
         MIN_INTERVAL_HOURS = 3
 
@@ -156,20 +152,6 @@ class GTFSDataPreparator:
         # Load and cache GTFS data
         self._load_gtfs()
 
-    def _setup_logging(self, log_level: str) -> None:
-        """Configure logging for this instance."""
-        # Set level for module logger
-        numeric_level = getattr(logging, log_level.upper(), logging.INFO)
-        logger.setLevel(numeric_level)
-
-        # Only add handler if none exists (avoid duplicates)
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
 
     def _load_gtfs(self) -> None:
         """
@@ -351,13 +333,23 @@ class GTFSDataPreparator:
         logger.info(f"Successfully extracted {n_routes} routes for optimization")
 
         # Create headway mappings
-        allowed_values = np.array(allowed_headways + [9999.0], dtype=np.float64)
+        # Only add 9999.0 if it's not already present
+        allowed_headways_list = list(allowed_headways) if isinstance(allowed_headways, np.ndarray) else allowed_headways
+
+        if 9999.0 not in allowed_headways_list:
+            allowed_values = np.array(allowed_headways_list + [9999.0], dtype=np.float64)
+            logger.debug("Added no-service option (9999.0) to allowed headways")
+        else:
+            allowed_values = np.array(allowed_headways_list, dtype=np.float64)
+            logger.debug("No-service option (9999.0) already present in allowed headways")
+
         headway_to_index = {float(h): i for i, h in enumerate(allowed_values)}
         no_service_index = len(allowed_values) - 1
 
         logger.debug(
             f"Created discrete choice mapping: {len(allowed_values)} choices (including no-service)"
         )
+        logger.debug(f"Headway to index mapping: {headway_to_index}")
 
         # Create aligned arrays
         route_ids = [r["route_id"] for r in route_data]
@@ -1233,9 +1225,9 @@ class GTFSDataPreparator:
         This method extends the base PT optimization data extraction to include DRT-specific
         configurations. This includes user specified:
         - DRT service areas (one shp file per DRT service)
-        - a list of allowed_fleet_sizes. Similar to allowed_headways, each DRT service area will be assigned a value 
+        - a list of allowed_fleet_sizes. Similar to allowed_headways, each DRT service area will be assigned a value
         from this discrete list during the optimisation problem
-        
+
         Args:
             allowed_headways: List of allowed headway values in minutes for PT
             drt_config: Optional DRT configuration dict with structure:
@@ -1251,19 +1243,19 @@ class GTFSDataPreparator:
                         }
                     ]
                 }
-        
+
         Returns:
             Extended optimization data with DRT support including loaded spatial layers
         """
-        print("🔧 EXTRACTING OPTIMIZATION DATA WITH DRT SUPPORT:")
+        logger.info("🔧 EXTRACTING OPTIMIZATION DATA WITH DRT SUPPORT:")
 
         # Get base PT optimization data
         base_opt_data = self.extract_optimization_data(allowed_headways)
-        print(f"   ✅ Base PT data extracted: {base_opt_data['n_routes']} routes, {base_opt_data['n_intervals']} intervals")
+        logger.info(f"   ✅ Base PT data extracted: {base_opt_data['n_routes']} routes, {base_opt_data['n_intervals']} intervals")
 
         # Add DRT configuration if provided
         if drt_config and drt_config.get('enabled', False):
-            print("   🚁 Adding DRT configuration...")
+            logger.info("   🚁 Adding DRT configuration...")
 
             # Validate DRT configuration
             self._validate_drt_config(drt_config)
@@ -1331,17 +1323,15 @@ class GTFSDataPreparator:
             # Replace the PT-only initial solution with combined solution
             base_opt_data['initial_solution'] = combined_initial_solution
 
-            print("   🚁 DRT integration complete:")
-            print(f"      DRT zones: {n_drt_zones}")
-            print(f"      Max fleet choices per zone: {max_drt_choices}")
-            print(f"      PT variables: {pt_variables}")
-            print(f"      DRT variables: {drt_variables}")
-            print(f"      Total variables: {total_variables}")
-            print(f"      Total DRT service area: {base_opt_data['drt_config']['total_service_area']:.2f} km²")
-
+            logger.info(f"""   🚁 DRT integration complete:
+            * DRT zones: {n_drt_zones}
+            * Max fleet choices per zone: {max_drt_choices}
+            * Total variables: {total_variables} (PT: {pt_variables}, DRT: {drt_variables})
+            * Total DRT service area: {base_opt_data['drt_config']['total_service_area']:.2f} km²
+            """)
         else:
             # No DRT - add compatibility fields
-            print("   🚌 PT-only mode (no DRT)")
+            logger.info("   🚌 PT-only mode (no DRT)")
             base_opt_data.update({
                 'drt_enabled': False,
                 'drt_config': None,
@@ -1360,10 +1350,10 @@ class GTFSDataPreparator:
     def _load_drt_spatial_layers(self, drt_config: dict) -> list[dict]:
         """
         Load DRT service area shapefiles and attach geometry to zone configurations.
-        
+
         Args:
             drt_config: DRT configuration with zone definitions
-            
+
         Returns:
             List of zone dictionaries with added 'geometry' and 'area_km2' fields
         """
@@ -1371,13 +1361,13 @@ class GTFSDataPreparator:
 
         import geopandas as gpd
 
-        print("   🗺️ Loading DRT spatial layers...")
+        logger.info("   🗺️ Loading DRT spatial layers...")
 
         # Get target CRS from config with smart defaults
         target_crs = drt_config.get('target_crs')
         if target_crs is None:
             raise ValueError("DRT config must specify 'target_crs' for spatial layers")
-        print(f"      Target CRS: {target_crs}")
+        logger.info(" Target CRS: %s", target_crs)
 
         zones_with_geometry = []
         total_area = 0.0
@@ -1386,8 +1376,8 @@ class GTFSDataPreparator:
             zone_id = zone['zone_id']
             service_area_path = zone['service_area_path']
 
-            print(f"      Loading zone {i+1}: {zone_id}")
-            print(f"         Path: {service_area_path}")
+            logger.info("      Loading zone %d: %s", i+1, zone_id)
+            logger.info("         Path: %s", service_area_path)
 
             # Validate file exists
             if not Path(service_area_path).exists():
@@ -1399,7 +1389,7 @@ class GTFSDataPreparator:
 
                 # Log original CRS
                 original_crs = zone_gdf.crs.to_string() if zone_gdf.crs else 'Unknown'
-                print(f"         Original CRS: {original_crs}")
+                logger.info("         Original CRS: %s", original_crs)
 
 
                 # Ensure we have at least one polygon
@@ -1408,13 +1398,13 @@ class GTFSDataPreparator:
 
                 # If multiple polygons, union them into a single service area
                 if len(zone_gdf) > 1:
-                    print(f"         Unioning {len(zone_gdf)} polygons into single service area")
+                    logger.info("         Unioning %d polygons into single service area", len(zone_gdf))
                     service_area_geometry = zone_gdf.geometry.unary_union
                 else:
                     service_area_geometry = zone_gdf.geometry.iloc[0]
 
                 # Convert to crs specified in drt_config
-                print(f"         🔄 Converting: {original_crs} → {target_crs}")
+                logger.info("         🔄 Converting: %s → %s", original_crs, target_crs)
                 zone_gdf = zone_gdf.to_crs(target_crs)
 
                 # Calculate area in km² (convert to metric CRS if needed)
@@ -1439,18 +1429,18 @@ class GTFSDataPreparator:
                     # Use zone-specific speed if provided, otherwise use default from config
                     zone['drt_speed_kmh'] = zone.get('drt_speed_kmh', default_drt_speed)
 
-                    print(f"   DRT Zone {zone['zone_id']}: {zone['area_km2']:.2f} km², "
-                        f"speed {zone['drt_speed_kmh']} km/h")
+                    logger.info("   DRT Zone %d: %.2f km², speed %.2f km/h",
+                        zone['zone_id'], zone['area_km2'], zone['drt_speed_kmh'])
 
-                print(f"         ✅ Loaded: {area_km2:.2f} km² service area")
-                print(f"            CRS: {enhanced_zone['crs']}")
-                print(f"            Fleet choices: {zone.get('allowed_fleet_sizes', [])}")
+                logger.info("         ✅ Loaded: %.2f km² service area", area_km2)
+                logger.info("            CRS: %s", enhanced_zone['crs'])
+                logger.info("            Fleet choices: %s", zone.get('allowed_fleet_sizes', []))
 
             except Exception as e:
                 raise ValueError(f"Failed to load DRT service area for zone {zone_id}: {e}")
 
-        print("   ✅ All DRT spatial layers loaded successfully")
-        print(f"      Total DRT service area: {total_area:.2f} km²")
+        logger.info("   ✅ All DRT spatial layers loaded successfully")
+        logger.info("      Total DRT service area: %.2f km²", total_area)
 
         return zones_with_geometry
 
@@ -1460,7 +1450,7 @@ class GTFSDataPreparator:
 
     def _validate_drt_config(self, drt_config: dict):
         """Validate DRT configuration structure with updated field names."""
-        print("   🔍 Validating DRT configuration...")
+        logger.info("   🔍 Validating DRT configuration...")
 
         if not isinstance(drt_config, dict):
             raise ValueError("drt_config must be a dictionary")
@@ -1501,8 +1491,8 @@ class GTFSDataPreparator:
             if not isinstance(service_area_path, str):
                 raise ValueError(f"DRT zone {i} service_area_path must be a string path")
 
-        print(f"   ✅ DRT configuration valid: {len(zones)} zones")
-        print(f"      Target CRS: {target_crs}")
+        logger.info("   ✅ DRT configuration valid: %d zones", len(zones))
+        logger.info("      Target CRS: %s", target_crs)
 
     def _create_combined_initial_solution(
         self,
@@ -1512,16 +1502,16 @@ class GTFSDataPreparator:
     ) -> np.ndarray:
         """
         Create combined PT+DRT initial solution by adding DRT variables.
-        
+
         Args:
             pt_initial_solution: PT-only initial solution matrix (n_routes × n_intervals)
             drt_zones: List of DRT zone configurations
             n_intervals: Number of time intervals
-            
+
         Returns:
             Combined flat solution vector with PT + DRT variables
         """
-        print("   🔧 Creating combined PT+DRT initial solution...")
+        logger.info("   🔧 Creating combined PT+DRT initial solution...")
 
         # Flatten PT solution
         pt_flat = pt_initial_solution.flatten()
@@ -1543,11 +1533,11 @@ class GTFSDataPreparator:
                 drt_initial_matrix[zone_idx, :] = initial_fleet_idx
 
                 fleet_size = allowed_fleet_sizes[initial_fleet_idx]
-                print(f"      Zone {zone['zone_id']}: Initial fleet choice {initial_fleet_idx} ({fleet_size} vehicles)")
+                logger.info("      Zone %d: Initial fleet choice %d (%d vehicles)", zone['zone_id'],initial_fleet_idx, fleet_size)
             else:
                 # Fallback: use index 0
                 drt_initial_matrix[zone_idx, :] = 0
-                print(f"      Zone {zone['zone_id']}: Default fleet choice 0")
+                logger.info("      Zone %d: Default fleet choice 0", zone['zone_id'])
 
         # Flatten DRT solution
         drt_flat = drt_initial_matrix.flatten()
@@ -1555,10 +1545,12 @@ class GTFSDataPreparator:
         # Combine PT and DRT
         combined_solution = np.concatenate([pt_flat, drt_flat])
 
-        print("   ✅ Combined initial solution created:")
-        print(f"      PT variables: {len(pt_flat)}")
-        print(f"      DRT variables: {len(drt_flat)}")
-        print(f"      Total variables: {len(combined_solution)}")
+        logger.info(f"""
+        ✅ Combined initial solution created:
+        * PT variables: {pt_initial_solution.shape} → {len(pt_flat)} flat
+        * DRT variables: {drt_initial_matrix.shape} → {len(drt_flat)} flat
+        * Combined shape: {combined_solution.shape}
+        """)
 
         return combined_solution
 
@@ -1576,36 +1568,36 @@ class GTFSDataPreparator:
     ) -> list[dict[str, Any]]:
         """
         Extract optimization data from multiple GTFS feeds with optional DRT solutions.
-        
+
         This method is designed for seeding PSO runs with multiple initial solutions from different
         GTFS feeds (typically results from previous optimization runs saved to disk).
-        
+
         **Data Flow**:
         1. Load each GTFS feed → Extract complete optimization data structure
         2. If DRT enabled: Create combined PT+DRT problem with flat initial solution
         3. If DRT solution file provided: Replace DRT portion of initial solution with loaded values
         4. Return list of complete opt_data dictionaries ready for optimization
-        
+
         **Why Return Complete opt_data**:
         - Optimization algorithms need full problem structure (bounds, constraints, metadata)
         - Fleet analysis and constraints are feed-specific and needed for optimization
         - Reconstruction data is required for solution interpretation
-        
+
         Args:
             gtfs_paths: List of paths to GTFS feed files
-            allowed_headways: List of allowed headway values in minutes  
+            allowed_headways: List of allowed headway values in minutes
             drt_config: Optional DRT configuration for PT+DRT problems
             drt_solution_paths: Optional list of DRT solution JSON files (one per GTFS)
-            
+
         Returns:
             List of optimization data dictionaries, each containing:
             - Complete problem structure (bounds, constraints, metadata)
             - Modified initial_solution with loaded DRT values (if provided)
             - All fields needed for optimization algorithms
-            
+
         Raises:
             ValueError: If drt_solution_paths length doesn't match gtfs_paths length
-            
+
         Example:
             ```python
             # Load multiple solutions for PSO seeding
@@ -1615,12 +1607,12 @@ class GTFSDataPreparator:
                 drt_config=drt_config,
                 drt_solution_paths=['drt1.json', 'drt2.json']
             )
-            
+
             # Each opt_data can be used directly in optimization
             for i, opt_data in enumerate(opt_data_list):
                 print(f"Solution {i}: {opt_data['n_routes']} routes, "
                     f"{len(opt_data['initial_solution'])} variables")
-                
+
                 # Ready for PSO
                 pso_runner.run(opt_data)
             ```
@@ -1632,7 +1624,7 @@ class GTFSDataPreparator:
         optimization_data_list = []
 
         for i, gtfs_path in enumerate(gtfs_paths):
-            print(f"Processing GTFS feed {i+1}/{len(gtfs_paths)}: {gtfs_path}")
+            logger.info(f"Processing GTFS feed {i+1}/{len(gtfs_paths)}: {gtfs_path}")
 
             # Create fresh preparator for this GTFS feed
             preparator = GTFSDataPreparator(
@@ -1641,8 +1633,7 @@ class GTFSDataPreparator:
                 date=None,
                 turnaround_buffer=self.turnaround_buffer,
                 max_round_trip_minutes=self.max_round_trip_minutes,
-                no_service_threshold_minutes=self.no_service_threshold_minutes,
-                log_level="WARNING"
+                no_service_threshold_minutes=self.no_service_threshold_minutes
             )
 
             # Extract complete optimization data structure
@@ -1656,7 +1647,7 @@ class GTFSDataPreparator:
                     allowed_headways=allowed_headways
                 )
 
-            print(f"  📊 Base optimization data: {opt_data['n_routes']} routes, "
+            logger.info(f"  📊 Base optimization data: {opt_data['n_routes']} routes, "
                 f"{len(opt_data['initial_solution'])} variables")
 
             # If DRT solution file is provided AND this is a DRT-enabled problem, load and apply it
@@ -1665,7 +1656,7 @@ class GTFSDataPreparator:
                 drt_config and
                 opt_data.get('drt_enabled', False)):
 
-                print(f"  🚁 Loading DRT solution from: {drt_solution_paths[i]}")
+                logger.info(f"  🚁 Loading DRT solution from: {drt_solution_paths[i]}")
 
                 # Load DRT matrix from JSON file (zones × intervals)
                 drt_matrix = self._load_drt_solution_from_file(
@@ -1673,7 +1664,7 @@ class GTFSDataPreparator:
                     opt_data
                 )
 
-                print(f"  📈 Loaded DRT matrix: {drt_matrix.shape} (zones × intervals)")
+                logger.info(f"  📈 Loaded DRT matrix: {drt_matrix.shape} (zones × intervals)")
 
                 # Update the DRT portion of the initial solution in opt_data
                 opt_data['initial_solution'] = self._update_drt_portion_in_flat_solution(
@@ -1682,10 +1673,10 @@ class GTFSDataPreparator:
                     opt_data=opt_data
                 )
 
-                print("  ✅ Applied DRT solution to optimization data")
+                logger.info("  ✅ Applied DRT solution to optimization data")
 
             elif drt_solution_paths and drt_solution_paths[i] and not drt_config:
-                print("  ⚠️  DRT solution file provided but DRT not enabled, ignoring")
+                logger.warning("  ⚠️  DRT solution file provided but DRT not enabled, ignoring")
 
             # Add metadata about the source
             opt_data['metadata']['source_index'] = i
@@ -1695,7 +1686,7 @@ class GTFSDataPreparator:
 
             optimization_data_list.append(opt_data)
 
-        print(f"✅ Extracted {len(optimization_data_list)} optimization data structures")
+        logger.info(f"✅ Extracted {len(optimization_data_list)} optimization data structures")
         return optimization_data_list
 
     def _update_drt_portion_in_flat_solution(
@@ -1706,11 +1697,11 @@ class GTFSDataPreparator:
     ) -> np.ndarray:
         """
         Update the DRT portion of a flat combined solution array with values from a DRT matrix.
-        
-        **Purpose**: 
-        Replace the DRT variables in a combined PT+DRT flat solution with specific values 
+
+        **Purpose**:
+        Replace the DRT variables in a combined PT+DRT flat solution with specific values
         loaded from a saved DRT solution file, while keeping the PT portion unchanged.
-        
+
         **Data Structure**:
         The flat_solution has this structure:
         ```
@@ -1719,22 +1710,22 @@ class GTFSDataPreparator:
             PT variables              DRT variables
             (pt_size elements)       (drt_size elements)
         ```
-        
+
         Args:
             flat_solution: Combined flat solution array from extract_optimization_data_with_drt()
             drt_matrix: DRT solution matrix (n_drt_zones × n_intervals) with choice indices
             opt_data: Optimization data containing variable structure information
-            
+
         Returns:
             Updated flat solution array with DRT portion replaced
-            
+
         **Example**:
         ```
-        Input flat_solution:  [1, 2, 0, 1, 0, 0, 0, 0]  # PT=[1,2,0,1], DRT=[0,0,0,0] 
+        Input flat_solution:  [1, 2, 0, 1, 0, 0, 0, 0]  # PT=[1,2,0,1], DRT=[0,0,0,0]
         Input drt_matrix:     [[1, 2], [0, 3]]           # 2 zones × 2 intervals
         Output flat_solution: [1, 2, 0, 1, 1, 2, 0, 3]  # PT unchanged, DRT=[1,2,0,3]
         ```
-        
+
         Raises:
             ValueError: If DRT matrix dimensions don't match expected structure
         """
@@ -1773,8 +1764,8 @@ class GTFSDataPreparator:
         # Replace DRT portion (keep PT portion unchanged)
         updated_solution[pt_size:pt_size + drt_size] = drt_flat
 
-        print(f"    🔧 Updated DRT portion: indices {pt_size}:{pt_size + drt_size}")
-        print(f"    📊 DRT values: {drt_flat.tolist()}")
+        logger.info(f"    🔧 Updated DRT portion: indices {pt_size}:{pt_size + drt_size}")
+        logger.info(f"    📊 DRT values: {drt_flat.tolist()}")
 
         return updated_solution
 
@@ -1785,15 +1776,15 @@ class GTFSDataPreparator:
     ) -> np.ndarray:
         """
         Load DRT solution from JSON file and convert to matrix format. We save the DRT component
-        from some solutions from the optimisation run as a JSON file. This method allows us to load 
+        from some solutions from the optimisation run as a JSON file. This method allows us to load
         those files back into the correct matrix format for use in combined PT+DRT solutions.
         It is used by _combine_pt_gtfs_with_drt_json() to replace the initial DRT solution (all 0 values)
         with the values from the JSON file.
-        
+
         Args:
             drt_solution_path: Path to DRT solution JSON file
             opt_data: Optimization data for validation
-            
+
         Returns:
             DRT solution matrix (n_drt_zones × n_intervals)
         """
@@ -1834,7 +1825,7 @@ class GTFSDataPreparator:
             zone_id = zone['zone_id']
 
             if zone_id not in drt_data['drt_solutions']:
-                print(f"  ⚠️  Zone {zone_id} not found in solution file, using default (0)")
+                logger.warning(f"  ⚠️  Zone {zone_id} not found in solution file, using default (0)")
                 missing_zones.append(zone_id)
                 continue
 
@@ -1853,22 +1844,22 @@ class GTFSDataPreparator:
                     try:
                         choice_idx = allowed_fleet_sizes.index(target_fleet_size)
                         drt_matrix[zone_idx, interval_idx] = choice_idx
-                        print(f"    Zone {zone_id} {interval_label}: {target_fleet_size} vehicles (idx {choice_idx})")
+                        logger.info(f"    Zone {zone_id} {interval_label}: {target_fleet_size} vehicles (idx {choice_idx})")
                     except ValueError:
-                        print(f"    ⚠️  Zone {zone_id} {interval_label}: fleet size {target_fleet_size} not in allowed list, using 0")
+                        logger.error(f"    ⚠️  Zone {zone_id} {interval_label}: fleet size {target_fleet_size} not in allowed list, using 0")
                         drt_matrix[zone_idx, interval_idx] = 0
                         invalid_deployments += 1
                 else:
-                    print(f"    ⚠️  Zone {zone_id} {interval_label}: not in solution file, using 0")
+                    logger.warning(f"    ⚠️  Zone {zone_id} {interval_label}: not in solution file, using 0")
                     drt_matrix[zone_idx, interval_idx] = 0
                     invalid_deployments += 1
 
         # Summary
-        print(f"✅ Loaded DRT solution from: {drt_solution_path}")
-        print(f"   Zones loaded: {loaded_zones}/{len(current_zones)}")
+        logger.info(f"✅ Loaded DRT solution from: {drt_solution_path}")
+        logger.info(f"   Zones loaded: {loaded_zones}/{len(current_zones)}")
         if missing_zones:
-            print(f"   Missing zones: {missing_zones}")
+            logger.info(f"   Missing zones: {missing_zones}")
         if invalid_deployments > 0:
-            print(f"   Invalid deployments: {invalid_deployments}")
+            logger.info(f"   Invalid deployments: {invalid_deployments}")
 
         return drt_matrix
