@@ -13,10 +13,10 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
-                   FleetTotalConstraintHandler)
+from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
 
 logger = logging.getLogger(__name__)
+
 
 class TransitOptimizationProblem(Problem):
     """
@@ -120,7 +120,6 @@ class TransitOptimizationProblem(Problem):
         constraints: list[BaseConstraintHandler] | None = None,
         penalty_config: dict[str, Any] | None = None,
     ):
-
         logger.info("🏗️  CREATING TRANSIT OPTIMIZATION PROBLEM:")
 
         # Store components
@@ -134,7 +133,7 @@ class TransitOptimizationProblem(Problem):
         self.n_choices = optimization_data["n_choices"]
 
         # Check if DRT is enabled
-        self.drt_enabled = optimization_data.get('drt_enabled', False)
+        self.drt_enabled = optimization_data.get("drt_enabled", False)
 
         if self.drt_enabled:
             self.n_drt_zones = optimization_data["n_drt_zones"]
@@ -154,7 +153,7 @@ class TransitOptimizationProblem(Problem):
             self.var_structure = None
 
             logger.info(
-            f"""📊 Problem dimensions (PT-only):
+                f"""📊 Problem dimensions (PT-only):
             • Routes: {self.n_routes}
             • Time intervals: {self.n_intervals}
             • Headway choices: {self.n_choices}
@@ -183,15 +182,15 @@ class TransitOptimizationProblem(Problem):
         # if DRT is enabled and PT headway choices are not the same length as DRT fleet size
         # choices, then we need to use the combined variable bounds
         # e.g.:
-            # allowed_headways = [0, 10, 20, 30]  # 4 choices (0-indexed 0-3)
-            # allowed_fleet_sizes = [0, 5, 10]    # 3 choices (0-indexed 0-2)
-            # combined_variable_bounds = [4, 4, 4, ..., 2, 2, 2]
-            # first n_var_pt are headway choices, last n_var_drt are fleet size choices
-            # note: the reason for the '4' in combined_variable_bounds for headways is that
-            # we have an extra index for no_service
+        # allowed_headways = [0, 10, 20, 30]  # 4 choices (0-indexed 0-3)
+        # allowed_fleet_sizes = [0, 5, 10]    # 3 choices (0-indexed 0-2)
+        # combined_variable_bounds = [4, 4, 4, ..., 2, 2, 2]
+        # first n_var_pt are headway choices, last n_var_drt are fleet size choices
+        # note: the reason for the '4' in combined_variable_bounds for headways is that
+        # we have an extra index for no_service
         if self.drt_enabled:
             # Use combined variable bounds for DRT+PT
-            combined_bounds = optimization_data['combined_variable_bounds']
+            combined_bounds = optimization_data["combined_variable_bounds"]
             xu = np.array(combined_bounds, dtype=int) - 1  # Convert choices to max indices
             logger.info(f"      Total variables: {n_var}")
             logger.info(f"      PT variables: {optimization_data['pt_decision_variables']}")
@@ -204,9 +203,7 @@ class TransitOptimizationProblem(Problem):
         self.penalty_config = penalty_config or {"enabled": False}
         self.use_penalty_method = self.penalty_config.get("enabled", False)
         self.penalty_weight = self.penalty_config.get("penalty_weight", 1000.0)
-        self.constraint_penalty_weights = self.penalty_config.get(
-            "constraint_weights", {}
-        )
+        self.constraint_penalty_weights = self.penalty_config.get("constraint_weights", {})
 
         # Store constraint info for penalty calculation
         self.constraint_names = [type(c).__name__ for c in (constraints or [])]
@@ -222,16 +219,12 @@ class TransitOptimizationProblem(Problem):
                 xu=xu,
                 vtype=int,
             )
-            logger.info(
-                f"   🎯 Penalty method enabled: {len(constraints or [])} constraints → objective penalties"
-            )
+            logger.info(f"   🎯 Penalty method enabled: {len(constraints or [])} constraints → objective penalties")
             logger.info(f"   ⚖️ Base penalty weight: {self.penalty_weight}")
 
         else:
             # Use hard constraints (existing approach)
-            super().__init__(
-                n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl=xl, xu=xu, vtype=int
-            )
+            super().__init__(n_var=n_var, n_obj=n_obj, n_constr=n_constr, xl=xl, xu=xu, vtype=int)
             logger.info(f"   🚦 Hard constraints: {n_constr} constraint(s)")
 
         # Log constraint details
@@ -240,7 +233,7 @@ class TransitOptimizationProblem(Problem):
             for i, constraint in enumerate(self.constraints):
                 constraint_info = constraint.get_constraint_info()
                 logger.info(
-                    f"      {i+1}. {constraint_info['handler_type']}: "
+                    f"      {i + 1}. {constraint_info['handler_type']}: "
                     f"{constraint_info['n_constraints']} constraint(s)"
                 )
         else:
@@ -308,20 +301,16 @@ class TransitOptimizationProblem(Problem):
                         violations = constraint.evaluate(solution)
                     elif self.drt_enabled:
                         # Other constraints only handle PT part when DRT enabled
-                        violations = constraint.evaluate(solution['pt'])
+                        violations = constraint.evaluate(solution["pt"])
                     else:
                         # PT-only case: pass solution directly
                         violations = constraint.evaluate(solution)
 
                     # Get constraint-specific penalty weight
                     constraint_name = self.constraint_names[j]
-                    constraint_weight = self._get_constraint_penalty_weight(
-                        constraint_name
-                    )
+                    constraint_weight = self._get_constraint_penalty_weight(constraint_name)
                     # Calculate penalty: sum of squared positive violations
-                    constraint_penalty = (
-                        np.sum(np.maximum(0, violations) ** 2) * constraint_weight
-                    )
+                    constraint_penalty = np.sum(np.maximum(0, violations) ** 2) * constraint_weight
                     total_penalty += constraint_penalty
 
                 # Add penalty to objective
@@ -332,7 +321,6 @@ class TransitOptimizationProblem(Problem):
                 F[i, 0] = base_objective
 
                 if self.constraints and G is not None:
-
                     constraint_start_idx = 0
 
                     for constraint in self.constraints:
@@ -343,7 +331,7 @@ class TransitOptimizationProblem(Problem):
                                 violations = constraint.evaluate(solution)
                             elif self.drt_enabled:
                                 # Other constraints only handle PT part when DRT enabled
-                                violations = constraint.evaluate(solution['pt'])
+                                violations = constraint.evaluate(solution["pt"])
                             else:
                                 # PT-only case: pass solution directly
                                 violations = constraint.evaluate(solution)
@@ -353,13 +341,9 @@ class TransitOptimizationProblem(Problem):
                             constraint_start_idx = constraint_end_idx
 
                         except Exception as e:
-                            logger.error(
-                                f"   ⚠️  Constraint evaluation failed for solution {i}: {e}"
-                            )
+                            logger.error(f"   ⚠️  Constraint evaluation failed for solution {i}: {e}")
                             # Assign large positive violations (constraint violated)
-                            constraint_end_idx = (
-                                constraint_start_idx + constraint.n_constraints
-                            )
+                            constraint_end_idx = constraint_start_idx + constraint.n_constraints
                             G[i, constraint_start_idx:constraint_end_idx] = 1e6
                             constraint_start_idx = constraint_end_idx
 
@@ -404,8 +388,8 @@ class TransitOptimizationProblem(Problem):
                         # For FleetPerInterval, track individual interval feasibility
                         if isinstance(constraint, FleetPerIntervalConstraintHandler):
                             # Check if both ceiling and floor constraints exist
-                            has_ceiling = constraint.config.get('tolerance') is not None
-                            has_floor = constraint.config.get('min_fraction') is not None
+                            has_ceiling = constraint.config.get("tolerance") is not None
+                            has_floor = constraint.config.get("min_fraction") is not None
 
                             # Number of actual time intervals (NOT number of constraints!)
                             n_intervals = self.n_intervals
@@ -429,7 +413,6 @@ class TransitOptimizationProblem(Problem):
                                     interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
                                     interval_feasibility_hard[interval_name] = interval_satisfied
 
-
                         constraint_start_idx = constraint_end_idx
 
                     # Print interval-specific breakdown for hard constraints
@@ -440,11 +423,11 @@ class TransitOptimizationProblem(Problem):
                         floor_data = {}
 
                         for interval_name, satisfied_count in interval_feasibility_hard.items():
-                            if 'Ceiling' in interval_name:
-                                interval_num = int(interval_name.split('_')[-1])
+                            if "Ceiling" in interval_name:
+                                interval_num = int(interval_name.split("_")[-1])
                                 ceiling_data[interval_num] = satisfied_count
-                            elif 'Floor' in interval_name:
-                                interval_num = int(interval_name.split('_')[-1])
+                            elif "Floor" in interval_name:
+                                interval_num = int(interval_name.split("_")[-1])
                                 floor_data[interval_num] = satisfied_count
 
                         # Print ceiling constraints
@@ -453,7 +436,9 @@ class TransitOptimizationProblem(Problem):
                             for interval_idx in sorted(ceiling_data.keys()):
                                 satisfied_count = ceiling_data[interval_idx]
                                 interval_label = self._get_interval_label(interval_idx)
-                                logger.info(f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                                logger.info(
+                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
+                                )
 
                         # Print floor constraints
                         if floor_data:
@@ -461,7 +446,9 @@ class TransitOptimizationProblem(Problem):
                             for interval_idx in sorted(floor_data.keys()):
                                 satisfied_count = floor_data[interval_idx]
                                 interval_label = self._get_interval_label(interval_idx)
-                                logger.info(f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                                logger.info(
+                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
+                                )
 
             # ===== PENALTY METHOD LOGGING =====
             elif self.use_penalty_method and self.constraints:
@@ -473,13 +460,13 @@ class TransitOptimizationProblem(Problem):
                 interval_feasibility = {}
 
                 for constraint_idx, constraint in enumerate(self.constraints):
-                    constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
+                    constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
                     constraint_feasibility[constraint_name] = 0
 
                     # For FleetPerInterval, track each interval separately
                     if isinstance(constraint, FleetPerIntervalConstraintHandler):
-                        has_ceiling = constraint.config.get('tolerance') is not None
-                        has_floor = constraint.config.get('min_fraction') is not None
+                        has_ceiling = constraint.config.get("tolerance") is not None
+                        has_floor = constraint.config.get("min_fraction") is not None
 
                         # Track each interval for both types
                         for interval_idx in range(self.n_intervals):
@@ -490,26 +477,24 @@ class TransitOptimizationProblem(Problem):
                                 interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
                                 interval_feasibility[interval_name] = 0
 
-
                 for i in range(pop_size):
                     solution_matrix = self.decode_solution(X[i])
                     is_feasible = True
 
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
-                        constraint_name = constraint.__class__.__name__.replace('ConstraintHandler', '')
-                          # Apply smart constraint handling here (FleetTotal works on full solution,
-                          # others on PT only)
+                        constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                        # Apply smart constraint handling here (FleetTotal works on full solution,
+                        # others on PT only)
                         if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
                             # FleetTotalConstraintHandler can handle full PT+DRT solution
                             violations = constraint.evaluate(solution_matrix)
                         elif self.drt_enabled:
                             # Other constraints only handle PT part when DRT enabled
-                            violations = constraint.evaluate(solution_matrix['pt'])
+                            violations = constraint.evaluate(solution_matrix["pt"])
                         else:
                             # PT-only case: pass solution directly
                             violations = constraint.evaluate(solution_matrix)
-
 
                         # Check overall constraint feasibility
                         constraint_satisfied = np.all(violations <= 1e-6)
@@ -520,8 +505,8 @@ class TransitOptimizationProblem(Problem):
 
                         # For FleetPerInterval, track individual interval feasibility
                         if isinstance(constraint, FleetPerIntervalConstraintHandler):
-                            has_ceiling = constraint.config.get('tolerance') is not None
-                            has_floor = constraint.config.get('min_fraction') is not None
+                            has_ceiling = constraint.config.get("tolerance") is not None
+                            has_floor = constraint.config.get("min_fraction") is not None
                             n_intervals = self.n_intervals
 
                             # Track ceiling constraints (first n_intervals violations)
@@ -540,7 +525,6 @@ class TransitOptimizationProblem(Problem):
                                     interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
                                     if violation <= 1e-6:
                                         interval_feasibility[interval_name] += 1
-
 
                     if is_feasible:
                         feasible_count += 1
@@ -561,11 +545,11 @@ class TransitOptimizationProblem(Problem):
                     floor_data = {}
 
                     for interval_name, satisfied_count in interval_feasibility.items():
-                        if 'Ceiling' in interval_name:
-                            interval_num = int(interval_name.split('_')[-1])
+                        if "Ceiling" in interval_name:
+                            interval_num = int(interval_name.split("_")[-1])
                             ceiling_data[interval_num] = satisfied_count
-                        elif 'Floor' in interval_name:
-                            interval_num = int(interval_name.split('_')[-1])
+                        elif "Floor" in interval_name:
+                            interval_num = int(interval_name.split("_")[-1])
                             floor_data[interval_num] = satisfied_count
 
                     # Print ceiling constraints
@@ -574,7 +558,9 @@ class TransitOptimizationProblem(Problem):
                         for interval_idx in sorted(ceiling_data.keys()):
                             satisfied_count = ceiling_data[interval_idx]
                             interval_label = self._get_interval_label(interval_idx)
-                            logger.info(f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                            logger.info(
+                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
+                            )
 
                     # Print floor constraints
                     if floor_data:
@@ -582,8 +568,9 @@ class TransitOptimizationProblem(Problem):
                         for interval_idx in sorted(floor_data.keys()):
                             satisfied_count = floor_data[interval_idx]
                             interval_label = self._get_interval_label(interval_idx)
-                            logger.info(f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions")
-
+                            logger.info(
+                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
+                            )
 
     def _get_constraint_penalty_weight(self, constraint_name: str) -> float:
         """Get penalty weight for specific constraint type."""
@@ -613,6 +600,9 @@ class TransitOptimizationProblem(Problem):
         """
         Convert flat solution vector to route×interval matrix.
 
+        Handles NaN/Inf from PSO numerical instability by replacing
+        with valid defaults instead of crashing.
+
         ENCODING DETAILS:
         - Flat vector: [r0i0, r0i1, r0i2, r1i0, r1i1, r1i2, ...]
         - Matrix format: [[r0i0, r0i1, r0i2], [r1i0, r1i1, r1i2], ...]
@@ -633,6 +623,41 @@ class TransitOptimizationProblem(Problem):
              [3 1 0]]
         """
 
+        # ===== STEP 1: DETECT AND FIX BAD VALUES FROM PSO =====
+        if np.any(~np.isfinite(x_flat)):
+            bad_indices = np.where(~np.isfinite(x_flat))[0]
+            bad_values = x_flat[bad_indices]
+            logger.warning(
+                f"PSO generated non-finite values at indices {bad_indices}: {bad_values}. "
+                f"Replacing with safe defaults to continue optimization."
+            )
+
+            # Replace NaN/Inf with middle-of-range values (safer than edges)
+            if not self.drt_enabled:
+                # PT-ONLY: Replace with no-service index (last index)
+                no_service_index = self.n_choices - 1
+                x_flat = np.where(np.isfinite(x_flat), x_flat, no_service_index)
+
+                logger.warning(f"   Replaced {len(bad_indices)} NaN/Inf with no-service index {no_service_index}")
+            else:
+                # PT+DRT: Use variable-specific worst-case defaults
+                pt_size = self.var_structure["pt_size"]
+                combined_bounds = self.optimization_data["combined_variable_bounds"]
+
+                # Create default array: no-service for PT, min-fleet (0) for DRT
+                default_values = np.zeros(len(combined_bounds), dtype=int)
+                default_values[:pt_size] = self.n_choices - 1  # PT: no-service index
+                # DRT portion already 0 (minimum fleet)
+
+                x_flat = np.where(np.isfinite(x_flat), x_flat, default_values)
+
+                pt_bad = np.sum(bad_indices < pt_size)
+                drt_bad = len(bad_indices) - pt_bad
+                logger.warning(
+                    f"   Replaced {pt_bad} PT NaN/Inf with no-service, {drt_bad} DRT NaN/Inf with min-fleet (0)"
+                )
+
+        # ===== STEP 2: PROCEED WITH NORMAL DECODING =====
         if not self.drt_enabled:
             # 1. Clip to bounds (PSO can generate out-of-bounds values). Probably redundant
             # as Pymoo should handle this (but just in case)
@@ -640,31 +665,54 @@ class TransitOptimizationProblem(Problem):
             # 2. Round and convert to integers
             x_int = np.round(x_bounded).astype(int)
 
+            # VALIDATION
+            if np.any((x_int < 0) | (x_int >= self.n_choices)):
+                invalid_mask = (x_int < 0) | (x_int >= self.n_choices)
+                invalid_indices = np.where(invalid_mask)[0]
+                raise ValueError(
+                    f"Invalid PT solution indices after decoding: {invalid_indices}. "
+                    f"Values: {x_int[invalid_mask]}. Valid range: [0, {self.n_choices - 1}]"
+                )
+
             return x_int.reshape(self.n_routes, self.n_intervals)
+        else:
+            # DRT-enabled case: use proper variable-specific bounds
+            pt_size = self.var_structure["pt_size"]
+            pt_shape = self.var_structure["pt_shape"]
+            drt_shape = self.var_structure["drt_shape"]
 
-        # DRT-enabled case: use proper variable-specific bounds
-        pt_size = self.var_structure['pt_size']
-        pt_shape = self.var_structure['pt_shape']
-        drt_shape = self.var_structure['drt_shape']
+            # split the flat vector first
+            pt_flat = x_flat[:pt_size]
+            drt_flat = x_flat[pt_size:]
+            # Apply correct bounds to each part
+            pt_bounded = np.clip(pt_flat, 0, self.n_choices - 1)  # Pt uses headway bounds
+            # DRT uses fleet size bounds from combined_variable_bounds
+            drt_bounds = self.optimization_data["combined_variable_bounds"][pt_size:]
+            drt_bounded = np.clip(drt_flat, 0, np.array(drt_bounds) - 1)
 
-        # split the flat vector first
-        pt_flat = x_flat[:pt_size]
-        drt_flat = x_flat[pt_size:]
-        # Apply correct bounds to each part
-        pt_bounded = np.clip(pt_flat, 0, self.n_choices - 1) # Pt uses headway bounds
-        # DRT uses fleet size bounds from combined_variable_bounds
-        drt_bounds = self.optimization_data['combined_variable_bounds'][pt_size:]
-        drt_bounded = np.clip(drt_flat, 0, np.array(drt_bounds) - 1)
+            # Convert to matrices and reshape
+            pt_matrix = np.round(pt_bounded).astype(int).reshape(pt_shape)
+            drt_matrix = np.round(drt_bounded).astype(int).reshape(drt_shape)
 
-        # Convert to matrices and reshape
-        pt_matrix = np.round(pt_bounded).astype(int).reshape(pt_shape)
-        drt_matrix = np.round(drt_bounded).astype(int).reshape(drt_shape)
+            # VALIDATION
+            if np.any((pt_matrix < 0) | (pt_matrix >= self.n_choices)):
+                invalid_mask = (pt_matrix < 0) | (pt_matrix >= self.n_choices)
+                raise ValueError(
+                    f"Invalid PT indices after decoding. "
+                    f"Invalid count: {np.sum(invalid_mask)}. Valid range: [0, {self.n_choices - 1}]"
+                )
 
-        return {
-            'pt': pt_matrix,
-            'drt': drt_matrix
-        }
+            # Validate DRT indices
+            for zone_idx in range(drt_matrix.shape[0]):
+                max_drt_choice = drt_bounds[zone_idx] - 1
+                if np.any(drt_matrix[zone_idx, :] > max_drt_choice):
+                    raise ValueError(
+                        f"Invalid DRT indices for zone {zone_idx}. "
+                        f"Max allowed: {max_drt_choice}, "
+                        f"Got: {drt_matrix[zone_idx, drt_matrix[zone_idx, :] > max_drt_choice]}"
+                    )
 
+            return {"pt": pt_matrix, "drt": drt_matrix}
 
     def _encode_solution(self, solution: np.ndarray) -> np.ndarray:
         """
@@ -694,17 +742,17 @@ class TransitOptimizationProblem(Problem):
             # PT-only: solution should be a matrix
             if isinstance(solution, dict):
                 # Handle case where PT-only solution is passed as dict
-                return solution['pt'].flatten()
+                return solution["pt"].flatten()
             else:
                 return solution.flatten()
         else:
             # DRT-enabled: solution is a dict
-            if not isinstance(solution, dict) or 'pt' not in solution or 'drt' not in solution:
+            if not isinstance(solution, dict) or "pt" not in solution or "drt" not in solution:
                 logger.error("Invalid solution format for DRT-enabled problem.")
                 raise ValueError("DRT-enabled problems require solution dict with 'pt' and 'drt' keys")
 
-            pt_flat = solution['pt'].flatten()
-            drt_flat = solution['drt'].flatten()
+            pt_flat = solution["pt"].flatten()
+            drt_flat = solution["drt"].flatten()
             return np.concatenate([pt_flat, drt_flat])
 
     def decode_solution(self, x_flat: np.ndarray) -> np.ndarray:
@@ -786,9 +834,16 @@ class TransitOptimizationProblem(Problem):
                 logger.debug(f"   DRT solution shape: {solution_matrix['drt'].shape}")
                 # Validate PT shape
                 expected_pt_shape = (self.n_routes, self.n_intervals)
-                if solution_matrix['pt'].shape != expected_pt_shape:
-                    logger.error(f"   ❌ Invalid PT shape: expected {expected_pt_shape}, got {solution_matrix['pt'].shape}")
-                    return {"objective": np.inf, "constraints": np.array([]), "feasible": False, "constraint_details": []}
+                if solution_matrix["pt"].shape != expected_pt_shape:
+                    logger.error(
+                        f"   ❌ Invalid PT shape: expected {expected_pt_shape}, got {solution_matrix['pt'].shape}"
+                    )
+                    return {
+                        "objective": np.inf,
+                        "constraints": np.array([]),
+                        "feasible": False,
+                        "constraint_details": [],
+                    }
             else:
                 logger.error(f"   ❌ DRT-enabled problem expects dict format, got {type(solution_matrix)}")
                 return {"objective": np.inf, "constraints": np.array([]), "feasible": False, "constraint_details": []}
@@ -823,7 +878,7 @@ class TransitOptimizationProblem(Problem):
                 try:
                     # For now, constraints only handle PT part TODO: extend for DRT
                     if self.drt_enabled:
-                        violations = constraint.evaluate(solution_matrix['pt'])
+                        violations = constraint.evaluate(solution_matrix["pt"])
                     else:
                         violations = constraint.evaluate(solution_matrix)
                     constraint_info = constraint.get_constraint_info()
@@ -840,12 +895,12 @@ class TransitOptimizationProblem(Problem):
 
                     satisfied_count = np.sum(violations <= 0)
                     logger.info(
-                        f"      {i+1}. {constraint_info['handler_type']}: "
+                        f"      {i + 1}. {constraint_info['handler_type']}: "
                         f"{satisfied_count}/{len(violations)} satisfied"
                     )
 
                 except Exception as e:
-                    logger.error(f"      {i+1}. Constraint evaluation failed: {e}")
+                    logger.error(f"      {i + 1}. Constraint evaluation failed: {e}")
                     # Add placeholder violations
                     n_constr = constraint.n_constraints
                     failed_violations = np.full(n_constr, 1e6)
@@ -860,9 +915,7 @@ class TransitOptimizationProblem(Problem):
                     )
 
         # Determine feasibility
-        constraint_violations = (
-            np.array(constraint_violations) if constraint_violations else np.array([])
-        )
+        constraint_violations = np.array(constraint_violations) if constraint_violations else np.array([])
         feasible = len(constraint_violations) == 0 or np.all(constraint_violations <= 0)
 
         logger.info(f"   ✅ Solution feasible: {feasible}")
@@ -921,20 +974,19 @@ class TransitOptimizationProblem(Problem):
         """Get readable name for constraint by index."""
         if constraint_idx < len(self.constraints):
             constraint = self.constraints[constraint_idx]
-            return constraint.__class__.__name__.replace('ConstraintHandler', '')
+            return constraint.__class__.__name__.replace("ConstraintHandler", "")
         return f"Constraint_{constraint_idx}"
 
     def _get_interval_label(self, interval_idx: int) -> str:
         """Get readable label for time interval."""
         try:
-            if hasattr(self, 'optimization_data') and 'intervals' in self.optimization_data:
-                labels = self.optimization_data['intervals']['labels']
+            if hasattr(self, "optimization_data") and "intervals" in self.optimization_data:
+                labels = self.optimization_data["intervals"]["labels"]
                 if interval_idx < len(labels):
                     return labels[interval_idx]
         except:
             pass
         return f"Period_{interval_idx}"
-
 
     def is_feasible(self, solution_flat: np.ndarray) -> bool:
         """
@@ -963,7 +1015,6 @@ class TransitOptimizationProblem(Problem):
                 # Check if any constraint is violated
                 if np.any(violations > 0):
                     return False
-
 
             except Exception:
                 # If constraint evaluation fails, consider infeasible

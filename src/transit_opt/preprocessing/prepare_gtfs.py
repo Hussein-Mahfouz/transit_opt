@@ -114,9 +114,7 @@ class GTFSDataPreparator:
 
         # Input validation
         if interval_hours < MIN_INTERVAL_HOURS:
-            logger.error(
-                f"interval_hours ({interval_hours}) must be ≥ {MIN_INTERVAL_HOURS}"
-            )
+            logger.error(f"interval_hours ({interval_hours}) must be ≥ {MIN_INTERVAL_HOURS}")
             raise ValueError(
                 f"interval_hours ({interval_hours}) must be ≥ {MIN_INTERVAL_HOURS}. "
                 f"Smaller intervals may misclassify regular service as no-service."
@@ -124,12 +122,9 @@ class GTFSDataPreparator:
 
         # Input validation
         if 24 % interval_hours != 0:
-            logger.error(
-                f"Invalid interval_hours ({interval_hours}). Must divide 24 evenly."
-            )
+            logger.error(f"Invalid interval_hours ({interval_hours}). Must divide 24 evenly.")
             raise ValueError(
-                f"interval_hours ({interval_hours}) must divide 24 evenly. "
-                f"Valid values: 1, 2, 3, 4, 6, 8, 12, 24"
+                f"interval_hours ({interval_hours}) must divide 24 evenly. Valid values: 1, 2, 3, 4, 6, 8, 12, 24"
             )
 
         logger.info(f"Initializing GTFSDataPreparator with {interval_hours}h intervals")
@@ -151,7 +146,6 @@ class GTFSDataPreparator:
 
         # Load and cache GTFS data
         self._load_gtfs()
-
 
     def _load_gtfs(self) -> None:
         """
@@ -176,9 +170,7 @@ class GTFSDataPreparator:
         try:
             # Load original feed (keep for reconstruction)
             self.feed = gk.read_feed(self.gtfs_path, dist_units="km")
-            logger.debug(
-                f"GTFS feed loaded successfully: {len(self.feed.routes)} routes, {len(self.feed.trips)} trips"
-            )
+            logger.debug(f"GTFS feed loaded successfully: {len(self.feed.routes)} routes, {len(self.feed.trips)} trips")
 
             # Apply date filtering if specified
             if self.date:
@@ -187,9 +179,7 @@ class GTFSDataPreparator:
                     original_trips = len(self.feed.trips)
                     self.feed = gk.filter_feed_by_dates(self.feed, [self.date])
                     filtered_trips = len(self.feed.trips)
-                    logger.info(
-                        f"Date filtering: {original_trips} → {filtered_trips} trips"
-                    )
+                    logger.info(f"Date filtering: {original_trips} → {filtered_trips} trips")
                 except Exception as e:
                     logger.warning(f"Date filtering failed: {e}, using full feed")
             else:
@@ -202,26 +192,22 @@ class GTFSDataPreparator:
 
             # Convert times to seconds for calculations
             logger.debug("Converting GTFS time strings to seconds")
-            self.stop_times_df["departure_seconds"] = self.stop_times_df[
-                "departure_time"
-            ].apply(self._safe_timestr_to_seconds)
-            self.stop_times_df["arrival_seconds"] = self.stop_times_df[
-                "arrival_time"
-            ].apply(self._safe_timestr_to_seconds)
+            self.stop_times_df["departure_seconds"] = self.stop_times_df["departure_time"].apply(
+                self._safe_timestr_to_seconds
+            )
+            self.stop_times_df["arrival_seconds"] = self.stop_times_df["arrival_time"].apply(
+                self._safe_timestr_to_seconds
+            )
 
             load_time = time.time() - start_time
             logger.info(f"GTFS loaded and cached in {load_time:.2f} seconds")
-            logger.info(
-                f"Dataset: {len(self.trips_df):,} trips, {len(self.stop_times_df):,} stop times"
-            )
+            logger.info(f"Dataset: {len(self.trips_df):,} trips, {len(self.stop_times_df):,} stop times")
 
         except Exception as e:
             logger.error(f"Failed to load GTFS feed: {e}")
             raise
 
-    def extract_optimization_data(
-        self, allowed_headways: list[float]
-    ) -> dict[str, Any]:
+    def extract_optimization_data(self, allowed_headways: list[float]) -> dict[str, Any]:
         """
         Extract and structure data for optimization algorithms.
 
@@ -321,9 +307,7 @@ class GTFSDataPreparator:
             Automatically adds 9999.0 as "no service" option to allowed_headways.
             Initial solution maps current GTFS headways to nearest allowed values.
         """
-        logger.info(
-            f"Extracting optimization data with {len(allowed_headways)} allowed headways"
-        )
+        logger.info(f"Extracting optimization data with {len(allowed_headways)} allowed headways")
         logger.debug(f"Allowed headways: {allowed_headways}")
 
         # Extract route data first
@@ -346,25 +330,17 @@ class GTFSDataPreparator:
         headway_to_index = {float(h): i for i, h in enumerate(allowed_values)}
         no_service_index = len(allowed_values) - 1
 
-        logger.debug(
-            f"Created discrete choice mapping: {len(allowed_values)} choices (including no-service)"
-        )
+        logger.debug(f"Created discrete choice mapping: {len(allowed_values)} choices (including no-service)")
         logger.debug(f"Headway to index mapping: {headway_to_index}")
 
         # Create aligned arrays
         route_ids = [r["route_id"] for r in route_data]
-        round_trip_times = np.array(
-            [r["round_trip_time"] for r in route_data], dtype=np.float64
-        )
-        current_headways = np.array(
-            [r["headways_by_interval"] for r in route_data], dtype=np.float64
-        )
+        round_trip_times = np.array([r["round_trip_time"] for r in route_data], dtype=np.float64)
+        current_headways = np.array([r["headways_by_interval"] for r in route_data], dtype=np.float64)
 
         # Create initial solution matrix
         logger.debug("Creating initial solution matrix from current GTFS headways")
-        initial_solution = self._create_initial_solution(
-            current_headways, headway_to_index
-        )
+        initial_solution = self._create_initial_solution(current_headways, headway_to_index)
 
         # Analyze current fleet (baseline only)
         fleet_analysis = self._analyze_current_fleet(route_data)
@@ -375,7 +351,7 @@ class GTFSDataPreparator:
         service_cells = total_cells - no_service_cells
         logger.info(
             f"Initial solution: {service_cells}/{total_cells} cells have service "
-            f"({100*service_cells/total_cells:.1f}%)"
+            f"({100 * service_cells / total_cells:.1f}%)"
         )
 
         # Build optimized structure
@@ -400,13 +376,10 @@ class GTFSDataPreparator:
             },
             "intervals": {
                 "labels": [
-                    f"{i*self.interval_hours:02d}-{(i+1)*self.interval_hours:02d}h"
+                    f"{i * self.interval_hours:02d}-{(i + 1) * self.interval_hours:02d}h"
                     for i in range(self.n_intervals)
                 ],
-                "hours": [
-                    (i * self.interval_hours, (i + 1) * self.interval_hours)
-                    for i in range(self.n_intervals)
-                ],
+                "hours": [(i * self.interval_hours, (i + 1) * self.interval_hours) for i in range(self.n_intervals)],
                 "duration_minutes": self.interval_hours * 60,
             },
             "metadata": {
@@ -420,16 +393,14 @@ class GTFSDataPreparator:
             "reconstruction": {
                 "gtfs_feed": self._create_filtered_gtfs_feed(),
                 "route_mapping": {route_id: idx for idx, route_id in enumerate(route_ids)},
-                "routes_df": self.routes_df,     # Direct access to processed routes
-                "trips_df": self.trips_df,       # Direct access to processed trips
-                "stop_times_df": self.stop_times_df  # Direct access to processed stop times
+                "routes_df": self.routes_df,  # Direct access to processed routes
+                "trips_df": self.trips_df,  # Direct access to processed trips
+                "stop_times_df": self.stop_times_df,  # Direct access to processed stop times
             },
         }
 
         logger.info("Optimization data structure created successfully")
-        logger.debug(
-            f"Decision matrix shape: {optimization_data['decision_matrix_shape']}"
-        )
+        logger.debug(f"Decision matrix shape: {optimization_data['decision_matrix_shape']}")
 
         return optimization_data
 
@@ -447,9 +418,7 @@ class GTFSDataPreparator:
             - headways_by_interval: Array of headway values per time interval
             - round_trip_time: Calculated round-trip time in minutes
         """
-        logger.info(
-            f"Extracting route essentials with {self.interval_hours}-hour intervals"
-        )
+        logger.info(f"Extracting route essentials with {self.interval_hours}-hour intervals")
 
         all_routes = self.trips_df["route_id"].unique()
         route_data = []
@@ -475,9 +444,7 @@ class GTFSDataPreparator:
                 continue
 
             # Calculate headways by interval
-            headways_by_interval = self._calculate_route_headways(
-                route_id, route_trips
-            )
+            headways_by_interval = self._calculate_route_headways(route_id, route_trips)
 
             # Skip if no service found
             if np.all(np.isnan(headways_by_interval)):
@@ -517,13 +484,9 @@ class GTFSDataPreparator:
             )
 
         # Final summary
-        logger.info(
-            f"Route extraction complete: {len(route_data)} routes retained from {len(all_routes)} total"
-        )
+        logger.info(f"Route extraction complete: {len(route_data)} routes retained from {len(all_routes)} total")
         if filtered_count > 0:
-            logger.warning(
-                f"Filtered out {filtered_count} routes (excessive round-trip time)"
-            )
+            logger.warning(f"Filtered out {filtered_count} routes (excessive round-trip time)")
         if failed_count > 0:
             logger.warning(f"Failed to process {failed_count} routes (no valid data)")
         if used_default_count > 0:
@@ -531,9 +494,7 @@ class GTFSDataPreparator:
 
         return route_data
 
-    def _calculate_route_headways(
-        self, route_id: str, route_trips: pd.DataFrame
-    ) -> np.ndarray:
+    def _calculate_route_headways(self, route_id: str, route_trips: pd.DataFrame) -> np.ndarray:
         """
         Calculate average headway values for each time interval.
 
@@ -565,31 +526,25 @@ class GTFSDataPreparator:
 
         try:
             trip_ids = route_trips["trip_id"].tolist()
-            route_stop_times = self.stop_times_df[
-                self.stop_times_df["trip_id"].isin(trip_ids)
-            ].copy()
+            route_stop_times = self.stop_times_df[self.stop_times_df["trip_id"].isin(trip_ids)].copy()
 
             if len(route_stop_times) == 0:
                 logger.debug(f"Route {route_id}: No stop times found")
                 return headways
 
             # Get first departure for each trip
-            first_departures = route_stop_times.loc[
-                route_stop_times.groupby("trip_id")["stop_sequence"].idxmin()
-            ][["trip_id", "departure_seconds"]].copy()
+            first_departures = route_stop_times.loc[route_stop_times.groupby("trip_id")["stop_sequence"].idxmin()][
+                ["trip_id", "departure_seconds"]
+            ].copy()
 
-            first_departures["departure_hour"] = (
-                first_departures["departure_seconds"] // 3600
-            ) % 24
+            first_departures["departure_hour"] = (first_departures["departure_seconds"] // 3600) % 24
             first_departures = first_departures.dropna()
 
             if len(first_departures) == 0:
                 logger.debug(f"Route {route_id}: No valid departure times")
                 return headways
 
-            logger.debug(
-                f"Route {route_id}: Processing {len(first_departures)} departures"
-            )
+            logger.debug(f"Route {route_id}: Processing {len(first_departures)} departures")
 
             # Calculate headways for each interval
             active_intervals = 0
@@ -598,8 +553,7 @@ class GTFSDataPreparator:
                 end_hour = (interval + 1) * self.interval_hours
 
                 interval_departures = first_departures[
-                    (first_departures["departure_hour"] >= start_hour)
-                    & (first_departures["departure_hour"] < end_hour)
+                    (first_departures["departure_hour"] >= start_hour) & (first_departures["departure_hour"] < end_hour)
                 ]["departure_seconds"].values
 
                 if len(interval_departures) >= 2:
@@ -619,10 +573,7 @@ class GTFSDataPreparator:
                     # Single trip - once per day service
                     headways[interval] = 24 * 60  # 1440 minutes
                     active_intervals += 1
-                    logger.debug(
-                        f"Route {route_id}, interval {interval}: "
-                        f"1 departure → 1440min headway (once-daily)"
-                    )
+                    logger.debug(f"Route {route_id}, interval {interval}: 1 departure → 1440min headway (once-daily)")
 
             if active_intervals == 0:
                 logger.debug(f"Route {route_id}: No active intervals found")
@@ -633,9 +584,7 @@ class GTFSDataPreparator:
             logger.debug(f"Route {route_id}: Exception in headway calculation: {e}")
             return headways
 
-    def _calculate_round_trip_time(
-        self, route_id: str, route_trips: pd.DataFrame
-    ) -> float:
+    def _calculate_round_trip_time(self, route_id: str, route_trips: pd.DataFrame) -> float:
         """
         Calculate round-trip time with turnaround buffer for fleet sizing.
 
@@ -668,14 +617,10 @@ class GTFSDataPreparator:
         """
         try:
             trip_ids = route_trips["trip_id"].tolist()
-            route_stop_times = self.stop_times_df[
-                self.stop_times_df["trip_id"].isin(trip_ids)
-            ].copy()
+            route_stop_times = self.stop_times_df[self.stop_times_df["trip_id"].isin(trip_ids)].copy()
 
             if len(route_stop_times) == 0:
-                logger.debug(
-                    f"Route {route_id}: No stop times, using default {self.default_round_trip_time}min"
-                )
+                logger.debug(f"Route {route_id}: No stop times, using default {self.default_round_trip_time}min")
                 return self.default_round_trip_time
 
             trip_durations = []
@@ -700,9 +645,7 @@ class GTFSDataPreparator:
                 )
                 return round_trip
             else:
-                logger.debug(
-                    f"Route {route_id}: No valid durations, using default {self.default_round_trip_time}min"
-                )
+                logger.debug(f"Route {route_id}: No valid durations, using default {self.default_round_trip_time}min")
                 return self.default_round_trip_time
 
         except Exception as e:
@@ -712,9 +655,7 @@ class GTFSDataPreparator:
             )
             return self.default_round_trip_time
 
-    def _create_initial_solution(
-        self, current_headways: np.ndarray, headway_to_index: dict[float, int]
-    ) -> np.ndarray:
+    def _create_initial_solution(self, current_headways: np.ndarray, headway_to_index: dict[float, int]) -> np.ndarray:
         """
         Create initial solution matrix by mapping current GTFS headways to discrete choices.
 
@@ -762,31 +703,22 @@ class GTFSDataPreparator:
         large_differences = []
         threshold_mappings = 0
 
-        logger.debug(
-            f"Creating initial solution for {n_routes} routes × {n_intervals} intervals"
-        )
-        logger.debug(
-            f"Using no-service threshold: {self.no_service_threshold_minutes:.0f} minutes"
-        )  # ← ADD
+        logger.debug(f"Creating initial solution for {n_routes} routes × {n_intervals} intervals")
+        logger.debug(f"Using no-service threshold: {self.no_service_threshold_minutes:.0f} minutes")  # ← ADD
 
         for i in range(n_routes):
             for j in range(n_intervals):
                 current_headway = current_headways[i, j]
 
                 # Handle no-service cases: NaN or headways above threshold
-                if (
-                    np.isnan(current_headway)
-                    or current_headway >= self.no_service_threshold_minutes
-                ):
+                if np.isnan(current_headway) or current_headway >= self.no_service_threshold_minutes:
                     choice_idx = no_service_index
                     initial_solution[i, j] = choice_idx
                     mapping_stats[choice_idx] += 1
 
                 else:
                     # Find nearest allowed headway from valid optiona
-                    distances = [
-                        abs(current_headway - h) for h in allowed_headway_values
-                    ]
+                    distances = [abs(current_headway - h) for h in allowed_headway_values]
                     best_idx = np.argmin(distances)
                     best_headway = allowed_headway_values[best_idx]
                     difference = abs(current_headway - best_headway)
@@ -796,9 +728,7 @@ class GTFSDataPreparator:
 
                     # Track large mapping differences
                     if difference > 10:  # More than 10 minutes difference
-                        large_differences.append(
-                            (i, j, current_headway, best_headway, difference)
-                        )
+                        large_differences.append((i, j, current_headway, best_headway, difference))
 
         # Log mapping statistics
         logger.debug("Initial solution mapping statistics:")
@@ -806,29 +736,23 @@ class GTFSDataPreparator:
             count = mapping_stats[choice_idx]
             if count > 0:
                 if headway_val == 9999.0:
-                    logger.debug(
-                        f"  No service: {count} cells ({100*count/(n_routes*n_intervals):.1f}%)"
-                    )
+                    logger.debug(f"  No service: {count} cells ({100 * count / (n_routes * n_intervals):.1f}%)")
                 else:
                     logger.debug(
-                        f"  {headway_val:.0f}min: {count} cells ({100*count/(n_routes*n_intervals):.1f}%)"
+                        f"  {headway_val:.0f}min: {count} cells ({100 * count / (n_routes * n_intervals):.1f}%)"
                     )
 
         # Log threshold impact
         if threshold_mappings > 0:
             logger.info(
                 f"Applied threshold: {threshold_mappings} cells with headways ≥{self.no_service_threshold_minutes:.0f}min "
-                f"mapped to no-service ({100*threshold_mappings/(n_routes*n_intervals):.1f}%)"
+                f"mapped to no-service ({100 * threshold_mappings / (n_routes * n_intervals):.1f}%)"
             )
 
         if large_differences:
-            logger.warning(
-                f"Found {len(large_differences)} cells with >10min mapping difference"
-            )
+            logger.warning(f"Found {len(large_differences)} cells with >10min mapping difference")
             # Log a few examples
-            for i, (route_idx, interval_idx, current, mapped, diff) in enumerate(
-                large_differences[:5]
-            ):
+            for i, (route_idx, interval_idx, current, mapped, diff) in enumerate(large_differences[:5]):
                 logger.debug(
                     f"  Route {route_idx}, interval {interval_idx}: "
                     f"{current:.1f}min → {mapped:.0f}min (diff: {diff:.1f}min)"
@@ -849,15 +773,11 @@ class GTFSDataPreparator:
 
         # Store for use in fleet analysis
         self._discretized_headways_matrix = discretized_headways
-        logger.debug(
-            "Stored discretized headways matrix for fleet analysis consistency"
-        )
+        logger.debug("Stored discretized headways matrix for fleet analysis consistency")
 
         return initial_solution
 
-    def _analyze_current_fleet(
-        self, route_data: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def _analyze_current_fleet(self, route_data: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Analyze current GTFS fleet requirements by time interval (baseline analysis only).
 
@@ -940,23 +860,18 @@ class GTFSDataPreparator:
             constraints or bounds - those are handled by optimization problem classes that
             use this baseline data to set their own constraint levels.
         """
-        from ..optimisation.utils.fleet_calculations import \
-            calculate_fleet_requirements
+        from ..optimisation.utils.fleet_calculations import calculate_fleet_requirements
 
         logger.debug("Analyzing current GTFS fleet requirements by interval")
-        logger.debug(
-            f"Processing {len(route_data)} routes across {self.n_intervals} intervals"
-        )
+        logger.debug(f"Processing {len(route_data)} routes across {self.n_intervals} intervals")
 
         # Extract dimensions and set parameters
         n_routes = len(route_data)
         n_intervals = self.n_intervals
-        operational_buffer = (
-            1.15  # 15% buffer: accounts for maintenance, delays, crew changes
-        )
+        operational_buffer = 1.15  # 15% buffer: accounts for maintenance, delays, crew changes
 
         logger.debug(
-            f"Using operational buffer: {operational_buffer} ({(operational_buffer-1)*100:.0f}% extra time)"
+            f"Using operational buffer: {operational_buffer} ({(operational_buffer - 1) * 100:.0f}% extra time)"
         )
 
         # Extract data for calculation
@@ -983,8 +898,7 @@ class GTFSDataPreparator:
         else:
             # Fallback: apply threshold logic directly
             discretized_headways = np.where(
-                (np.isnan(raw_headways_matrix))
-                | (raw_headways_matrix >= self.no_service_threshold_minutes),
+                (np.isnan(raw_headways_matrix)) | (raw_headways_matrix >= self.no_service_threshold_minutes),
                 np.inf,  # Mark as no-service
                 raw_headways_matrix,
             )
@@ -1002,18 +916,13 @@ class GTFSDataPreparator:
         current_fleet_per_route = discretized_fleet_results["fleet_per_route"]
         current_fleet_by_interval = discretized_fleet_results["fleet_per_interval"]
         total_current_fleet_peak = discretized_fleet_results["total_peak_fleet"]
-        route_fleet_matrix = discretized_fleet_results[
-            "route_fleet_matrix"
-        ]  # For detailed logging
+        total_current_fleet_average = int(round(np.mean(current_fleet_by_interval)))
+        route_fleet_matrix = discretized_fleet_results["route_fleet_matrix"]  # For detailed logging
         route_round_trip_times = round_trip_times
 
         # Calculate efficiency gain vs naive approach
-        total_naive_sum = int(
-            np.sum(current_fleet_per_route)
-        )  # Sum of route peaks (naive)
-        fleet_efficiency_gain = (
-            total_naive_sum - total_current_fleet_peak
-        )  # Positive = savings
+        total_naive_sum = int(np.sum(current_fleet_per_route))  # Sum of route peaks (naive)
+        fleet_efficiency_gain = total_naive_sum - total_current_fleet_peak  # Positive = savings
 
         # Count routes that have any service
         routes_with_service = np.sum(current_fleet_per_route > 0)
@@ -1030,9 +939,7 @@ class GTFSDataPreparator:
 
         # Calculate interval utilization (what % of peak fleet is used in each interval)
         if total_current_fleet_peak > 0:
-            interval_utilization = (
-                current_fleet_by_interval / total_current_fleet_peak
-            ).tolist()
+            interval_utilization = (current_fleet_by_interval / total_current_fleet_peak).tolist()
         else:
             interval_utilization = [0.0] * n_intervals
 
@@ -1041,15 +948,11 @@ class GTFSDataPreparator:
         discretized_peak = discretized_fleet_results["total_peak_fleet"]
         logger.info("Fleet analysis completed:")
         logger.info(f"  Raw GTFS peak fleet: {raw_peak} vehicles")
-        logger.info(
-            f"  Discretized peak fleet: {discretized_peak} vehicles (used for optimization)"
-        )
+        logger.info(f"  Discretized peak fleet: {discretized_peak} vehicles (used for optimization)")
         logger.info(f"  Difference: {discretized_peak - raw_peak:+d} vehicles")
 
         if abs(discretized_peak - raw_peak) > 50:
-            logger.warning(
-                "Large discrepancy between raw and discretized fleet calculations!"
-            )
+            logger.warning("Large discrepancy between raw and discretized fleet calculations!")
 
         # Per-route logging with debug info
         for route_idx, route in enumerate(route_data):
@@ -1065,13 +968,10 @@ class GTFSDataPreparator:
 
         # System summary logging
         logger.info("Fleet analysis by interval completed:")
-        logger.info(
-            f"  Fleet by interval: {current_fleet_by_interval.astype(int).tolist()}"
-        )
-        logger.info(
-            f"  Peak interval {peak_interval_idx}: {total_current_fleet_peak} vehicles needed"
-        )
+        logger.info(f"  Fleet by interval: {current_fleet_by_interval.astype(int).tolist()}")
+        logger.info(f"  Peak interval {peak_interval_idx}: {total_current_fleet_peak} vehicles needed")
         logger.info(f"  Off-peak minimum: {off_peak_fleet} vehicles")
+        logger.info(f"  Average fleet size across intervals: {total_current_fleet_average:.1f} vehicles")
         logger.info(f"  Active routes: {routes_with_service}/{n_routes}")
 
         # Highlight efficiency gain from interval-based calculation
@@ -1083,30 +983,21 @@ class GTFSDataPreparator:
         elif fleet_efficiency_gain == 0:
             logger.info("  No efficiency gain (all routes peak simultaneously)")
         else:
-            logger.warning(
-                f"  Negative efficiency: interval approach needs {-fleet_efficiency_gain} more vehicles"
-            )
+            logger.warning(f"  Negative efficiency: interval approach needs {-fleet_efficiency_gain} more vehicles")
 
         # ===== RETURN THE EXACT SAME STRUCTURE (unchanged) ===
         return {
             # ===== BASELINE FLEET ANALYSIS =====
             # Core data that optimization classes need for constraint setting
-            "current_fleet_per_route": current_fleet_per_route.astype(
-                int
-            ),  # Peak per route
-            "current_fleet_by_interval": current_fleet_by_interval.astype(
-                int
-            ),  # Total per interval
+            "current_fleet_per_route": current_fleet_per_route.astype(int),  # Peak per route
+            "current_fleet_by_interval": current_fleet_by_interval.astype(int),  # Total per interval
             "total_current_fleet_peak": total_current_fleet_peak,  # Realistic system total
+            "total_current_fleet_average": total_current_fleet_average,  # Average fleet size
             "route_round_trip_times": route_round_trip_times,  # For optimization use
             # RAW GTFS BASELINE (for reporting/analysis).
             "raw_fleet_analysis": {
-                "current_fleet_per_route": raw_fleet_results["fleet_per_route"].astype(
-                    int
-                ),
-                "current_fleet_by_interval": raw_fleet_results[
-                    "fleet_per_interval"
-                ].astype(int),
+                "current_fleet_per_route": raw_fleet_results["fleet_per_route"].astype(int),
+                "current_fleet_by_interval": raw_fleet_results["fleet_per_interval"].astype(int),
                 "total_current_fleet_peak": raw_fleet_results["total_peak_fleet"],
             },
             # ===== CONFIGURATION PARAMETERS =====
@@ -1117,9 +1008,7 @@ class GTFSDataPreparator:
             # Summary information for logging, reporting, and validation
             "fleet_stats": {
                 # Service coverage metrics
-                "routes_with_service": int(
-                    routes_with_service
-                ),  # How many routes active
+                "routes_with_service": int(routes_with_service),  # How many routes active
                 # Peak period analysis
                 "peak_interval": peak_interval_idx,  # When peak occurs
                 "peak_interval_fleet": total_current_fleet_peak,  # Peak fleet size
@@ -1133,26 +1022,20 @@ class GTFSDataPreparator:
                     if routes_with_service > 0
                     else 0.0
                 ),
-                "max_route_fleet": int(
-                    np.max(current_fleet_per_route)
-                ),  # Largest single route
+                "max_route_fleet": int(np.max(current_fleet_per_route)),  # Largest single route
                 # Fleet size distribution (helps understand system complexity)
                 "fleet_distribution": {
                     "small_routes": int(
                         np.sum(  # Routes needing 1-5 vehicles
-                            (current_fleet_per_route > 0)
-                            & (current_fleet_per_route <= 5)
+                            (current_fleet_per_route > 0) & (current_fleet_per_route <= 5)
                         )
                     ),
                     "medium_routes": int(
                         np.sum(  # Routes needing 6-15 vehicles
-                            (current_fleet_per_route > 5)
-                            & (current_fleet_per_route <= 15)
+                            (current_fleet_per_route > 5) & (current_fleet_per_route <= 15)
                         )
                     ),
-                    "large_routes": int(
-                        np.sum(current_fleet_per_route > 15)
-                    ),  # Routes needing >15 vehicles
+                    "large_routes": int(np.sum(current_fleet_per_route > 15)),  # Routes needing >15 vehicles
                 },
             },
         }
@@ -1189,7 +1072,6 @@ class GTFSDataPreparator:
         except Exception:
             return np.nan
 
-
     def _create_filtered_gtfs_feed(self):
         """Create a GTFS feed containing only the processed/filtered data."""
         import copy
@@ -1203,11 +1085,9 @@ class GTFSDataPreparator:
         filtered_feed.stop_times = self.stop_times_df
 
         # Filter other related tables to maintain referential integrity
-        if hasattr(filtered_feed, 'stops'):
-            valid_stop_ids = set(self.stop_times_df['stop_id'])
-            filtered_feed.stops = filtered_feed.stops[
-                filtered_feed.stops['stop_id'].isin(valid_stop_ids)
-            ]
+        if hasattr(filtered_feed, "stops"):
+            valid_stop_ids = set(self.stop_times_df["stop_id"])
+            filtered_feed.stops = filtered_feed.stops[filtered_feed.stops["stop_id"].isin(valid_stop_ids)]
 
         return filtered_feed
 
@@ -1216,9 +1096,7 @@ class GTFSDataPreparator:
     # ------------------------------
 
     def extract_optimization_data_with_drt(
-        self,
-        allowed_headways: list[int],
-        drt_config: dict | None = None
+        self, allowed_headways: list[int], drt_config: dict | None = None
     ) -> dict[str, Any]:
         """
         Extract optimization data with optional DRT integration and spatial layer loading.
@@ -1251,10 +1129,12 @@ class GTFSDataPreparator:
 
         # Get base PT optimization data
         base_opt_data = self.extract_optimization_data(allowed_headways)
-        logger.info(f"   ✅ Base PT data extracted: {base_opt_data['n_routes']} routes, {base_opt_data['n_intervals']} intervals")
+        logger.info(
+            f"   ✅ Base PT data extracted: {base_opt_data['n_routes']} routes, {base_opt_data['n_intervals']} intervals"
+        )
 
         # Add DRT configuration if provided
-        if drt_config and drt_config.get('enabled', False):
+        if drt_config and drt_config.get("enabled", False):
             logger.info("   🚁 Adding DRT configuration...")
 
             # Validate DRT configuration
@@ -1267,11 +1147,11 @@ class GTFSDataPreparator:
             n_drt_zones = len(drt_zones_with_geometry)
 
             # Find maximum number of fleet choices across all DRT zones
-            max_drt_choices = max(len(zone.get('allowed_fleet_sizes', [])) for zone in drt_zones_with_geometry)
+            max_drt_choices = max(len(zone.get("allowed_fleet_sizes", [])) for zone in drt_zones_with_geometry)
 
             # Calculate total decision variables for combined problem
-            pt_variables = base_opt_data['n_routes'] * base_opt_data['n_intervals']
-            drt_variables = n_drt_zones * base_opt_data['n_intervals']
+            pt_variables = base_opt_data["n_routes"] * base_opt_data["n_intervals"]
+            drt_variables = n_drt_zones * base_opt_data["n_intervals"]
             total_variables = pt_variables + drt_variables
 
             # Create combined variable bounds
@@ -1282,68 +1162,72 @@ class GTFSDataPreparator:
 
             # Create bounds for each DRT zone
             for zone in drt_zones_with_geometry:
-                zone_choices = len(zone.get('allowed_fleet_sizes', []))
-                zone_bounds = [zone_choices] * base_opt_data['n_intervals']
+                zone_choices = len(zone.get("allowed_fleet_sizes", []))
+                zone_bounds = [zone_choices] * base_opt_data["n_intervals"]
                 combined_bounds.extend(zone_bounds)
 
             # Extend base optimization data with DRT fields
-            base_opt_data.update({
-                # DRT configuration with loaded spatial data
-                'drt_enabled': True,
-                'drt_config': {
-                    'enabled': True,
-                    'target_crs': drt_config.get('target_crs', 'EPSG:3857'),  # Store target CRS
-                    'zones': drt_zones_with_geometry,
-                    'total_service_area': self._calculate_total_drt_service_area(drt_zones_with_geometry)
-                },
-                'n_drt_zones': n_drt_zones,
-                'drt_max_choices': max_drt_choices,
-
-                # Combined problem dimensions
-                'total_decision_variables': total_variables,
-                'pt_decision_variables': pt_variables,
-                'drt_decision_variables': drt_variables,
-                'combined_variable_bounds': combined_bounds,
-                'variable_structure': {
-                    'pt_size': pt_variables,
-                    'drt_size': drt_variables,
-                    # solution matrix shapes
-                    'pt_shape': (base_opt_data['n_routes'], base_opt_data['n_intervals']),
-                    'drt_shape': (n_drt_zones, base_opt_data['n_intervals']),
+            base_opt_data.update(
+                {
+                    # DRT configuration with loaded spatial data
+                    "drt_enabled": True,
+                    "drt_config": {
+                        "enabled": True,
+                        "target_crs": drt_config.get("target_crs", "EPSG:3857"),  # Store target CRS
+                        "zones": drt_zones_with_geometry,
+                        "total_service_area": self._calculate_total_drt_service_area(drt_zones_with_geometry),
+                    },
+                    "n_drt_zones": n_drt_zones,
+                    "drt_max_choices": max_drt_choices,
+                    # Combined problem dimensions
+                    "total_decision_variables": total_variables,
+                    "pt_decision_variables": pt_variables,
+                    "drt_decision_variables": drt_variables,
+                    "combined_variable_bounds": combined_bounds,
+                    "variable_structure": {
+                        "pt_size": pt_variables,
+                        "drt_size": drt_variables,
+                        # solution matrix shapes
+                        "pt_shape": (base_opt_data["n_routes"], base_opt_data["n_intervals"]),
+                        "drt_shape": (n_drt_zones, base_opt_data["n_intervals"]),
+                    },
                 }
-            })
+            )
 
             # Create combined initial solution with DRT variables
             combined_initial_solution = self._create_combined_initial_solution(
-                base_opt_data['initial_solution'],  # PT-only initial solution
+                base_opt_data["initial_solution"],  # PT-only initial solution
                 drt_zones_with_geometry,
-                base_opt_data['n_intervals']
+                base_opt_data["n_intervals"],
             )
 
             # Replace the PT-only initial solution with combined solution
-            base_opt_data['initial_solution'] = combined_initial_solution
+            base_opt_data["initial_solution"] = combined_initial_solution
 
             logger.info(f"""   🚁 DRT integration complete:
             * DRT zones: {n_drt_zones}
             * Max fleet choices per zone: {max_drt_choices}
             * Total variables: {total_variables} (PT: {pt_variables}, DRT: {drt_variables})
-            * Total DRT service area: {base_opt_data['drt_config']['total_service_area']:.2f} km²
+            * Total DRT service area: {base_opt_data["drt_config"]["total_service_area"]:.2f} km²
             """)
         else:
             # No DRT - add compatibility fields
             logger.info("   🚌 PT-only mode (no DRT)")
-            base_opt_data.update({
-                'drt_enabled': False,
-                'drt_config': None,
-                'n_drt_zones': 0,
-                'drt_max_choices': 0,
-                'total_decision_variables': base_opt_data['n_routes'] * base_opt_data['n_intervals'],
-                'pt_decision_variables': base_opt_data['n_routes'] * base_opt_data['n_intervals'],
-                'drt_decision_variables': 0,
-                'combined_variable_bounds': [len(allowed_headways)] * (base_opt_data['n_routes'] * base_opt_data['n_intervals']),
-                'pt_solution_shape': (base_opt_data['n_routes'], base_opt_data['n_intervals']),
-                'drt_solution_shape': (0, base_opt_data['n_intervals']),
-            })
+            base_opt_data.update(
+                {
+                    "drt_enabled": False,
+                    "drt_config": None,
+                    "n_drt_zones": 0,
+                    "drt_max_choices": 0,
+                    "total_decision_variables": base_opt_data["n_routes"] * base_opt_data["n_intervals"],
+                    "pt_decision_variables": base_opt_data["n_routes"] * base_opt_data["n_intervals"],
+                    "drt_decision_variables": 0,
+                    "combined_variable_bounds": [len(allowed_headways)]
+                    * (base_opt_data["n_routes"] * base_opt_data["n_intervals"]),
+                    "pt_solution_shape": (base_opt_data["n_routes"], base_opt_data["n_intervals"]),
+                    "drt_solution_shape": (0, base_opt_data["n_intervals"]),
+                }
+            )
 
         return base_opt_data
 
@@ -1364,7 +1248,7 @@ class GTFSDataPreparator:
         logger.info("   🗺️ Loading DRT spatial layers...")
 
         # Get target CRS from config with smart defaults
-        target_crs = drt_config.get('target_crs')
+        target_crs = drt_config.get("target_crs")
         if target_crs is None:
             raise ValueError("DRT config must specify 'target_crs' for spatial layers")
         logger.info(" Target CRS: %s", target_crs)
@@ -1372,11 +1256,11 @@ class GTFSDataPreparator:
         zones_with_geometry = []
         total_area = 0.0
 
-        for i, zone in enumerate(drt_config['zones']):
-            zone_id = zone['zone_id']
-            service_area_path = zone['service_area_path']
+        for i, zone in enumerate(drt_config["zones"]):
+            zone_id = zone["zone_id"]
+            service_area_path = zone["service_area_path"]
 
-            logger.info("      Loading zone %d: %s", i+1, zone_id)
+            logger.info("      Loading zone %d: %s", i + 1, zone_id)
             logger.info("         Path: %s", service_area_path)
 
             # Validate file exists
@@ -1388,9 +1272,8 @@ class GTFSDataPreparator:
                 zone_gdf = gpd.read_file(service_area_path)
 
                 # Log original CRS
-                original_crs = zone_gdf.crs.to_string() if zone_gdf.crs else 'Unknown'
+                original_crs = zone_gdf.crs.to_string() if zone_gdf.crs else "Unknown"
                 logger.info("         Original CRS: %s", original_crs)
-
 
                 # Ensure we have at least one polygon
                 if len(zone_gdf) == 0:
@@ -1413,28 +1296,34 @@ class GTFSDataPreparator:
 
                 # Create enhanced zone configuration
                 enhanced_zone = zone.copy()
-                enhanced_zone.update({
-                    'geometry': service_area_geometry,
-                    'area_km2': area_km2,
-                    'crs': target_crs,
-                    'feature_count': len(zone_gdf)
-                })
+                enhanced_zone.update(
+                    {
+                        "geometry": service_area_geometry,
+                        "area_km2": area_km2,
+                        "crs": target_crs,
+                        "feature_count": len(zone_gdf),
+                    }
+                )
 
                 zones_with_geometry.append(enhanced_zone)
 
                 # Add DRT operational parameters from config (used for calculating drt service coverage)
-                default_drt_speed = drt_config.get('default_drt_speed_kmh', 25.0)
+                default_drt_speed = drt_config.get("default_drt_speed_kmh", 25.0)
 
                 for zone in zones_with_geometry:
                     # Use zone-specific speed if provided, otherwise use default from config
-                    zone['drt_speed_kmh'] = zone.get('drt_speed_kmh', default_drt_speed)
+                    zone["drt_speed_kmh"] = zone.get("drt_speed_kmh", default_drt_speed)
 
-                    logger.info("   DRT Zone %d: %.2f km², speed %.2f km/h",
-                        zone['zone_id'], zone['area_km2'], zone['drt_speed_kmh'])
+                    logger.info(
+                        "   DRT Zone %d: %.2f km², speed %.2f km/h",
+                        zone["zone_id"],
+                        zone["area_km2"],
+                        zone["drt_speed_kmh"],
+                    )
 
                 logger.info("         ✅ Loaded: %.2f km² service area", area_km2)
-                logger.info("            CRS: %s", enhanced_zone['crs'])
-                logger.info("            Fleet choices: %s", zone.get('allowed_fleet_sizes', []))
+                logger.info("            CRS: %s", enhanced_zone["crs"])
+                logger.info("            Fleet choices: %s", zone.get("allowed_fleet_sizes", []))
 
             except Exception as e:
                 raise ValueError(f"Failed to load DRT service area for zone {zone_id}: {e}")
@@ -1446,7 +1335,7 @@ class GTFSDataPreparator:
 
     def _calculate_total_drt_service_area(self, zones_with_geometry: list[dict]) -> float:
         """Calculate total service area coverage across all DRT zones."""
-        return sum(zone['area_km2'] for zone in zones_with_geometry)
+        return sum(zone["area_km2"] for zone in zones_with_geometry)
 
     def _validate_drt_config(self, drt_config: dict):
         """Validate DRT configuration structure with updated field names."""
@@ -1455,19 +1344,19 @@ class GTFSDataPreparator:
         if not isinstance(drt_config, dict):
             raise ValueError("drt_config must be a dictionary")
 
-        if not drt_config.get('enabled', False):
+        if not drt_config.get("enabled", False):
             return  # No validation needed if disabled
 
         # check crs is specified correctly
-        target_crs = drt_config.get('target_crs')
+        target_crs = drt_config.get("target_crs")
         if not target_crs or not isinstance(target_crs, str):
             raise ValueError("DRT config must specify a valid target_crs string when enabled")
 
-        zones = drt_config.get('zones', [])
+        zones = drt_config.get("zones", [])
         if not zones:
             raise ValueError("DRT config must specify at least one zone when enabled")
 
-        required_zone_fields = ['zone_id', 'service_area_path', 'allowed_fleet_sizes']
+        required_zone_fields = ["zone_id", "service_area_path", "allowed_fleet_sizes"]
         for i, zone in enumerate(zones):
             if not isinstance(zone, dict):
                 raise ValueError(f"DRT zone {i} must be a dictionary")
@@ -1477,17 +1366,19 @@ class GTFSDataPreparator:
                     raise ValueError(f"DRT zone {i} missing required field: {field}")
 
             # Validate allowed_fleet_sizes
-            allowed_fleet_sizes = zone['allowed_fleet_sizes']
+            allowed_fleet_sizes = zone["allowed_fleet_sizes"]
             if not isinstance(allowed_fleet_sizes, list) or not allowed_fleet_sizes:
                 raise ValueError(f"DRT zone {i} must have non-empty allowed_fleet_sizes list")
 
             # Validate fleet sizes are non-negative integers
             for j, fleet_size in enumerate(allowed_fleet_sizes):
                 if not isinstance(fleet_size, int) or fleet_size < 0:
-                    raise ValueError(f"DRT zone {i} allowed_fleet_sizes[{j}] must be a non-negative integer, got {fleet_size}")
+                    raise ValueError(
+                        f"DRT zone {i} allowed_fleet_sizes[{j}] must be a non-negative integer, got {fleet_size}"
+                    )
 
             # Validate service area path is string
-            service_area_path = zone['service_area_path']
+            service_area_path = zone["service_area_path"]
             if not isinstance(service_area_path, str):
                 raise ValueError(f"DRT zone {i} service_area_path must be a string path")
 
@@ -1495,10 +1386,7 @@ class GTFSDataPreparator:
         logger.info("      Target CRS: %s", target_crs)
 
     def _create_combined_initial_solution(
-        self,
-        pt_initial_solution: np.ndarray,
-        drt_zones: list[dict],
-        n_intervals: int
+        self, pt_initial_solution: np.ndarray, drt_zones: list[dict], n_intervals: int
     ) -> np.ndarray:
         """
         Create combined PT+DRT initial solution by adding DRT variables.
@@ -1522,7 +1410,7 @@ class GTFSDataPreparator:
 
         # Set initial DRT service levels
         for zone_idx, zone in enumerate(drt_zones):
-            allowed_fleet_sizes = zone.get('allowed_fleet_sizes', [])
+            allowed_fleet_sizes = zone.get("allowed_fleet_sizes", [])
 
             if len(allowed_fleet_sizes) > 1:
                 # Start with second-smallest fleet size (avoid 0 = no service)
@@ -1533,11 +1421,16 @@ class GTFSDataPreparator:
                 drt_initial_matrix[zone_idx, :] = initial_fleet_idx
 
                 fleet_size = allowed_fleet_sizes[initial_fleet_idx]
-                logger.info("      Zone %d: Initial fleet choice %d (%d vehicles)", zone['zone_id'],initial_fleet_idx, fleet_size)
+                logger.info(
+                    "      Zone %d: Initial fleet choice %d (%d vehicles)",
+                    zone["zone_id"],
+                    initial_fleet_idx,
+                    fleet_size,
+                )
             else:
                 # Fallback: use index 0
                 drt_initial_matrix[zone_idx, :] = 0
-                logger.info("      Zone %d: Default fleet choice 0", zone['zone_id'])
+                logger.info("      Zone %d: Default fleet choice 0", zone["zone_id"])
 
         # Flatten DRT solution
         drt_flat = drt_initial_matrix.flatten()
@@ -1564,7 +1457,7 @@ class GTFSDataPreparator:
         gtfs_paths: list[str],
         allowed_headways: list[int],
         drt_config: dict[str, Any] = None,
-        drt_solution_paths: list[str] = None
+        drt_solution_paths: list[str] = None,
     ) -> list[dict[str, Any]]:
         """
         Extract optimization data from multiple GTFS feeds with optional DRT solutions.
@@ -1624,7 +1517,7 @@ class GTFSDataPreparator:
         optimization_data_list = []
 
         for i, gtfs_path in enumerate(gtfs_paths):
-            logger.info(f"Processing GTFS feed {i+1}/{len(gtfs_paths)}: {gtfs_path}")
+            logger.info(f"Processing GTFS feed {i + 1}/{len(gtfs_paths)}: {gtfs_path}")
 
             # Create fresh preparator for this GTFS feed
             preparator = GTFSDataPreparator(
@@ -1633,44 +1526,34 @@ class GTFSDataPreparator:
                 date=None,
                 turnaround_buffer=self.turnaround_buffer,
                 max_round_trip_minutes=self.max_round_trip_minutes,
-                no_service_threshold_minutes=self.no_service_threshold_minutes
+                no_service_threshold_minutes=self.no_service_threshold_minutes,
             )
 
             # Extract complete optimization data structure
             if drt_config:
                 opt_data = preparator.extract_optimization_data_with_drt(
-                    allowed_headways=allowed_headways,
-                    drt_config=drt_config
+                    allowed_headways=allowed_headways, drt_config=drt_config
                 )
             else:
-                opt_data = preparator.extract_optimization_data(
-                    allowed_headways=allowed_headways
-                )
+                opt_data = preparator.extract_optimization_data(allowed_headways=allowed_headways)
 
-            logger.info(f"  📊 Base optimization data: {opt_data['n_routes']} routes, "
-                f"{len(opt_data['initial_solution'])} variables")
+            logger.info(
+                f"  📊 Base optimization data: {opt_data['n_routes']} routes, "
+                f"{len(opt_data['initial_solution'])} variables"
+            )
 
             # If DRT solution file is provided AND this is a DRT-enabled problem, load and apply it
-            if (drt_solution_paths and
-                drt_solution_paths[i] and
-                drt_config and
-                opt_data.get('drt_enabled', False)):
-
+            if drt_solution_paths and drt_solution_paths[i] and drt_config and opt_data.get("drt_enabled", False):
                 logger.info(f"  🚁 Loading DRT solution from: {drt_solution_paths[i]}")
 
                 # Load DRT matrix from JSON file (zones × intervals)
-                drt_matrix = self._load_drt_solution_from_file(
-                    drt_solution_paths[i],
-                    opt_data
-                )
+                drt_matrix = self._load_drt_solution_from_file(drt_solution_paths[i], opt_data)
 
                 logger.info(f"  📈 Loaded DRT matrix: {drt_matrix.shape} (zones × intervals)")
 
                 # Update the DRT portion of the initial solution in opt_data
-                opt_data['initial_solution'] = self._update_drt_portion_in_flat_solution(
-                    flat_solution=opt_data['initial_solution'],
-                    drt_matrix=drt_matrix,
-                    opt_data=opt_data
+                opt_data["initial_solution"] = self._update_drt_portion_in_flat_solution(
+                    flat_solution=opt_data["initial_solution"], drt_matrix=drt_matrix, opt_data=opt_data
                 )
 
                 logger.info("  ✅ Applied DRT solution to optimization data")
@@ -1679,10 +1562,10 @@ class GTFSDataPreparator:
                 logger.warning("  ⚠️  DRT solution file provided but DRT not enabled, ignoring")
 
             # Add metadata about the source
-            opt_data['metadata']['source_index'] = i
-            opt_data['metadata']['source_gtfs_path'] = gtfs_path
+            opt_data["metadata"]["source_index"] = i
+            opt_data["metadata"]["source_gtfs_path"] = gtfs_path
             if drt_solution_paths and i < len(drt_solution_paths) and drt_solution_paths[i]:
-                opt_data['metadata']['source_drt_path'] = drt_solution_paths[i]
+                opt_data["metadata"]["source_drt_path"] = drt_solution_paths[i]
 
             optimization_data_list.append(opt_data)
 
@@ -1690,10 +1573,7 @@ class GTFSDataPreparator:
         return optimization_data_list
 
     def _update_drt_portion_in_flat_solution(
-        self,
-        flat_solution: np.ndarray,
-        drt_matrix: np.ndarray,
-        opt_data: dict[str, Any]
+        self, flat_solution: np.ndarray, drt_matrix: np.ndarray, opt_data: dict[str, Any]
     ) -> np.ndarray:
         """
         Update the DRT portion of a flat combined solution array with values from a DRT matrix.
@@ -1730,16 +1610,14 @@ class GTFSDataPreparator:
             ValueError: If DRT matrix dimensions don't match expected structure
         """
         # Get structure information
-        variable_structure = opt_data['variable_structure']
-        pt_size = variable_structure['pt_size']
-        drt_size = variable_structure['drt_size']
-        expected_drt_shape = variable_structure['drt_shape']
+        variable_structure = opt_data["variable_structure"]
+        pt_size = variable_structure["pt_size"]
+        drt_size = variable_structure["drt_size"]
+        expected_drt_shape = variable_structure["drt_shape"]
 
         # Validate DRT matrix shape
         if drt_matrix.shape != expected_drt_shape:
-            raise ValueError(
-                f"DRT matrix shape {drt_matrix.shape} doesn't match expected {expected_drt_shape}"
-            )
+            raise ValueError(f"DRT matrix shape {drt_matrix.shape} doesn't match expected {expected_drt_shape}")
 
         # Validate flat solution length
         expected_total_size = pt_size + drt_size
@@ -1757,23 +1635,17 @@ class GTFSDataPreparator:
 
         # Validate flattened DRT size
         if len(drt_flat) != drt_size:
-            raise ValueError(
-                f"Flattened DRT size {len(drt_flat)} doesn't match expected {drt_size}"
-            )
+            raise ValueError(f"Flattened DRT size {len(drt_flat)} doesn't match expected {drt_size}")
 
         # Replace DRT portion (keep PT portion unchanged)
-        updated_solution[pt_size:pt_size + drt_size] = drt_flat
+        updated_solution[pt_size : pt_size + drt_size] = drt_flat
 
         logger.info(f"    🔧 Updated DRT portion: indices {pt_size}:{pt_size + drt_size}")
         logger.info(f"    📊 DRT values: {drt_flat.tolist()}")
 
         return updated_solution
 
-    def _load_drt_solution_from_file(
-        self,
-        drt_solution_path: str,
-        opt_data: dict[str, Any]
-    ) -> np.ndarray:
+    def _load_drt_solution_from_file(self, drt_solution_path: str, opt_data: dict[str, Any]) -> np.ndarray:
         """
         Load DRT solution from JSON file and convert to matrix format. We save the DRT component
         from some solutions from the optimisation run as a JSON file. This method allows us to load
@@ -1801,16 +1673,16 @@ class GTFSDataPreparator:
             raise ValueError(f"Invalid JSON in DRT solution file {drt_solution_path}: {e}") from e
 
         # Validate structure
-        if 'drt_solutions' not in drt_data:
+        if "drt_solutions" not in drt_data:
             raise ValueError("DRT solution file missing 'drt_solutions' key")
 
         # Get current DRT configuration
-        if not opt_data.get('drt_enabled', False):
+        if not opt_data.get("drt_enabled", False):
             raise ValueError("Cannot load DRT solution: DRT not enabled in current optimization data")
 
-        current_zones = opt_data['drt_config']['zones']
-        n_intervals = opt_data['n_intervals']
-        interval_labels = opt_data['intervals']['labels']
+        current_zones = opt_data["drt_config"]["zones"]
+        n_intervals = opt_data["n_intervals"]
+        interval_labels = opt_data["intervals"]["labels"]
 
         # Create solution matrix
         drt_matrix = np.zeros((len(current_zones), n_intervals), dtype=int)
@@ -1822,31 +1694,35 @@ class GTFSDataPreparator:
 
         # Map solutions to current configuration
         for zone_idx, zone in enumerate(current_zones):
-            zone_id = zone['zone_id']
+            zone_id = zone["zone_id"]
 
-            if zone_id not in drt_data['drt_solutions']:
+            if zone_id not in drt_data["drt_solutions"]:
                 logger.warning(f"  ⚠️  Zone {zone_id} not found in solution file, using default (0)")
                 missing_zones.append(zone_id)
                 continue
 
-            zone_solution = drt_data['drt_solutions'][zone_id]
-            allowed_fleet_sizes = zone.get('allowed_fleet_sizes', [])
+            zone_solution = drt_data["drt_solutions"][zone_id]
+            allowed_fleet_sizes = zone.get("allowed_fleet_sizes", [])
             loaded_zones += 1
 
             # Map each interval
             for interval_idx, interval_label in enumerate(interval_labels):
-                if interval_label in zone_solution['fleet_deployment']:
+                if interval_label in zone_solution["fleet_deployment"]:
                     # Get fleet size from solution file
-                    deployment = zone_solution['fleet_deployment'][interval_label]
-                    target_fleet_size = deployment['fleet_size']
+                    deployment = zone_solution["fleet_deployment"][interval_label]
+                    target_fleet_size = deployment["fleet_size"]
 
                     # Find matching choice index in current configuration
                     try:
                         choice_idx = allowed_fleet_sizes.index(target_fleet_size)
                         drt_matrix[zone_idx, interval_idx] = choice_idx
-                        logger.info(f"    Zone {zone_id} {interval_label}: {target_fleet_size} vehicles (idx {choice_idx})")
+                        logger.info(
+                            f"    Zone {zone_id} {interval_label}: {target_fleet_size} vehicles (idx {choice_idx})"
+                        )
                     except ValueError:
-                        logger.error(f"    ⚠️  Zone {zone_id} {interval_label}: fleet size {target_fleet_size} not in allowed list, using 0")
+                        logger.error(
+                            f"    ⚠️  Zone {zone_id} {interval_label}: fleet size {target_fleet_size} not in allowed list, using 0"
+                        )
                         drt_matrix[zone_idx, interval_idx] = 0
                         invalid_deployments += 1
                 else:
