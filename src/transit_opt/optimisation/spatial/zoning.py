@@ -636,7 +636,7 @@ class HexagonalZoneSystem:
             drt_speed_kmh = drt_zone.get('drt_speed_kmh')
             if drt_speed_kmh is None:
                 drt_speed_kmh = optimization_data['drt_config'].get('default_drt_speed_kmh', 25.0)
-                logger.debug("Using default DRT speed %s km/h for zone %s", drt_speed_kmh, drt_zone.get('id'))
+                logger.debug("Using default DRT speed %s km/h for zone %s", drt_speed_kmh, drt_zone.get('zone_id'))
 
             for interval_idx in range(n_intervals):
                 # Get fleet size for this DRT zone and interval
