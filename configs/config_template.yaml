@@ -1,9 +1,9 @@
 input:
   gtfs_path: # The initial gtfs feed that you start the optimisation with
       - data/external/study_area_gtfs_bus.zip
-  allowed_headways: [10, 15, 30, 60, 120, 240] # in minutes
+  allowed_headways: [10, 15, 30, 60, 120] # in minutes
   # We split the day into equal intervals. How long is each interval?
-  interval_hours: 6
+  interval_hours: 4
   # The PT and zoning layer are clipped to this boundary
   boundary_geojson: data/external/boundaries/study_area_boundary.geojson
   boundary_buffer_km: 2.0 # How much to buffer the boundary layer by (km)
@@ -21,7 +21,7 @@ input:
         drt_speed_kmh: 20.0  # Zone-specific speed (Will use default_drt_speed_kmh if zone-specific speed is not provided)
       - zone_id: drt_nw
         service_area_path: data/external/drt/drt_nw.shp
-        allowed_fleet_sizes: [0, 15, 30, 60, 120]  # Different fleet options
+        allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Different fleet options
         zone_name: "Leeds NW DRT"
 
 problem:
@@ -29,16 +29,16 @@ problem:
     type: WaitingTimeObjective # StopCoverageObjective, WaitingTimeObjective
     spatial_resolution_km: 2.0 # The size of each zone in the grid
     crs: "EPSG:3857"
-    # time_Aggregation: How to aggregate values across time intervals
-    # WaitingTimeObjective: [average, peak, sum, intervals]
-        # average:  Average waiting time across intervals for each zone
-        # sum: sum waiting times across intervals for each zone
-        # peak: Use waiting time from interval with most vehicles per zone
-        # intervals: Calculate objective for each interval, then average
-    # StopCoverageObjective [average, peak, sum]
-        # average:  Average vehicles across intervals for each zone
-        # sum: sum vehicles across intervals for each zone
-        # peak: Use vehicles per zone from interval with most vehicles per zone
+    # time_aggregation: How to aggregate values across time intervals
+      # WaitingTimeObjective: [average, peak, sum, intervals]
+          # average:  Average waiting time across intervals for each zone
+          # sum: sum waiting times across intervals for each zone
+          # peak: Use waiting time from interval with most vehicles per zone
+          # intervals: Calculate objective for each interval, then average
+      # StopCoverageObjective [average, peak, sum]
+          # average:  Average vehicles across intervals for each zone
+          # sum: sum vehicles across intervals for each zone
+          # peak: Use vehicles per zone from interval with most vehicles per zone
     time_aggregation: average # WaitingTimeObjective: [average, peak, sum, intervals]. StopCoverageObjective [average, peak, sum]
     metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total].
     population_weighted: true # Weight objective values per zone by population or not
@@ -63,13 +63,13 @@ problem:
       #    - 'peak': Constrain peak interval fleet
       #    - 'average': Constrain average across intervals
       #    - 'total': Constrain sum across all intervals (default)
-      measure: peak
+      measure: average
     - type: MinimumFleetConstraintHandler
       # baseline: Which original fleet measure to use as reference
       #    - 'current_peak': Reference original peak fleet
       #    - 'current_by_interval': Reference original per-interval fleet
       #    - 'current_average': Reference original average fleet
-      baseline: current_peak
+      baseline: current_average
       min_fleet_fraction: 0.55 # Maintain at least X% of current service
       # level: Constraint application level
       #    - 'system': Single constraint for entire system
@@ -79,7 +79,7 @@ problem:
       #    - 'peak': Constrain peak interval fleet
       #    - 'average': Constrain average across intervals
       #    - 'total': Constrain sum across all intervals
-      measure: peak
+      measure: average
     - type: FleetPerIntervalConstraintHandler
       # baseline (str): How to determine baseline fleet per interval
       #    - 'current_by_interval': Use current GTFS fleet by interval
@@ -93,9 +93,9 @@ problem:
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
   penalty_weights:
-    fleet_total: 10           # FleetTotalConstraintHandler
-    minimum_fleet: 15         # MinimumFleetConstraintHandler
-    fleet_per_interval: 20    # FleetPerIntervalConstraintHandler
+    fleet_total: 1000           # FleetTotalConstraintHandler
+    minimum_fleet: 1000         # MinimumFleetConstraintHandler
+    fleet_per_interval: 1000    # FleetPerIntervalConstraintHandler
 
 optimization:
   algorithm:
@@ -107,8 +107,10 @@ optimization:
     social_coeff: 2.0
     adaptive: true # whether to use adaptive PSO parameters (default pymoo implementation)
     # Penalty method is a custom implementation that guides the search, as PSO is not meant for constrained optimization
+    # Value should be relative to objective value (i.e if objective values around 1000, then set accordingly).
+    # A penalty_weight that is very small relative to objective values will have no effect
     use_penalty_method: true
-    penalty_weight: 100
+    penalty_weight: 500
     adaptive_penalty: false # whether to increase penalty weights incrementally during optimization
     penalty_increase_rate: 1.1 # factor by which to increase penalty weights if adaptive_penalty: true
 
@@ -130,9 +132,9 @@ optimization:
 
   run:
     multi_swarm: true # if true, run multiple swarms in parallel
-    num_runs: 4 # How many swarms to run. Only used if multi_swarm: true
+    num_runs: 5 # How many swarms to run. Only used if multi_swarm: true
     parallel: true # Run swarms in parallel or sequential. Only used if multi_swarm: true
-    track_best_n: 5  # Track the best n results
+    track_best_n: 10  # Track the best n results
 
   termination:
     max_generations: 50   # Total number of particles = pop_size x max_generations (x num_runs if multi_swarm: true)
@@ -149,7 +151,7 @@ output:
   results_dir: "output/test_run_py"     # base directory for all exports
   solution_prefix: "combined_solution"          # prefix to be used for all files
   best_run: false      # Whether to export only the best run's solutions (true) or all runs (false)
-  max_to_save: 2      # Maximum number of solutions to export. Default: None (all)
+  max_to_save: 20      # Maximum number of solutions to export. Default: None (all)
   save_config: true   # Save the config in the output directory
 
 logging:

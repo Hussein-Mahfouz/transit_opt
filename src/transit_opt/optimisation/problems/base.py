@@ -321,7 +321,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
 
         # Set defaults
         self.config.setdefault("tolerance", 0.1)
-        self.config.setdefault("measure", "total")
+        self.config.setdefault("measure", "average")
 
     def evaluate(self, solution_matrix: np.ndarray) -> np.ndarray:
         """
