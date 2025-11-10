@@ -20,8 +20,7 @@ if str(src) not in sys.path:
 
 
 from transit_opt.gtfs.solution_manager import SolutionExportManager
-from transit_opt.optimisation.config.config_manager import \
-    OptimizationConfigManager
+from transit_opt.optimisation.config.config_manager import OptimizationConfigManager
 from transit_opt.optimisation.runners.pso_runner import PSORunner
 from transit_opt.optimisation.spatial.boundaries import StudyAreaBoundary
 from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
@@ -34,6 +33,7 @@ def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
 
+
 def inject_boundary_if_path(cfg: dict) -> None:
     logger = logging.getLogger("transit_opt.scripts.run")
     # Check if Boundary exists
@@ -44,9 +44,10 @@ def inject_boundary_if_path(cfg: dict) -> None:
         obj["boundary"] = StudyAreaBoundary(
             boundary_gdf=gdf,
             crs=obj.get("crs", cfg.get("problem", {}).get("objective", {}).get("crs", "EPSG:3857")),
-            buffer_km=obj.get("boundary_buffer_km", cfg.get("input", {}).get("boundary_buffer_km", 2.0))
+            buffer_km=obj.get("boundary_buffer_km", cfg.get("input", {}).get("boundary_buffer_km", 2.0)),
         )
         logger.info("Injected StudyAreaBoundary from %s", bpath)
+
 
 def prepare_opt_data(cfg: dict) -> dict:
     inp = cfg.get("input", {})
@@ -54,17 +55,11 @@ def prepare_opt_data(cfg: dict) -> dict:
     # allow single string or list
     if isinstance(gtfs_path, (list, tuple)):
         gtfs_path = gtfs_path[0]
-    preparator = GTFSDataPreparator(
-        gtfs_path=gtfs_path,
-        interval_hours=inp.get("interval_hours")
-    )
+    preparator = GTFSDataPreparator(gtfs_path=gtfs_path, interval_hours=inp.get("interval_hours"))
     allowed_headways = inp.get("allowed_headways")
     drt_cfg = inp.get("drt") or inp.get("drt_config") or {}
     if drt_cfg.get("enabled", False):
-        return preparator.extract_optimization_data_with_drt(
-            allowed_headways=allowed_headways,
-            drt_config=drt_cfg
-        )
+        return preparator.extract_optimization_data_with_drt(allowed_headways=allowed_headways, drt_config=drt_cfg)
     else:
         return preparator.extract_optimization_data(allowed_headways=allowed_headways)
 
@@ -91,10 +86,7 @@ def export_results(opt_data: dict, res, cfg: dict) -> None:
     prefix = out_cfg.get("solution_prefix", "solution")
     logger.info("Exporting %d solution(s) to %s (prefix=%s)", len(to_export), out_dir, prefix)
     export_results = export_manager.export_solution_set(
-        solutions=to_export,
-        base_output_dir=str(out_dir),
-        solution_prefix=prefix,
-        metadata=None
+        solutions=to_export, base_output_dir=str(out_dir), solution_prefix=prefix, metadata=None
     )
 
     logger.info("Export completed. Files written:")
@@ -102,21 +94,18 @@ def export_results(opt_data: dict, res, cfg: dict) -> None:
         for k, v in r["exports"].items():
             logger.info("  %s -> %s", k, v["path"])
 
+
 def main(config_path: str):
     # 1. Load config and set up logging
     cfg = load_config(config_path)
     # Set up logging
     log_cfg = cfg.get("logging", {})
-    log_dir = log_cfg.get("log_dir", "logs")
+    log_dir = log_cfg.get("log_dir")
     log_file = log_cfg.get("log_file", "run.log")
     console_level = log_cfg.get("console_level", "INFO")
     file_level = log_cfg.get("file_level", "DEBUG")
     setup_logger(
-        name="transit_opt",
-        log_dir=log_dir,
-        log_file=log_file,
-        console_level=console_level,
-        file_level=file_level
+        name="transit_opt", log_dir=log_dir, log_file=log_file, console_level=console_level, file_level=file_level
     )
     logger = logging.getLogger("transit_opt.scripts.run")
     logger.info("🚀 Starting transit optimization run")
@@ -133,8 +122,6 @@ def main(config_path: str):
 
         shutil.copy2(config_path, cfg_dest)
         logger.info(f"💾 Saved config to {cfg_dest}")
-
-
 
     # 2. Add study area boundary for clipping gtfs / zones
     inject_boundary_if_path(cfg)
@@ -162,15 +149,11 @@ def main(config_path: str):
             track_best_n=run_cfg.get("track_best_n"),
         )
     else:
-        res = runner.optimize(
-            opt_data,
-            track_best_n=run_cfg.get("track_best_n")
-        )
+        res = runner.optimize(opt_data, track_best_n=run_cfg.get("track_best_n"))
     # 6. Export results to file
     export_results(opt_data, res, cfg)
 
     logger.info("✅ Optimization complete!")
-
 
 
 if __name__ == "__main__":

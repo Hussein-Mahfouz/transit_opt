@@ -14,6 +14,7 @@ from .base import BaseSpatialObjective
 
 logger = logging.getLogger(__name__)
 
+
 class WaitingTimeObjective(BaseSpatialObjective):
     """
     Waiting time objective using hexagonal zones with population weighting.
@@ -49,7 +50,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
         metric: str = "total",  # 'total' or 'variance'
         population_weighted: bool = False,
         population_layer: Any | None = None,
-        population_power: float = 1.0
+        population_power: float = 1.0,
     ):
         # Validate parameters
         if metric not in ["total", "variance"]:
@@ -71,17 +72,15 @@ class WaitingTimeObjective(BaseSpatialObjective):
         if self.population_weighted:
             if self.population_layer is None:
                 raise ValueError("Population layer must be provided if population_weighted is True")
-            self.population_per_zone = interpolate_population_to_zones(
-                self.spatial_system, self.population_layer
-            )
+            self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
 
     def _create_spatial_system(self):
         """Create hexagonal zoning system."""
 
         # Extract DRT config if available
         drt_config = None
-        if self.opt_data.get('drt_enabled', False):
-            drt_config = self.opt_data.get('drt_config')
+        if self.opt_data.get("drt_enabled", False):
+            drt_config = self.opt_data.get("drt_config")
 
         return HexagonalZoneSystem(
             gtfs_feed=self.gtfs_feed,
@@ -93,16 +92,16 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
     def evaluate(self, solution_matrix: np.ndarray | dict) -> float:
         """
-            Evaluate waiting time objective for given solution.
+        Evaluate waiting time objective for given solution.
 
-            Args:
-                solution_matrix:
-                - PT-only: Decision matrix (n_routes × n_intervals)
-                - PT+DRT: Dict with 'pt' and 'drt' keys
+        Args:
+            solution_matrix:
+            - PT-only: Decision matrix (n_routes × n_intervals)
+            - PT+DRT: Dict with 'pt' and 'drt' keys
 
-            Returns:
-                Objective value (lower is better)
-            """
+        Returns:
+            Objective value (lower is better)
+        """
 
         # ALWAYS calculate per-interval waiting times first
         vehicles_data = self.spatial_system._vehicles_per_zone(solution_matrix, self.opt_data)
@@ -111,8 +110,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Calculate waiting times for each interval
         interval_waiting_times = []
-        for interval_idx in range(vehicles_data["intervals"].shape[0]): # Iterate over intervals
-            vehicles_this_interval = vehicles_data["intervals"][interval_idx, :] # Vehicles per zone for this interval
+        for interval_idx in range(vehicles_data["intervals"].shape[0]):  # Iterate over intervals
+            vehicles_this_interval = vehicles_data["intervals"][interval_idx, :]  # Vehicles per zone for this interval
             waiting_times_this_interval = self._convert_vehicles_to_waiting_times_for_interval(
                 vehicles_this_interval, solution_matrix, interval_idx
             )
@@ -128,10 +127,9 @@ class WaitingTimeObjective(BaseSpatialObjective):
             # Use pre-computed vehicle averages, not averaged waiting times
             vehicles_per_zone = vehicles_data["average"]
             interval_length = self._get_interval_length_minutes()
-            aggregated_waiting_times = np.array([
-                self._convert_vehicle_count_to_waiting_time(v, interval_length)
-                for v in vehicles_per_zone
-            ])
+            aggregated_waiting_times = np.array(
+                [self._convert_vehicle_count_to_waiting_time(v, interval_length) for v in vehicles_per_zone]
+            )
         elif self.time_aggregation == "sum":
             # Sum waiting times across intervals for each zone
             aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
@@ -175,9 +173,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         return waiting_times
 
-    def _convert_vehicle_count_to_waiting_time(
-        self, vehicle_count: float, interval_length_minutes: float
-    ) -> float:
+    def _convert_vehicle_count_to_waiting_time(self, vehicle_count: float, interval_length_minutes: float) -> float:
         """
         Convert vehicle count to waiting time for a zone.
         Simple inverse relationship: more vehicles = lower waiting time.
@@ -215,10 +211,10 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Return cached value if already computed
         if self._interval_length_minutes is not None:
-            #print(f"⏱️ Interval length: {self._interval_length_minutes:.0f} minutes (cached)")
+            # print(f"⏱️ Interval length: {self._interval_length_minutes:.0f} minutes (cached)")
             return self._interval_length_minutes
 
-        shape = self.opt_data.get('decision_matrix_shape')
+        shape = self.opt_data.get("decision_matrix_shape")
         if not shape or len(shape) < 2:
             raise ValueError("Missing or invalid 'decision_matrix_shape' in opt_data.")
 
@@ -226,11 +222,15 @@ class WaitingTimeObjective(BaseSpatialObjective):
         interval_length_hours = 24 / n_intervals
         self._interval_length_minutes = interval_length_hours * 60  # Convert to minutes
 
-        print(f"📊 Using {n_intervals} intervals, each {interval_length_hours:.1f} hours ({self._interval_length_minutes:.0f} minutes)")
+        logger.info(
+            f"📊 Using {n_intervals} intervals, each {interval_length_hours:.1f} hours ({self._interval_length_minutes:.0f} minutes)"
+        )
 
         return self._interval_length_minutes
 
-    def _get_peak_interval_waiting_times(self, interval_waiting_times: np.ndarray, vehicles_intervals: np.ndarray) -> np.ndarray:
+    def _get_peak_interval_waiting_times(
+        self, interval_waiting_times: np.ndarray, vehicles_intervals: np.ndarray
+    ) -> np.ndarray:
         """
         Get waiting times from the system-wide peak interval.
 
@@ -257,43 +257,42 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         return np.mean(interval_objectives)
 
-
     def _calculate_final_objective(self, waiting_times: np.ndarray) -> float:
         """
         Calculate final objective value from zone waiting times.
         (no spatial lag - doesn't make sense for waiting times)
         """
-        print(f"   Metric: {self.metric}")
-        print(f"   Waiting times shape: {waiting_times.shape}")
-        print(f"   Sample waiting times: {waiting_times[:10]}")
-        print(f"   Min/Max waiting times: {waiting_times.min():.2f}/{waiting_times.max():.2f}")
+        logger.debug(f"   Metric: {self.metric}")
+        logger.debug(f"   Waiting times shape: {waiting_times.shape}")
+        logger.debug(f"   Sample waiting times: {waiting_times[:10]}")
+        logger.debug(f"   Min/Max waiting times: {waiting_times.min():.2f}/{waiting_times.max():.2f}")
 
         if self.population_weighted:
-            print(f"   Population per zone: {self.population_per_zone}")
-            print(f"   Population power: {self.population_power}")
+            logger.debug(f"   Population per zone: {self.population_per_zone}")
+            logger.debug(f"   Population power: {self.population_power}")
 
             if self.metric == "total":
                 result = calculate_population_weighted_total(
                     waiting_times, self.population_per_zone, self.population_power
                 )
-                print(f"   Population-weighted total result: {result}")
+                logger.debug(f"   Population-weighted total result: {result}")
                 return result
 
             else:  # variance
                 result = calculate_population_weighted_variance(
                     waiting_times, self.population_per_zone, self.population_power
                 )
-                print(f"   Population-weighted variance result: {result}")
+                logger.debug(f"   Population-weighted variance result: {result}")
                 return result
         else:
             # Unweighted calculations
             if self.metric == "total":
                 result = np.sum(waiting_times)
-                print(f"   Unweighted total result: {result}")
+                logger.debug(f"   Unweighted total result: {result}")
                 return result
             else:  # variance
                 result = np.var(waiting_times)
-                print(f"   Unweighted variance result: {result}")
+                logger.debug(f"   Unweighted variance result: {result}")
                 return result
 
     def _get_spatial_summary(self) -> str:
@@ -305,11 +304,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
         features.append(f"time aggregation: {self.time_aggregation}")
         return ", ".join(features)
 
-    def get_waiting_times_per_zone(
-        self,
-        solution_matrix: np.ndarray,
-        aggregation: str = "average"
-    ) -> np.ndarray:
+    def get_waiting_times_per_zone(self, solution_matrix: np.ndarray, aggregation: str = "average") -> np.ndarray:
         """
         Get waiting times per zone for visualization and analysis.
 
@@ -334,19 +329,18 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Convert to waiting times using existing method
         if aggregation == "average":
-            vehicle_counts = vehicles_data['average']
+            vehicle_counts = vehicles_data["average"]
         elif aggregation == "peak":
-            vehicle_counts = vehicles_data['peak']
+            vehicle_counts = vehicles_data["peak"]
         else:
             # Assume it's an interval index
             interval_idx = int(aggregation)
-            vehicle_counts = vehicles_data['intervals'][interval_idx, :]
+            vehicle_counts = vehicles_data["intervals"][interval_idx, :]
 
         # Use existing conversion method
-        waiting_times = np.array([
-            self._convert_vehicle_count_to_waiting_time(v, interval_length)
-            for v in vehicle_counts
-        ])
+        waiting_times = np.array(
+            [self._convert_vehicle_count_to_waiting_time(v, interval_length) for v in vehicle_counts]
+        )
 
         return waiting_times
 
@@ -400,5 +394,5 @@ class WaitingTimeObjective(BaseSpatialObjective):
             show_drt_zones=show_drt_zones,
             ax=ax,
             vmin=vmin,
-            vmax=vmax
+            vmax=vmax,
         )

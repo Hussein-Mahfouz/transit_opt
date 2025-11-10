@@ -1,7 +1,7 @@
 {
   "[python]": {
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "ms-python.black-formatter"  // Use Black formatter extension directly
+    "editor.defaultFormatter": "charliermarsh.ruff"  // Use Black formatter extension directly
   },
   "editor.codeActionsOnSave": {
     "source.fixAll": "never",

@@ -43,26 +43,19 @@ def interpolate_population_to_zones(spatial_system, population_layer: Any) -> np
         else:
             hexgrid_transformed = hexgrid
 
-    stats = zonal_stats(
-        hexgrid_transformed,
-        population_layer,
-        stats=["sum"],
-        nodata=0,
-        geojson_out=False
-    )
+    stats = zonal_stats(hexgrid_transformed, population_layer, stats=["sum"], nodata=0, geojson_out=False)
 
-    pop_array = np.array([item['sum'] if item['sum'] is not None else 0 for item in stats])
+    pop_array = np.array([item["sum"] if item["sum"] is not None else 0 for item in stats])
     # Replace negative values with 0 (WorldPop can have negatives)
     pop_array = np.maximum(pop_array, 0)
-    logger.info("📊 Population per zone: min=%d, max=%d, mean=%.2f",
-                np.min(pop_array), np.max(pop_array), np.mean(pop_array))
+    logger.info(
+        "📊 Population per zone: min=%d, max=%d, mean=%.2f", np.min(pop_array), np.max(pop_array), np.mean(pop_array)
+    )
     return pop_array
 
 
 def calculate_population_weighted_variance(
-    values: np.ndarray,
-    population: np.ndarray,
-    population_power: float = 1.0
+    values: np.ndarray, population: np.ndarray, population_power: float = 1.0
 ) -> float:
     """
     Calculate population-weighted variance of values across zones.
@@ -94,9 +87,7 @@ def calculate_population_weighted_variance(
 
 
 def calculate_population_weighted_total(
-    values: np.ndarray,
-    population: np.ndarray,
-    population_power: float = 1.0
+    values: np.ndarray, population: np.ndarray, population_power: float = 1.0
 ) -> float:
     """
     Calculate population-weighted total of values across zones.
@@ -124,12 +115,12 @@ def calculate_population_weighted_total(
         raise ValueError("Population data not available")
 
     pop_weighted = np.power(population, population_power)
-    logger.info("Population weights: %s", pop_weighted)
+    logger.debug("Population weights: %s", pop_weighted)
 
     # Handle infinite values (from waiting time objective)
     finite_mask = np.isfinite(values)
     if not np.any(finite_mask):
-        return float('inf')  # All zones have infinite values
+        return float("inf")  # All zones have infinite values
 
     # Only sum for zones with finite values
     finite_values = values[finite_mask]

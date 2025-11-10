@@ -69,6 +69,7 @@ from ..problems.transit_problem import TransitOptimizationProblem
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class OptimizationResult:
     """
@@ -272,21 +273,21 @@ class OptimizationResult:
     """
 
     # Core solution and objective results
-    best_solution: np.ndarray          # Route×interval matrix of headway indices
-    best_objective: float              # Objective function value (minimization)
+    best_solution: np.ndarray  # Route×interval matrix of headway indices
+    best_objective: float  # Objective function value (minimization)
 
     # Constraint satisfaction analysis
     constraint_violations: dict[str, Any]  # Detailed feasibility analysis
 
     # Optimization process timing
-    optimization_time: float           # Total wall-clock time in seconds
-    generations_completed: int         # Actual generations executed
+    optimization_time: float  # Total wall-clock time in seconds
+    generations_completed: int  # Actual generations executed
 
     # Detailed progress and analysis data (with defaults for optional fields)
     optimization_history: list[dict[str, Any]] = field(default_factory=list)  # Generation-by-generation progress
-    algorithm_config: dict[str, Any] = field(default_factory=dict)            # PSO parameters used
-    convergence_info: dict[str, Any] = field(default_factory=dict)            # Convergence analysis
-    performance_stats: dict[str, Any] = field(default_factory=dict)           # Performance metrics
+    algorithm_config: dict[str, Any] = field(default_factory=dict)  # PSO parameters used
+    convergence_info: dict[str, Any] = field(default_factory=dict)  # Convergence analysis
+    performance_stats: dict[str, Any] = field(default_factory=dict)  # Performance metrics
     best_feasible_solutions: list[dict[str, Any]] = field(default_factory=list)  # Top N feasible solutions for this run
 
 
@@ -398,18 +399,21 @@ class MultiRunResult:
         top_5_global = all_feasible_solutions[:5]
         ```
     """
+
     # Core results and analysis
-    best_result: OptimizationResult                    # Best solution across all runs
+    best_result: OptimizationResult  # Best solution across all runs
 
     # memory efficient storage of all run results
-    run_summaries: list[dict]                          # Lightweight per-run summaries
+    run_summaries: list[dict]  # Lightweight per-run summaries
 
     # statistics and metadata
-    statistical_summary: dict[str, Any]                # Statistical analysis
-    total_time: float                                  # Total time for all runs
-    num_runs_completed: int                            # Number of successful runs
+    statistical_summary: dict[str, Any]  # Statistical analysis
+    total_time: float  # Total time for all runs
+    num_runs_completed: int  # Number of successful runs
 
-    best_feasible_solutions_per_run: list[list[dict]] = field(default_factory=list)  # [run_idx][solution_idx] = solution_dict
+    best_feasible_solutions_per_run: list[list[dict]] = field(
+        default_factory=list
+    )  # [run_idx][solution_idx] = solution_dict
     # Top n best feasible solutions from all runs, combined and ranked
     best_feasible_solutions_all_runs: list[dict] = field(default_factory=list)
 
@@ -467,14 +471,14 @@ class PSORuntimeCallback(Callback):
         optimization begins.
         """
         super().__init__()
-        self.start_time = None              # Will be set on first notify() call
-        self.generation_times = []          # Cumulative timing for each generation
+        self.start_time = None  # Will be set on first notify() call
+        self.generation_times = []  # Cumulative timing for each generation
 
         # Track best feasible solutions during optimization
         self.feasible_tracker = BestFeasibleSolutionsTracker(track_best_n)
         self.memory_usage = []
-
-
+        # Track violations when penalty method is used
+        self.violation_tracking_enabled = False  # Set during optimization
 
     # Replace the existing notify method in PSORuntimeCallback
 
@@ -518,9 +522,8 @@ class PSORuntimeCallback(Callback):
         # Store timing
         self.generation_times.append(elapsed)
 
-
         # Track feasible solutions
-        if hasattr(algorithm, 'pop') and algorithm.pop is not None:
+        if hasattr(algorithm, "pop") and algorithm.pop is not None:
             pop = algorithm.pop
             objectives = pop.get("F")
             constraint_violations = pop.get("G")
@@ -534,14 +537,58 @@ class PSORuntimeCallback(Callback):
                 solution_matrices = []
                 generations = []
 
+                # Calculate actual violations if penalty method is used
+                actual_violations_list = []  # Store actual constraint violations
+
                 for i in range(len(objectives)):
                     # Determine feasibility
                     is_feasible = True
                     violation_count = 0
-                    if constraint_violations is not None:
+                    if constraint_violations is not None and constraint_violations.size > 0:
+                        # Hard constraints: use G array
                         individual_violations = constraint_violations[i]
                         is_feasible = np.all(individual_violations <= 1e-6)
                         violation_count = np.sum(individual_violations > 1e-6)
+                    elif self.violation_tracking_enabled:
+                        # Penalty method: manually calculate violations
+                        try:
+                            solution_matrix = algorithm.problem.decode_solution(decision_vars[i])
+
+                            # Calculate violations for each constraint
+                            total_violation = 0
+                            for constraint in algorithm.problem.constraints:
+                                # ===== Handle constraint-specific input format =====
+                                constraint_name = type(constraint).__name__
+
+                                if constraint_name == "FleetTotalConstraintHandler":
+                                    # FleetTotalConstraintHandler handles PT+DRT dict correctly
+                                    # Pass full solution (dict or array)
+                                    constraint_viols = constraint.evaluate(solution_matrix)
+                                else:
+                                    # Other constraints (FleetPerInterval, MinimumFleet) are PT-only
+                                    # Extract PT portion if solution is dict
+                                    if isinstance(solution_matrix, dict):
+                                        pt_solution = solution_matrix["pt"]
+                                        constraint_viols = constraint.evaluate(pt_solution)
+                                    else:
+                                        # PT-only problem: solution_matrix is already PT array
+                                        constraint_viols = constraint.evaluate(solution_matrix)
+
+                                # Count positive violations (> 1e-6 tolerance)
+                                total_violation += np.sum(np.maximum(0, constraint_viols) > 1e-6)
+
+                            violation_count = int(total_violation)
+                            # With penalty method, all solutions are "feasible"
+                            # The penalty is in the objective, so constraint violations are informational
+                            is_feasible = True
+                            actual_violations_list.append(violation_count)
+
+                        except Exception as e:
+                            logger.warning(f"Failed to calculate violations for solution {i}: {e}")
+                            violation_count = 999  # Unknown
+                            is_feasible = False
+                            actual_violations_list.append(999)
+                    # decode solution for tracking
                     try:
                         solution_matrix = algorithm.problem.decode_solution(decision_vars[i])
                     except Exception:
@@ -552,9 +599,18 @@ class PSORuntimeCallback(Callback):
                     solution_matrices.append(solution_matrix)
                     generations.append(current_gen)
 
+                # Pass correct violations array to tracker
+                # For penalty method: use actual_violations_list
+                # For hard constraints: violations array is already correct
+                violations_to_track = actual_violations_list if self.violation_tracking_enabled else violations
+
                 # Add top N feasible solutions from this generation
                 self.feasible_tracker.add_generation_solutions(
-                    solution_matrices, objectives, generations, feasibles, violations
+                    solution_matrices=solution_matrices,
+                    objectives=objectives,
+                    generations=generations,
+                    feasibles=feasibles,
+                    violations=violations_to_track
                 )
 
         # Track memory every N generations
@@ -570,6 +626,7 @@ class PSORuntimeCallback(Callback):
             self.memory_usage.append((algorithm.n_gen, mem_mb))
             logger.info(f"🧠 Memory usage at Gen {algorithm.n_gen}: {mem_mb:.1f} MB")
 
+
 class PenaltySchedulingCallback(Callback):
     """Adaptive penalty weight scheduling for constraint handling."""
 
@@ -582,22 +639,22 @@ class PenaltySchedulingCallback(Callback):
     def notify(self, algorithm):
         gen = algorithm.n_gen
 
-        if hasattr(algorithm.termination, 'n_max_gen'):
+        if hasattr(algorithm.termination, "n_max_gen"):
             max_gen = algorithm.termination.n_max_gen
             progress = gen / max_gen if max_gen > 0 else 0
         else:
             progress = min(gen / 100.0, 1.0)  # Fallback
 
         # Exponential penalty increase
-        self.current_penalty = self.initial_penalty * (self.increase_rate ** progress)
+        self.current_penalty = self.initial_penalty * (self.increase_rate**progress)
 
         # Update problem penalty weight
-        if hasattr(algorithm.problem, 'update_penalty_weight'):
+        if hasattr(algorithm.problem, "update_penalty_weight"):
             algorithm.problem.update_penalty_weight(self.current_penalty)
 
         # Log progress
-        if gen % 25 == 0 and hasattr(algorithm, 'pop'):
-            if hasattr(algorithm.problem, 'use_penalty_method') and algorithm.problem.use_penalty_method:
+        if gen % 25 == 0 and hasattr(algorithm, "pop"):
+            if hasattr(algorithm.problem, "use_penalty_method") and algorithm.problem.use_penalty_method:
                 # For penalty method: show both penalty weight AND feasible solutions
                 logger.debug(f"   Gen {gen}: Penalty weight = {self.current_penalty:.1f}")
 
@@ -608,7 +665,7 @@ class PenaltySchedulingCallback(Callback):
 
                 # For penalty method, we need to evaluate original constraints
                 # to determine feasibility (since G matrix isn't used)
-                if hasattr(algorithm.problem, 'constraints') and algorithm.problem.constraints:
+                if hasattr(algorithm.problem, "constraints") and algorithm.problem.constraints:
                     for i, solution_flat in enumerate(algorithm.pop.get("X")):
                         solution_matrix = algorithm.problem.decode_solution(solution_flat)
                         is_feasible = True
@@ -648,7 +705,7 @@ class CallbackCollection(Callback):
     def notify(self, algorithm):
         """Call all callbacks in sequence."""
         for callback in self.callbacks:
-            if hasattr(callback, 'notify'):
+            if hasattr(callback, "notify"):
                 callback.notify(algorithm)
 
     def __len__(self):
@@ -691,11 +748,11 @@ class BestFeasibleSolutionsTracker:
             # Handle both dict (DRT-enabled) and array (PT-only) solution formats
             if isinstance(solution_matrices[i], dict):
                 # DRT-enabled case: check if dict has required keys and valid data
-                if 'pt' not in solution_matrices[i] or 'drt' not in solution_matrices[i]:
+                if "pt" not in solution_matrices[i] or "drt" not in solution_matrices[i]:
                     continue
-                if solution_matrices[i]['pt'] is None or solution_matrices[i]['drt'] is None:
+                if solution_matrices[i]["pt"] is None or solution_matrices[i]["drt"] is None:
                     continue
-                if solution_matrices[i]['pt'].size == 0 or solution_matrices[i]['drt'].size == 0:
+                if solution_matrices[i]["pt"].size == 0 or solution_matrices[i]["drt"].size == 0:
                     continue
             else:
                 # PT-only case: check numpy array
@@ -705,25 +762,24 @@ class BestFeasibleSolutionsTracker:
             # Create solution record with proper copying for both formats
             if isinstance(solution_matrices[i], dict):
                 # DRT-enabled: deep copy the dictionary structure
-                solution_copy = {
-                    'pt': solution_matrices[i]['pt'].copy(),
-                    'drt': solution_matrices[i]['drt'].copy()
-                }
+                solution_copy = {"pt": solution_matrices[i]["pt"].copy(), "drt": solution_matrices[i]["drt"].copy()}
             else:
                 # PT-only: direct copy
                 solution_copy = solution_matrices[i].copy()
 
-            gen_solutions.append({
-                'solution': solution_copy,
-                'objective': float(objectives[i]),
-                'generation_found': generations[i],
-                'feasible': True,
-                'violations': violations[i]
-            })
+            gen_solutions.append(
+                {
+                    "solution": solution_copy,
+                    "objective": float(objectives[i]),
+                    "generation_found": generations[i],
+                    "feasible": True,
+                    "violations": violations[i],
+                }
+            )
 
         # Sort by objective (best first), take up to max_solutions
-        gen_solutions.sort(key=lambda x: x['objective'])
-        gen_solutions = gen_solutions[:self.max_solutions]
+        gen_solutions.sort(key=lambda x: x["objective"])
+        gen_solutions = gen_solutions[: self.max_solutions]
 
         # Add to global best_solutions if unique
         for new_sol in gen_solutions:
@@ -731,24 +787,25 @@ class BestFeasibleSolutionsTracker:
             for existing in self.best_solutions:
                 # Handle comparison for both dict and array formats
                 solutions_equal = False
-                if isinstance(existing['solution'], dict) and isinstance(new_sol['solution'], dict):
+                if isinstance(existing["solution"], dict) and isinstance(new_sol["solution"], dict):
                     # Both are DRT format: compare both PT and DRT parts
-                    solutions_equal = (np.array_equal(existing['solution']['pt'], new_sol['solution']['pt']) and
-                                    np.array_equal(existing['solution']['drt'], new_sol['solution']['drt']))
-                elif isinstance(existing['solution'], np.ndarray) and isinstance(new_sol['solution'], np.ndarray):
+                    solutions_equal = np.array_equal(
+                        existing["solution"]["pt"], new_sol["solution"]["pt"]
+                    ) and np.array_equal(existing["solution"]["drt"], new_sol["solution"]["drt"])
+                elif isinstance(existing["solution"], np.ndarray) and isinstance(new_sol["solution"], np.ndarray):
                     # Both are PT-only format: direct comparison
-                    solutions_equal = np.array_equal(existing['solution'], new_sol['solution'])
+                    solutions_equal = np.array_equal(existing["solution"], new_sol["solution"])
 
-                if solutions_equal and existing['objective'] == new_sol['objective']:
+                if solutions_equal and existing["objective"] == new_sol["objective"]:
                     is_duplicate = True
                     break
             if not is_duplicate:
                 self.best_solutions.append(new_sol)
 
         # Sort and trim to max_solutions
-        self.best_solutions.sort(key=lambda x: x['objective'])
+        self.best_solutions.sort(key=lambda x: x["objective"])
         if len(self.best_solutions) > self.max_solutions:
-            self.best_solutions = self.best_solutions[:self.max_solutions]
+            self.best_solutions = self.best_solutions[: self.max_solutions]
 
     def get_best_solutions(self) -> list[dict]:
         """Get copy of best feasible solutions list."""
@@ -757,7 +814,6 @@ class BestFeasibleSolutionsTracker:
     def get_count(self) -> int:
         """Get number of feasible solutions tracked."""
         return len(self.best_solutions)
-
 
 
 class PSORunner:
@@ -860,11 +916,11 @@ class PSORunner:
             - Initializes internal state variables to None
             - Ready to accept optimization_data for problem creation
         """
-        self.config_manager = config_manager    # Configuration source for all parameters
+        self.config_manager = config_manager  # Configuration source for all parameters
         logger.info("PSORunner initialized with config")
         logger.debug("Config manager type: %s", type(config_manager).__name__)
-        self.optimization_data = None          # Will be set during optimize() calls
-        self.problem = None                   # Will be created during problem setup
+        self.optimization_data = None  # Will be set during optimize() calls
+        self.problem = None  # Will be created during problem setup
 
         # Validate configuration early to catch issues before optimization
         self._validate_configuration()
@@ -908,7 +964,6 @@ class PSORunner:
         if term_config.max_generations < 1:
             logger.error("Invalid max_generations: %d. Must be >= 1", term_config.max_generations)
             raise ValueError("PSO requires max_generations >= 1")
-
 
     def optimize(self, optimization_data, track_best_n: int = 5) -> OptimizationResult:
         """
@@ -1021,18 +1076,24 @@ class PSORunner:
 
         # Add runtime monitoring callback
         runtime_callback = PSORuntimeCallback(track_best_n=track_best_n)
-        #runtime_callback.problem = self.problem  # Provide problem reference for decoding
+
+        # Enable violation tracking if penalty method is used
+        if self.problem.use_penalty_method:
+            runtime_callback.violation_tracking_enabled = True
+            logger.info("✅ Violation tracking enabled (penalty method active)")
+
+        # runtime_callback.problem = self.problem  # Provide problem reference for decoding
         callbacks.append(runtime_callback)
 
         # Add penalty scheduling callback if using penalty method with adaptive penalties
         pso_config = self.config_manager.get_pso_config()
-        if (hasattr(self.problem, 'use_penalty_method') and
-            self.problem.use_penalty_method and
-            pso_config.adaptive_penalty):
-
+        if (
+            hasattr(self.problem, "use_penalty_method")
+            and self.problem.use_penalty_method
+            and pso_config.adaptive_penalty
+        ):
             penalty_callback = PenaltySchedulingCallback(
-                initial_penalty=pso_config.penalty_weight,
-                increase_rate=pso_config.penalty_increase_rate
+                initial_penalty=pso_config.penalty_weight, increase_rate=pso_config.penalty_increase_rate
             )
             callbacks.append(penalty_callback)
             logger.info("   🎯 Adaptive penalty method enabled: %d → increasing", pso_config.penalty_weight)
@@ -1042,8 +1103,8 @@ class PSORunner:
 
         try:
             # Create algorithm components
-            algorithm = self._create_algorithm()        # Configured PSO instance
-            termination = self._create_termination()    # Termination criteria
+            algorithm = self._create_algorithm()  # Configured PSO instance
+            termination = self._create_termination()  # Termination criteria
 
             # Print configuration summary for user reference
             self._print_optimization_summary()
@@ -1054,12 +1115,12 @@ class PSORunner:
             # Execute optimization using pymoo
             logger.info("Running optimization with pymoo")
             result = minimize(
-                self.problem,            # Problem definition
-                algorithm,               # PSO algorithm instance
-                termination,            # When to stop optimization
-                callback=callback_wrapper,    # Runtime monitoring
-                verbose=True,           # Enable pymoo's progress output
-                save_history=monitoring_config.save_history   # Enable generation-by-generation tracking
+                self.problem,  # Problem definition
+                algorithm,  # PSO algorithm instance
+                termination,  # When to stop optimization
+                callback=callback_wrapper,  # Runtime monitoring
+                verbose=True,  # Enable pymoo's progress output
+                save_history=monitoring_config.save_history,  # Enable generation-by-generation tracking
             )
 
             optimization_time = time.time() - start_time
@@ -1073,8 +1134,9 @@ class PSORunner:
             optimization_time = time.time() - start_time
             raise RuntimeError(f"PSO optimization failed after {optimization_time:.1f}s: {str(e)}") from e
 
-    def optimize_multi_run(self, optimization_data, num_runs: int | None = None,
-                           parallel: bool = False, track_best_n: int = 5) -> MultiRunResult:
+    def optimize_multi_run(
+        self, optimization_data, num_runs: int | None = None, parallel: bool = False, track_best_n: int = 5
+    ) -> MultiRunResult:
         """
         Run multiple independent PSO optimizations with memory-efficient storage.
 
@@ -1188,18 +1250,17 @@ class PSORunner:
         start_time = time.time()
 
         # Add tracking for feasible solutions per run
-        run_summaries = []                    # Lightweight per-run summaries
+        run_summaries = []  # Lightweight per-run summaries
         best_feasible_solutions_per_run = []  # Store solutions per run
-        overall_best_result = None           # Track only the single best result
-        overall_best_objective = float('inf') # For finding best across runs
+        overall_best_result = None  # Track only the single best result
+        overall_best_objective = float("inf")  # For finding best across runs
         completed_runs = 0
-
 
         if parallel:
             import os
 
             # Set environment variable to signal parallel execution
-            os.environ['PARALLEL_EXECUTION'] = 'True'
+            os.environ["PARALLEL_EXECUTION"] = "True"
 
             # Parallel execution using multiprocessing
             import multiprocessing as mp
@@ -1217,10 +1278,7 @@ class PSORunner:
                 for run_idx in range(runs_to_perform):
                     # Each submission gets a unique seed
                     future = executor.submit(
-                        self._run_single_optimization_with_unique_seed,
-                        run_idx,
-                        optimization_data,
-                        track_best_n
+                        self._run_single_optimization_with_unique_seed, run_idx, optimization_data, track_best_n
                     )
                     future_to_run[future] = run_idx + 1
 
@@ -1231,21 +1289,20 @@ class PSORunner:
 
                     try:
                         result = future.result()
-                       # Create lightweight summary
+                        # Create lightweight summary
                         run_summary = {
-                            'run_id': run_idx,
-                            'objective': result.best_objective,
-                            'feasible': result.constraint_violations['feasible'],
-                            'generations': result.generations_completed,
-                            'time': result.optimization_time,
-                            'violations': result.constraint_violations['total_violations'],
-                            'best_feasible_solutions_count': len(result.best_feasible_solutions)
+                            "run_id": run_idx,
+                            "objective": result.best_objective,
+                            "feasible": result.constraint_violations["feasible"],
+                            "generations": result.generations_completed,
+                            "time": result.optimization_time,
+                            "violations": result.constraint_violations["total_violations"],
+                            "best_feasible_solutions_count": len(result.best_feasible_solutions),
                         }
                         run_summaries.append(run_summary)
 
                         # Store feasible solutions from this run
                         best_feasible_solutions_per_run.append(result.best_feasible_solutions)
-
 
                         # Track overall best
                         if result.best_objective < overall_best_objective:
@@ -1258,14 +1315,23 @@ class PSORunner:
 
                         completed_runs += 1
 
-
                         # Show clean progress update
-                        violations_text = f"Violations={run_summary['violations']}" if not run_summary['feasible'] else f"FeasibleSols={run_summary['best_feasible_solutions_count']}"
-                        feasible_status = "✅ Feasible" if run_summary['feasible'] else "❌ Infeasible"
+                        violations_text = (
+                            f"Violations={run_summary['violations']}"
+                            if not run_summary["feasible"]
+                            else f"FeasibleSols={run_summary['best_feasible_solutions_count']}"
+                        )
+                        feasible_status = "✅ Feasible" if run_summary["feasible"] else "❌ Infeasible"
 
-                        logger.info("Run %d/%d completed: objective=%.5f, time=%.1fs, violations=%s, feasible=%s",
-                                    completed_runs, runs_to_perform, run_summary['objective'], run_summary['time'],
-                                    violations_text, feasible_status)
+                        logger.info(
+                            "Run %d/%d completed: objective=%.5f, time=%.1fs, violations=%s, feasible=%s",
+                            completed_runs,
+                            runs_to_perform,
+                            run_summary["objective"],
+                            run_summary["time"],
+                            violations_text,
+                            feasible_status,
+                        )
 
                     except Exception as e:
                         logger.error("❌ Run %d: FAILED - %s", run_idx, str(e))
@@ -1275,12 +1341,12 @@ class PSORunner:
                             del result
                         continue
             # Clean up environment variable
-            os.environ.pop('PARALLEL_EXECUTION', None)
+            os.environ.pop("PARALLEL_EXECUTION", None)
             logger.info("\n✅ All parallel runs completed!")
 
         else:
             # Ensure environment variable is not set for sequential execution
-            os.environ.pop('PARALLEL_EXECUTION', None)
+            os.environ.pop("PARALLEL_EXECUTION", None)
             # Sequential execution with unique seeds
 
             # Execute independent runs
@@ -1292,13 +1358,13 @@ class PSORunner:
                     result = self._run_single_optimization_with_unique_seed(run_idx, optimization_data, track_best_n)
                     # Create lightweight summary instead of storing full result
                     run_summary = {
-                        'run_id': run_idx + 1,
-                        'objective': result.best_objective,
-                        'feasible': result.constraint_violations['feasible'],
-                        'generations': result.generations_completed,
-                        'time': result.optimization_time,
-                        'violations': result.constraint_violations['total_violations'],
-                        'best_feasible_solutions_count': len(result.best_feasible_solutions)
+                        "run_id": run_idx + 1,
+                        "objective": result.best_objective,
+                        "feasible": result.constraint_violations["feasible"],
+                        "generations": result.generations_completed,
+                        "time": result.optimization_time,
+                        "violations": result.constraint_violations["total_violations"],
+                        "best_feasible_solutions_count": len(result.best_feasible_solutions),
                     }
                     run_summaries.append(run_summary)
 
@@ -1314,8 +1380,9 @@ class PSORunner:
                     if result is not overall_best_result:
                         del result
 
-                    logger.info("Run %d/%d completed: objective=%.5f",
-                                run_idx + 1, runs_to_perform, run_summary['objective'])
+                    logger.info(
+                        "Run %d/%d completed: objective=%.5f", run_idx + 1, runs_to_perform, run_summary["objective"]
+                    )
 
                 except Exception as e:
                     # Log failure but continue with remaining runs
@@ -1338,20 +1405,26 @@ class PSORunner:
         best_feasible_solutions_all_runs = []
         for run_idx, run_sols in enumerate(best_feasible_solutions_per_run):
             for sol in run_sols:
-                best_feasible_solutions_all_runs.append({
-                    "solution": sol["solution"],
-                    "objective": sol["objective"],
-                    "generation_found": sol["generation_found"],
-                    "violations": sol["violations"],
-                    "run_id": run_idx + 1
-                })
+                best_feasible_solutions_all_runs.append(
+                    {
+                        "solution": sol["solution"],
+                        "objective": sol["objective"],
+                        "generation_found": sol["generation_found"],
+                        "violations": sol["violations"],
+                        "run_id": run_idx + 1,
+                    }
+                )
         # Sort
         best_feasible_solutions_all_runs.sort(key=lambda s: s["objective"])
 
         # Print summary statistics
         logger.info("Multi-run optimization completed: %d/%d runs successful", len(run_summaries), runs_to_perform)
-        logger.info("Best objective: %.6f, Mean: %.6f, Std: %.6f",
-                    best_result.best_objective, statistical_summary['objective_mean'], statistical_summary['objective_std'])
+        logger.info(
+            "Best objective: %.6f, Mean: %.6f, Std: %.6f",
+            best_result.best_objective,
+            statistical_summary["objective_mean"],
+            statistical_summary["objective_std"],
+        )
 
         # Show summary with feasible solutions
         total_feasible_solutions = sum(len(solutions) for solutions in best_feasible_solutions_per_run)
@@ -1364,11 +1437,12 @@ class PSORunner:
             best_feasible_solutions_all_runs=best_feasible_solutions_all_runs,
             statistical_summary=statistical_summary,
             total_time=total_time,
-            num_runs_completed=len(run_summaries)
+            num_runs_completed=len(run_summaries),
         )
 
-    def _run_single_optimization_with_unique_seed(self, run_index: int, optimization_data: dict,
-                                                  track_best_n: int = 5) -> OptimizationResult:
+    def _run_single_optimization_with_unique_seed(
+        self, run_index: int, optimization_data: dict, track_best_n: int = 5
+    ) -> OptimizationResult:
         """Run single optimization with unique random seed."""
         import os
         import random
@@ -1384,10 +1458,11 @@ class PSORunner:
         np.random.seed(unique_seed)
 
         # Check if we're in parallel execution mode
-        is_parallel = os.getenv('PARALLEL_EXECUTION', 'False') == 'True'
+        is_parallel = os.getenv("PARALLEL_EXECUTION", "False") == "True"
 
         # Create fresh config manager and runner for this run
         from ..config.config_manager import OptimizationConfigManager
+
         fresh_config_manager = OptimizationConfigManager(config_dict=self.config_manager.config)
         fresh_runner = PSORunner(fresh_config_manager)
 
@@ -1406,7 +1481,7 @@ class PSORunner:
             sys.stderr = stderr_capture
 
             try:
-                result = fresh_runner.optimize(optimization_data, track_best_n = track_best_n)
+                result = fresh_runner.optimize(optimization_data, track_best_n=track_best_n)
 
                 # Log captured output at debug level
                 captured_stdout = stdout_capture.getvalue()
@@ -1417,11 +1492,13 @@ class PSORunner:
                 if captured_stderr:
                     logger.debug("Run %d stderr:\n%s", run_index + 1, captured_stderr)
 
-                logger.debug("Run %d completed: objective=%.6f, time=%.1fs",
-                        run_index + 1, result.best_objective, result.optimization_time)
+                logger.debug(
+                    "Run %d completed: objective=%.6f, time=%.1fs",
+                    run_index + 1,
+                    result.best_objective,
+                    result.optimization_time,
+                )
                 logger.debug("=" * 60)
-
-
 
             finally:
                 # Always restore output
@@ -1430,11 +1507,12 @@ class PSORunner:
 
                 # Always cleanup regardless of success/failure
                 import gc
+
                 gc.collect()
         else:
             # Normal execution with output for sequential runs
             logger.info("   🎲 Run %d: Using seed %d", run_index + 1, unique_seed)
-            result = fresh_runner.optimize(optimization_data, track_best_n= track_best_n)
+            result = fresh_runner.optimize(optimization_data, track_best_n=track_best_n)
 
         return result
 
@@ -1461,11 +1539,10 @@ class PSORunner:
 
         except Exception as e:
             # Restore stdout even on error
-            if 'old_stdout' in locals():
+            if "old_stdout" in locals():
                 sys.stdout = old_stdout
             logger.error(f"Run {run_number} failed: {str(e)}")
             raise RuntimeError(f"Run {run_number} failed: {str(e)}") from e
-
 
     def _create_problem(self):
         """
@@ -1531,61 +1608,61 @@ class PSORunner:
             problem_config = self.config_manager.get_problem_config()
 
             # === OBJECTIVE FUNCTION CREATION ===
-            objective_config = problem_config.get('objective', {})
-            objective_type = objective_config.get('type')
+            objective_config = problem_config.get("objective", {})
+            objective_type = objective_config.get("type")
 
-            if objective_type == 'StopCoverageObjective':
+            if objective_type == "StopCoverageObjective":
                 from ..objectives.service_coverage import StopCoverageObjective
 
                 # Build kwargs with only explicitly configured values
-                objective_kwargs = {'optimization_data': self.optimization_data}
+                objective_kwargs = {"optimization_data": self.optimization_data}
 
                 # Add explicitly configured objective parameters
                 # This approach avoids passing undefined parameters to constructor
-                if 'spatial_resolution_km' in objective_config:
-                    objective_kwargs['spatial_resolution_km'] = objective_config['spatial_resolution_km']
-                if 'crs' in objective_config:
-                    objective_kwargs['crs'] = objective_config['crs']
-                if 'boundary' in objective_config:
-                    objective_kwargs['boundary'] = objective_config['boundary']
-                if 'time_aggregation' in objective_config:
-                    objective_kwargs['time_aggregation'] = objective_config['time_aggregation']
-                if 'spatial_lag' in objective_config:
-                    objective_kwargs['spatial_lag'] = objective_config['spatial_lag']
-                if 'alpha' in objective_config:
-                    objective_kwargs['alpha'] = objective_config['alpha']
-                if 'population_weighted' in objective_config:
-                    objective_kwargs['population_weighted'] = objective_config['population_weighted']
-                if 'population_layer' in objective_config:
-                    objective_kwargs['population_layer'] = objective_config['population_layer']
-                if 'population_power' in objective_config:
-                    objective_kwargs['population_power'] = objective_config['population_power']
+                if "spatial_resolution_km" in objective_config:
+                    objective_kwargs["spatial_resolution_km"] = objective_config["spatial_resolution_km"]
+                if "crs" in objective_config:
+                    objective_kwargs["crs"] = objective_config["crs"]
+                if "boundary" in objective_config:
+                    objective_kwargs["boundary"] = objective_config["boundary"]
+                if "time_aggregation" in objective_config:
+                    objective_kwargs["time_aggregation"] = objective_config["time_aggregation"]
+                if "spatial_lag" in objective_config:
+                    objective_kwargs["spatial_lag"] = objective_config["spatial_lag"]
+                if "alpha" in objective_config:
+                    objective_kwargs["alpha"] = objective_config["alpha"]
+                if "population_weighted" in objective_config:
+                    objective_kwargs["population_weighted"] = objective_config["population_weighted"]
+                if "population_layer" in objective_config:
+                    objective_kwargs["population_layer"] = objective_config["population_layer"]
+                if "population_power" in objective_config:
+                    objective_kwargs["population_power"] = objective_config["population_power"]
 
                 objective = StopCoverageObjective(**objective_kwargs)
 
-            elif objective_type == 'WaitingTimeObjective':
+            elif objective_type == "WaitingTimeObjective":
                 from ..objectives.waiting_time import WaitingTimeObjective
 
                 # Build kwargs with only explicitly configured values
-                objective_kwargs = {'optimization_data': self.optimization_data}
+                objective_kwargs = {"optimization_data": self.optimization_data}
 
                 # Add explicitly configured waiting time parameters
-                if 'spatial_resolution_km' in objective_config:
-                    objective_kwargs['spatial_resolution_km'] = objective_config['spatial_resolution_km']
-                if 'crs' in objective_config:
-                    objective_kwargs['crs'] = objective_config['crs']
-                if 'boundary' in objective_config:
-                    objective_kwargs['boundary'] = objective_config['boundary']
-                if 'time_aggregation' in objective_config:
-                    objective_kwargs['time_aggregation'] = objective_config['time_aggregation']
-                if 'metric' in objective_config:
-                    objective_kwargs['metric'] = objective_config['metric']
-                if 'population_weighted' in objective_config:
-                    objective_kwargs['population_weighted'] = objective_config['population_weighted']
-                if 'population_layer' in objective_config:
-                    objective_kwargs['population_layer'] = objective_config['population_layer']
-                if 'population_power' in objective_config:
-                    objective_kwargs['population_power'] = objective_config['population_power']
+                if "spatial_resolution_km" in objective_config:
+                    objective_kwargs["spatial_resolution_km"] = objective_config["spatial_resolution_km"]
+                if "crs" in objective_config:
+                    objective_kwargs["crs"] = objective_config["crs"]
+                if "boundary" in objective_config:
+                    objective_kwargs["boundary"] = objective_config["boundary"]
+                if "time_aggregation" in objective_config:
+                    objective_kwargs["time_aggregation"] = objective_config["time_aggregation"]
+                if "metric" in objective_config:
+                    objective_kwargs["metric"] = objective_config["metric"]
+                if "population_weighted" in objective_config:
+                    objective_kwargs["population_weighted"] = objective_config["population_weighted"]
+                if "population_layer" in objective_config:
+                    objective_kwargs["population_layer"] = objective_config["population_layer"]
+                if "population_power" in objective_config:
+                    objective_kwargs["population_power"] = objective_config["population_power"]
 
                 objective = WaitingTimeObjective(**objective_kwargs)
 
@@ -1595,32 +1672,35 @@ class PSORunner:
 
             # === CONSTRAINT HANDLER CREATION ===
             constraints = []
-            constraint_configs = problem_config.get('constraints', [])
+            constraint_configs = problem_config.get("constraints", [])
 
             logger.info("   📋 Creating %d constraint handler(s)...", len(constraint_configs))
 
             for i, constraint_config in enumerate(constraint_configs):
-                constraint_type = constraint_config.get('type')
+                constraint_type = constraint_config.get("type")
                 # Extract constraint-specific parameters (exclude 'type' field)
-                constraint_kwargs = {k: v for k, v in constraint_config.items() if k != 'type'}
+                constraint_kwargs = {k: v for k, v in constraint_config.items() if k != "type"}
                 logger.info("      Creating constraint %d: %s", i + 1, constraint_type)
 
                 # Create appropriate constraint handler based on type
-                if constraint_type == 'FleetTotalConstraintHandler':
+                if constraint_type == "FleetTotalConstraintHandler":
                     from ..problems.base import FleetTotalConstraintHandler
+
                     constraint = FleetTotalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
-                elif constraint_type == 'FleetPerIntervalConstraintHandler':
+                elif constraint_type == "FleetPerIntervalConstraintHandler":
                     from ..problems.base import \
                         FleetPerIntervalConstraintHandler
+
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     logger.info("         ✓ FleetPerInterval: %d constraint(s)", constraint.n_constraints)
 
-                elif constraint_type == 'MinimumFleetConstraintHandler':
+                elif constraint_type == "MinimumFleetConstraintHandler":
                     from ..problems.base import MinimumFleetConstraintHandler
+
                     constraint = MinimumFleetConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
                     logger.info("         ✓ MinimumFleet: %d constraint(s)", constraint.n_constraints)
@@ -1633,33 +1713,35 @@ class PSORunner:
             # Get penalty configuration from PSO config
             pso_config = self.config_manager.get_pso_config()
 
-            if hasattr(pso_config, 'use_penalty_method') and pso_config.use_penalty_method:
+            if hasattr(pso_config, "use_penalty_method") and pso_config.use_penalty_method:
                 penalty_config = {
-                    'enabled': True,
-                    'penalty_weight': getattr(pso_config, 'penalty_weight', 1000.0),
-                    'adaptive': getattr(pso_config, 'adaptive_penalty', False),
-                    'constraint_weights': self._get_constraint_penalty_weights()
+                    "enabled": True,
+                    "penalty_weight": getattr(pso_config, "penalty_weight", 1000.0),
+                    "adaptive": getattr(pso_config, "adaptive_penalty", False),
+                    "constraint_weights": self._get_constraint_penalty_weights(),
                 }
             else:
-                penalty_config = {'enabled': False}
-
+                penalty_config = {"enabled": False}
 
             # === PROBLEM ASSEMBLY ===
             self.problem = TransitOptimizationProblem(
                 self.optimization_data,  # Problem data
-                objective,              # Objective function instance
-                constraints,            # List of constraint handler instances
-                penalty_config=penalty_config
+                objective,  # Objective function instance
+                constraints,  # List of constraint handler instances
+                penalty_config=penalty_config,
             )
 
             # Print problem construction summary
-            logger.info("Problem created: %d variables, %d constraints, objective=%s",
-            self.problem.n_var, self.problem.n_constr, objective_type)
+            logger.info(
+                "Problem created: %d variables, %d constraints, objective=%s",
+                self.problem.n_var,
+                self.problem.n_constr,
+                objective_type,
+            )
             logger.info("Constraints: %s", [c.__class__.__name__ for c in constraints])
 
-            if hasattr(self.problem, 'use_penalty_method'):
-                logger.info("   🎯 Method: %s", 'Penalty' if self.problem.use_penalty_method else 'Hard constraints')
-
+            if hasattr(self.problem, "use_penalty_method"):
+                logger.info("   🎯 Method: %s", "Penalty" if self.problem.use_penalty_method else "Hard constraints")
 
         except Exception as e:
             # Provide context for problem creation failures
@@ -1672,8 +1754,8 @@ class PSORunner:
         penalty_weights = {}
 
         # Check if penalty weights are specified in problem config
-        if 'penalty_weights' in problem_config:
-            penalty_weights = problem_config['penalty_weights']
+        if "penalty_weights" in problem_config:
+            penalty_weights = problem_config["penalty_weights"]
 
         return penalty_weights
 
@@ -1696,14 +1778,13 @@ class PSORunner:
         pso_config = self.config_manager.get_pso_config()
         sampling_config = self.config_manager.get_sampling_config()
 
-
         # Create PSO algorithm with pymoo's native adaptive support
         algorithm = PSO(
             pop_size=pso_config.pop_size,
-            w=pso_config.inertia_weight,           # Initial inertia weight
-            c1=pso_config.cognitive_coeff,         # Initial cognitive coefficient
-            c2=pso_config.social_coeff,            # Initial social coefficient
-            adaptive=pso_config.adaptive,          # Whether to use pymoo's adaptive algorithm
+            w=pso_config.inertia_weight,  # Initial inertia weight
+            c1=pso_config.cognitive_coeff,  # Initial cognitive coefficient
+            c2=pso_config.social_coeff,  # Initial social coefficient
+            adaptive=pso_config.adaptive,  # Whether to use pymoo's adaptive algorithm
             # TODO: Other pymoo parameters we might want to expose:
             # initial_velocity='random',           # or 'zero'
             # max_velocity_rate=0.20,             # velocity clamping
@@ -1713,8 +1794,11 @@ class PSORunner:
         # Add custom sampling if enabled
         if sampling_config.enabled:
             logger.info("Creating custom initial population with %d samples", pso_config.pop_size)
-            logger.debug("Gaussian fraction: %.1f%%, Sigma: %.2f",
-                        sampling_config.frac_gaussian_pert * 100, sampling_config.gaussian_sigma)
+            logger.debug(
+                "Gaussian fraction: %.1f%%, Sigma: %.2f",
+                sampling_config.frac_gaussian_pert * 100,
+                sampling_config.gaussian_sigma,
+            )
 
             from ..utils.population_builder import PopulationBuilder
             from ..utils.solution_loader import SolutionLoader
@@ -1729,7 +1813,7 @@ class PSORunner:
                 base_solutions=sampling_config.base_solutions,
                 frac_gaussian_pert=sampling_config.frac_gaussian_pert,
                 gaussian_sigma=sampling_config.gaussian_sigma,
-                random_seed=sampling_config.random_seed
+                random_seed=sampling_config.random_seed,
             )
 
             algorithm.initialization.sampling = initial_population
@@ -1772,6 +1856,7 @@ class PSORunner:
             time_termination = TimeBasedTermination(term_config.max_time_minutes * 60)  # Convert to seconds
             # Combine criteria: optimization stops when EITHER condition is met
             from pymoo.termination.collection import TerminationCollection
+
             termination = TerminationCollection(termination, time_termination)
 
         return termination
@@ -1799,15 +1884,25 @@ class PSORunner:
         term_config = self.config_manager.get_termination_config()
 
         logger.info("\n📋 OPTIMIZATION CONFIGURATION:")
-        logger.info("   Algorithm: PSO (%s)", 'adaptive' if pso_config.adaptive else 'canonical')
+        logger.info("   Algorithm: PSO (%s)", "adaptive" if pso_config.adaptive else "canonical")
         logger.info("   Population size: %d", pso_config.pop_size)
 
         # Display inertia weight information
         if pso_config.adaptive:
-            logger.info("   Initial parameters: w=%.1f, c1=%.1f, c2=%.1f", pso_config.inertia_weight, pso_config.cognitive_coeff, pso_config.social_coeff)
+            logger.info(
+                "   Initial parameters: w=%.1f, c1=%.1f, c2=%.1f",
+                pso_config.inertia_weight,
+                pso_config.cognitive_coeff,
+                pso_config.social_coeff,
+            )
             logger.info("   Adaptation: PyMOO adjusts parameters based on swarm diversity")
         else:
-            logger.info("   Fixed parameters: w=%.1f, c1=%.1f, c2=%.1f", pso_config.inertia_weight, pso_config.cognitive_coeff, pso_config.social_coeff)
+            logger.info(
+                "   Fixed parameters: w=%.1f, c1=%.1f, c2=%.1f",
+                pso_config.inertia_weight,
+                pso_config.cognitive_coeff,
+                pso_config.social_coeff,
+            )
 
         logger.info("   Max generations: %d", term_config.max_generations)
 
@@ -1817,8 +1912,9 @@ class PSORunner:
 
         logger.info("   Problem size: %d variables, %d constraints", self.problem.n_var, self.problem.n_constr)
 
-    def _process_single_result(self, pymoo_result, callback: PSORuntimeCallback,
-                            optimization_time: float) -> OptimizationResult:
+    def _process_single_result(
+        self, pymoo_result, callback: PSORuntimeCallback, optimization_time: float
+    ) -> OptimizationResult:
         """
         Process pymoo optimization result into domain-specific OptimizationResult format.
 
@@ -1854,9 +1950,9 @@ class PSORunner:
 
         # === OBJECTIVE VALUE EXTRACTION ===
         # Handle various pymoo objective result formats safely
-        if hasattr(pymoo_result.F, 'item'):
+        if hasattr(pymoo_result.F, "item"):
             best_objective = float(pymoo_result.F.item())
-        elif hasattr(pymoo_result.F, '__len__') and len(pymoo_result.F) > 0:
+        elif hasattr(pymoo_result.F, "__len__") and len(pymoo_result.F) > 0:
             best_objective = float(pymoo_result.F[0])
         else:
             best_objective = float(pymoo_result.F)
@@ -1868,18 +1964,16 @@ class PSORunner:
         optimization_history = self._process_optimization_history(pymoo_result.history)
 
         # === PERFORMANCE STATISTICS GENERATION ===
-        performance_stats = self._generate_performance_stats(
-            callback, optimization_time, len(optimization_history)
-        )
+        performance_stats = self._generate_performance_stats(callback, optimization_time, len(optimization_history))
 
         # === ALGORITHM CONFIGURATION RECORDING ===
         pso_config = self.config_manager.get_pso_config()
         algorithm_config = {
-            'pop_size': pso_config.pop_size,
-            'inertia_weight': pso_config.inertia_weight,
-            'cognitive_coeff': pso_config.cognitive_coeff,
-            'social_coeff': pso_config.social_coeff,
-            'adaptive': pso_config.adaptive
+            "pop_size": pso_config.pop_size,
+            "inertia_weight": pso_config.inertia_weight,
+            "cognitive_coeff": pso_config.cognitive_coeff,
+            "social_coeff": pso_config.social_coeff,
+            "adaptive": pso_config.adaptive,
         }
 
         # === CONVERGENCE ANALYSIS ===
@@ -1895,30 +1989,30 @@ class PSORunner:
         logger.info("   Time: %.1f s", optimization_time)
         # logger.info("   Avg time/gen: %.3f s", optimization_time/len(optimization_history))
         if len(optimization_history) > 0:
-            logger.info("   Avg time/gen: %.3f s", optimization_time/len(optimization_history))
+            logger.info("   Avg time/gen: %.3f s", optimization_time / len(optimization_history))
         else:
             logger.info("   Avg time/gen: N/A (no history)")
 
         # Show feasible solutions tracked
         logger.info("   Best feasible solutions tracked: %d", len(best_feasible_solutions))
 
-        if constraint_violations['total_violations'] > 0:
-            logger.warning("   ⚠️  Constraint violations: %d", constraint_violations['total_violations'])
+        if constraint_violations["total_violations"] > 0:
+            logger.warning("   ⚠️  Constraint violations: %d", constraint_violations["total_violations"])
         else:
             logger.info("   ✅ All constraints satisfied")
 
         # === RESULT ASSEMBLY ===
         return OptimizationResult(
-            best_solution=best_solution,                    # Route×interval matrix format
-            best_objective=best_objective,                  # Single objective value
-            constraint_violations=constraint_violations,    # Detailed violation analysis
-            optimization_time=optimization_time,           # Total time in seconds
-            generations_completed=len(optimization_history), # Actual generations run
-            optimization_history=optimization_history,      # Generation-by-generation data
-            algorithm_config=algorithm_config,             # PSO parameters used
-            convergence_info=convergence_info,             # Convergence analysis
-            performance_stats=performance_stats,           # Performance metrics
-            best_feasible_solutions=best_feasible_solutions # Tracked feasible solutions
+            best_solution=best_solution,  # Route×interval matrix format
+            best_objective=best_objective,  # Single objective value
+            constraint_violations=constraint_violations,  # Detailed violation analysis
+            optimization_time=optimization_time,  # Total time in seconds
+            generations_completed=len(optimization_history),  # Actual generations run
+            optimization_history=optimization_history,  # Generation-by-generation data
+            algorithm_config=algorithm_config,  # PSO parameters used
+            convergence_info=convergence_info,  # Convergence analysis
+            performance_stats=performance_stats,  # Performance metrics
+            best_feasible_solutions=best_feasible_solutions,  # Tracked feasible solutions
         )
 
     def _analyze_constraint_violations(self, pymoo_result) -> dict[str, Any]:
@@ -1939,28 +2033,26 @@ class PSORunner:
             dict: Violation analysis with 'feasible', 'total_violations',
                   and 'violation_details' keys
         """
-        violations = {
-            'total_violations': 0,
-            'violation_details': [],
-            'feasible': True
-        }
+        violations = {"total_violations": 0, "violation_details": [], "feasible": True}
 
         if pymoo_result.G is not None and len(pymoo_result.G) > 0:
             constraint_values = pymoo_result.G
 
             # Count violations (positive values violate G <= 0)
             violation_mask = constraint_values > 0
-            violations['total_violations'] = int(np.sum(violation_mask))
-            violations['feasible'] = violations['total_violations'] == 0
+            violations["total_violations"] = int(np.sum(violation_mask))
+            violations["feasible"] = violations["total_violations"] == 0
 
             # Generate per-constraint details
             for i, (value, violated) in enumerate(zip(constraint_values, violation_mask, strict=False)):
-                violations['violation_details'].append({
-                    'constraint_index': i,
-                    'value': float(value),
-                    'violated': bool(violated),
-                    'violation_amount': max(0.0, float(value))  # Only positive violations
-                })
+                violations["violation_details"].append(
+                    {
+                        "constraint_index": i,
+                        "value": float(value),
+                        "violated": bool(violated),
+                        "violation_amount": max(0.0, float(value)),  # Only positive violations
+                    }
+                )
 
         return violations
 
@@ -1988,27 +2080,28 @@ class PSORunner:
 
             # Compute generation statistics
             history_entry = {
-                'generation': gen_idx,                              # 0-based generation number
-                'best_objective': float(np.min(pop_objectives)),    # Best in this generation
-                'worst_objective': float(np.max(pop_objectives)),   # Worst in this generation
-                'mean_objective': float(np.mean(pop_objectives)),   # Population mean
-                'std_objective': float(np.std(pop_objectives)),     # Population diversity
-                'population_size': len(pop_objectives)             # Actual population size
+                "generation": gen_idx,  # 0-based generation number
+                "best_objective": float(np.min(pop_objectives)),  # Best in this generation
+                "worst_objective": float(np.max(pop_objectives)),  # Worst in this generation
+                "mean_objective": float(np.mean(pop_objectives)),  # Population mean
+                "std_objective": float(np.std(pop_objectives)),  # Population diversity
+                "population_size": len(pop_objectives),  # Actual population size
             }
 
             # Calculate improvement from previous generation
             if gen_idx > 0:
-                prev_best = history[gen_idx - 1]['best_objective']
-                history_entry['improvement'] = prev_best - history_entry['best_objective']  # Positive = improvement
+                prev_best = history[gen_idx - 1]["best_objective"]
+                history_entry["improvement"] = prev_best - history_entry["best_objective"]  # Positive = improvement
             else:
-                history_entry['improvement'] = 0.0  # No improvement for first generation
+                history_entry["improvement"] = 0.0  # No improvement for first generation
 
             history.append(history_entry)
 
         return history
 
-    def _generate_performance_stats(self, callback: PSORuntimeCallback,
-                                   total_time: float, num_generations: int) -> dict[str, Any]:
+    def _generate_performance_stats(
+        self, callback: PSORuntimeCallback, total_time: float, num_generations: int
+    ) -> dict[str, Any]:
         """
         Generate performance statistics from optimization run.
 
@@ -2024,10 +2117,10 @@ class PSORunner:
             dict: Performance metrics including timing and parameter evolution
         """
         stats = {
-            'total_time': total_time,
-            'num_generations': num_generations,
-            'avg_time_per_generation': total_time / max(1, num_generations),
-            'generations_per_second': num_generations / max(0.001, total_time)
+            "total_time": total_time,
+            "num_generations": num_generations,
+            "avg_time_per_generation": total_time / max(1, num_generations),
+            "generations_per_second": num_generations / max(0.001, total_time),
         }
 
         return stats
@@ -2046,18 +2139,18 @@ class PSORunner:
             dict: Convergence analysis with status and metrics
         """
         if len(history) < 5:
-            return {'converged': False, 'reason': 'Insufficient generations'}
+            return {"converged": False, "reason": "Insufficient generations"}
 
         # Analyze improvement in last 5 generations
-        recent_improvements = [entry['improvement'] for entry in history[-5:]]
+        recent_improvements = [entry["improvement"] for entry in history[-5:]]
         total_recent_improvement = sum(recent_improvements)
 
         # Simple convergence criterion: very small total improvement recently
         convergence_info = {
-            'converged': abs(total_recent_improvement) < 1e-6,
-            'recent_improvement': total_recent_improvement,
-            'final_generation': len(history) - 1,
-            'final_objective': history[-1]['best_objective']
+            "converged": abs(total_recent_improvement) < 1e-6,
+            "recent_improvement": total_recent_improvement,
+            "final_generation": len(history) - 1,
+            "final_objective": history[-1]["best_objective"],
         }
 
         return convergence_info
@@ -2086,27 +2179,23 @@ class PSORunner:
 
         return {
             # Basic run information
-            'num_runs': len(results),
-
+            "num_runs": len(results),
             # Objective statistics
-            'objective_mean': float(np.mean(objectives)),
-            'objective_std': float(np.std(objectives)),
-            'objective_min': float(np.min(objectives)),
-            'objective_max': float(np.max(objectives)),
-            'objective_median': float(np.median(objectives)),
-
+            "objective_mean": float(np.mean(objectives)),
+            "objective_std": float(np.std(objectives)),
+            "objective_min": float(np.min(objectives)),
+            "objective_max": float(np.max(objectives)),
+            "objective_median": float(np.median(objectives)),
             # Timing statistics
-            'time_mean': float(np.mean(times)),
-            'time_std': float(np.std(times)),
-            'time_total': float(np.sum(times)),
-
+            "time_mean": float(np.mean(times)),
+            "time_std": float(np.std(times)),
+            "time_total": float(np.sum(times)),
             # Generation statistics
-            'generations_mean': float(np.mean(generations)),
-            'generations_std': float(np.std(generations)),
-
+            "generations_mean": float(np.mean(generations)),
+            "generations_std": float(np.std(generations)),
             # Algorithm performance rates
-            'success_rate': len(results) / len(results),  # All provided results succeeded
-            'convergence_rate': sum(1 for r in results if r.convergence_info.get('converged', False)) / len(results)
+            "success_rate": len(results) / len(results),  # All provided results succeeded
+            "convergence_rate": sum(1 for r in results if r.convergence_info.get("converged", False)) / len(results),
         }
 
     def _generate_statistical_summary_from_summaries(self, run_summaries: list[dict]) -> dict[str, Any]:
@@ -2114,23 +2203,24 @@ class PSORunner:
         if not run_summaries:
             return {}
 
-        objectives = [summary['objective'] for summary in run_summaries]
-        times = [summary['time'] for summary in run_summaries]
-        generations = [summary['generations'] for summary in run_summaries]
-        feasible_count = sum(1 for summary in run_summaries if summary['feasible'])
+        objectives = [summary["objective"] for summary in run_summaries]
+        times = [summary["time"] for summary in run_summaries]
+        generations = [summary["generations"] for summary in run_summaries]
+        feasible_count = sum(1 for summary in run_summaries if summary["feasible"])
 
         return {
-            'num_runs': len(run_summaries),
-            'objective_mean': float(np.mean(objectives)),
-            'objective_std': float(np.std(objectives)),
-            'objective_min': float(np.min(objectives)),
-            'objective_max': float(np.max(objectives)),
-            'objective_median': float(np.median(objectives)),
-            'time_mean': float(np.mean(times)),
-            'time_std': float(np.std(times)),
-            'time_total': float(np.sum(times)),
-            'generations_mean': float(np.mean(generations)),
-            'generations_std': float(np.std(generations)),
-            'success_rate': 1.0,
-            'feasibility_rate': feasible_count / len(run_summaries)
+            "num_runs": len(run_summaries),
+            "objective_mean": float(np.mean(objectives)),
+            "objective_std": float(np.std(objectives)),
+            "objective_min": float(np.min(objectives)),
+            "objective_max": float(np.max(objectives)),
+            "objective_median": float(np.median(objectives)),
+            "time_mean": float(np.mean(times)),
+            "time_std": float(np.std(times)),
+            "time_total": float(np.sum(times)),
+            "generations_mean": float(np.mean(generations)),
+            "generations_std": float(np.std(generations)),
+            "success_rate": 1.0,
+            "feasibility_rate": feasible_count / len(run_summaries),
         }
+

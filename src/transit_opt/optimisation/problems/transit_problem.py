@@ -310,7 +310,7 @@ class TransitOptimizationProblem(Problem):
                     constraint_name = self.constraint_names[j]
                     constraint_weight = self._get_constraint_penalty_weight(constraint_name)
                     # Calculate penalty: sum of squared positive violations
-                    constraint_penalty = np.sum(np.maximum(0, violations) ** 2) * constraint_weight
+                    constraint_penalty = np.sum(np.maximum(0, violations)) * constraint_weight
                     total_penalty += constraint_penalty
 
                 # Add penalty to objective
