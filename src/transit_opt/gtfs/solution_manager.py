@@ -240,9 +240,10 @@ class SolutionExportManager:
 
         # ===== REMOVE DUPLICATES BEFORE SORTING =====
         if len(sols) > 1:
+            original_count = len(sols)
             sols = self._remove_duplicate_solutions(sols)
             logger.info(
-                f"📊 Removed duplicates: {len(getattr(result, 'best_feasible_solutions_all_runs', sols)) - len(sols)} duplicate solutions"
+                f"📊 Removed duplicates: {original_count - len(sols)} duplicate solutions"
             )
 
         # Sort by objective (lower is better)
