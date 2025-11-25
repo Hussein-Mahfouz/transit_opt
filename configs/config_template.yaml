@@ -113,12 +113,16 @@ optimization:
     # - Violation counts are tracked for analysis but don't filter solutions
     # - Best solutions ranked purely by objective value (which includes penalties)
     use_penalty_method: true
-    # Value should be relative to objective value (i.e if objective values around 1000, then set accordingly).
+    # penalty_weight value should be relative to objective value (i.e if objective values around 1000, then set accordingly).
     # A penalty_weight that is very small relative to objective values will have no effect
+    # Base penalty (adaptive if adaptive_penalty: true)
     penalty_weight: 500
-    adaptive_penalty: false # whether to increase penalty weights incrementally during optimization
+    # whether to increase penalty weights incrementally during optimization
+    # NOTE: Adaptive penalty only affects constraints that DO NOT have specific weights defined in problem["penalty_weights"]
+    adaptive_penalty: false
     penalty_increase_rate: 1.1 # factor by which to increase penalty weights if adaptive_penalty: true
-
+    # current_penalty = initial_penalty × (increase_rate ^ progress)
+    # where progress = current_generation / max_generations (ranges from 0 to 1)
   sampling:
     enabled: true
     # Options are 'from_data' or a List of solutions
