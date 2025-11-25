@@ -41,10 +41,22 @@ problem:
           # peak: Use vehicles per zone from interval with most vehicles per zone
     time_aggregation: average # WaitingTimeObjective: [average, peak, sum, intervals]. StopCoverageObjective [average, peak, sum]
     metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total].
+
+    # WEIGHTING (you can only use one of population_weighted and demand_weighted, not both)
+    ##### Demand weighting configuration
     population_weighted: true # Weight objective values per zone by population or not
     # Tif file from worldpop. Used when population_weighted: true
     population_layer: data/external/population/gbr_pop_2025_CN_1km_R2025A_UA_v1.tif
     population_power: 1 # Population weighting exponent
+    #####
+    ##### Demand weighting configuration
+    demand_weighted: true
+    trip_data_path: data/external/trips/leeds_trips.csv
+    trip_data_crs: "EPSG:3857"  # ← NEW: Explicitly specify CRS
+    demand_power: 1.0
+    min_trip_distance_m: 1000  # Optional: filter short trips
+    #####
+    
     spatial_lag: false  # No spatial lag
     # An alpha of 0 means no spatial lag, and an alpha of 1 means that the objective value for a zone is the average of the objective values of all neighboring zones.
     # Values between 0 and 1 are a weighted average of the zone's own value and the average of its neighbors.
