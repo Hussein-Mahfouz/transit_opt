@@ -5,6 +5,7 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
+from ..utils.demand import calculate_demand_weighted_total, calculate_demand_weighted_variance, validate_demand_config
 from ..utils.population import (
     calculate_population_weighted_total,
     calculate_population_weighted_variance,
@@ -48,10 +49,25 @@ class WaitingTimeObjective(BaseSpatialObjective):
         boundary: Optional["StudyAreaBoundary"] = None,
         time_aggregation: str = "average",
         metric: str = "total",  # 'total' or 'variance'
+        # Population weighting
         population_weighted: bool = False,
         population_layer: Any | None = None,
         population_power: float = 1.0,
+        #  Demand weighting
+        demand_weighted: bool = False,
+        trip_data_path: str | None = None,
+        trip_data_crs: str | None = None,
+        demand_power: float = 1.0,
+        min_trip_distance_m: float | None = None,
     ):
+        if population_weighted and demand_weighted:
+            raise ValueError("Cannot use both population and demand weighting")
+        if demand_weighted:
+            if trip_data_path is None:
+                raise ValueError("trip_data_path required when demand_weighted=True")
+            if trip_data_crs is None:
+                raise ValueError("trip_data_crs required when demand_weighted=True")
+
         # Validate parameters
         if metric not in ["total", "variance"]:
             raise ValueError("metric must be 'total' or 'variance'")
@@ -66,6 +82,11 @@ class WaitingTimeObjective(BaseSpatialObjective):
         self.population_power = population_power
         self.population_per_zone = None
         self._interval_length_minutes = None
+        self.demand_weighted = demand_weighted
+        self.trip_data_path = trip_data_path
+        self.demand_per_zone_interval = None
+        self.demand_power = demand_power
+        self.min_trip_distance_m = min_trip_distance_m
 
         super().__init__(optimization_data, spatial_resolution_km, crs)
 
@@ -73,6 +94,26 @@ class WaitingTimeObjective(BaseSpatialObjective):
             if self.population_layer is None:
                 raise ValueError("Population layer must be provided if population_weighted is True")
             self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
+
+        if self.demand_weighted:
+            from ..utils.demand import (
+                assign_trips_to_time_intervals,
+                calculate_demand_per_zone_interval,
+                load_trip_data,
+            )
+
+            # Load trip data with explicit CRS (no guessing)
+            trips_gdf = load_trip_data(
+                trip_data_path=trip_data_path, crs=trip_data_crs, min_distance_m=min_trip_distance_m
+            )
+            # Assign to time intervals
+            n_intervals = optimization_data["n_intervals"]
+            interval_hours = 24 // n_intervals
+            # Calculate demand per zone per interval
+            trips_gdf = assign_trips_to_time_intervals(trips_gdf, n_intervals, interval_hours)
+            self.demand_per_zone_interval = calculate_demand_per_zone_interval(
+                self.spatial_system, trips_gdf, n_intervals
+            )
 
     def _create_spatial_system(self):
         """Create hexagonal zoning system."""
@@ -120,6 +161,9 @@ class WaitingTimeObjective(BaseSpatialObjective):
         # Convert to numpy array for easier manipulation
         interval_waiting_times = np.array(interval_waiting_times)  # [intervals x zones]
 
+        # Store peak interval index for demand aggregation
+        peak_interval_idx = None
+
         # Apply time aggregation
         if self.time_aggregation == "average":
             # Average waiting time across intervals for each zone
@@ -130,22 +174,48 @@ class WaitingTimeObjective(BaseSpatialObjective):
             aggregated_waiting_times = np.array(
                 [self._convert_vehicle_count_to_waiting_time(v, interval_length) for v in vehicles_per_zone]
             )
+
         elif self.time_aggregation == "sum":
-            # Sum waiting times across intervals for each zone
-            aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
+            # Handle demand vs population weighting differently
+            if self.demand_weighted:
+                # DEMAND WEIGHTING: Calculate total across intervals properly
+                # Each trip is counted once in its departure interval
+                # Total = sum_over_intervals(demand[i] × waiting_time[i])
+                total_waiting_time = 0.0
+
+                for interval_idx in range(interval_waiting_times.shape[0]):
+                    waiting_times_this_interval = interval_waiting_times[interval_idx, :]
+                    demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
+
+                    # Add this interval's contribution to total
+                    interval_contribution = calculate_demand_weighted_total(
+                        waiting_times_this_interval, demand_this_interval, self.demand_power
+                    )
+                    total_waiting_time += interval_contribution
+                # Return directly - no further processing needed
+                return total_waiting_time
+            else:
+                # POPULATION/UNWEIGHTED: Original logic (sum waiting times per zone)
+                # Same population experiences waiting in each interval
+                # Total = population × sum(waiting_times) OR sum(waiting_times) if unweighted
+                aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
+
         elif self.time_aggregation == "peak":
-            # Use waiting time from interval with most vehicles per zone
-            aggregated_waiting_times = self._get_peak_interval_waiting_times(
-                interval_waiting_times, vehicles_data["intervals"]
-            )
+            # Use pre-calculated peak interval from optimization_data
+            fleet_stats = self.opt_data["constraints"]["fleet_analysis"]["fleet_stats"]
+            peak_interval_idx = fleet_stats["peak_interval"]
+            aggregated_waiting_times = interval_waiting_times[peak_interval_idx, :]
         elif self.time_aggregation == "intervals":
             # Calculate objective for each interval, then average
-            return self._evaluate_intervals_separately(interval_waiting_times)
+            return self._evaluate_intervals_separately(
+                interval_waiting_times,
+                interval_idx_context=True,  # Signal that we need per-interval demand
+            )
         else:
             raise ValueError(f"Unknown time_aggregation: {self.time_aggregation}")
 
-        # Apply metric calculation
-        return self._calculate_final_objective(aggregated_waiting_times)
+        # Apply metric calculation (only reached if NOT demand_weighted + sum)
+        return self._calculate_final_objective(aggregated_waiting_times, peak_interval_idx=peak_interval_idx)
 
     def _convert_vehicles_to_waiting_times_for_interval(
         self, vehicles_per_zone: np.ndarray, solution_matrix: np.ndarray, interval_idx: int
@@ -228,46 +298,74 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         return self._interval_length_minutes
 
-    def _get_peak_interval_waiting_times(
-        self, interval_waiting_times: np.ndarray, vehicles_intervals: np.ndarray
-    ) -> np.ndarray:
+    def _evaluate_intervals_separately(
+        self, interval_waiting_times: np.ndarray, interval_idx_context: bool = False
+    ) -> float:
         """
-        Get waiting times from the system-wide peak interval.
+        Calculate objective for each interval separately, then average.
 
-        Peak interval = interval with most total vehicles across all zones.
-        All zones use waiting times from this same interval.
+        Args:
+            interval_waiting_times: Waiting times per zone per interval (n_intervals × n_zones)
+            interval_idx_context: If True, use per-interval demand weighting
+
+        Returns:
+            Average objective value across intervals
         """
-        # Sum vehicles across all zones for each interval
-        total_vehicles_by_interval = np.sum(vehicles_intervals, axis=0)  # Sum across zones
-
-        # Find interval with most total vehicles
-        peak_interval_idx = np.argmax(total_vehicles_by_interval)
-
-        # Return waiting times from that interval for ALL zones
-        return interval_waiting_times[peak_interval_idx, :]
-
-    def _evaluate_intervals_separately(self, interval_waiting_times: np.ndarray) -> float:
-        """Calculate objective for each interval separately, then average."""
         interval_objectives = []
 
         for interval_idx in range(interval_waiting_times.shape[0]):
             waiting_times_this_interval = interval_waiting_times[interval_idx, :]
-            interval_obj = self._calculate_final_objective(waiting_times_this_interval)
+
+            # For demand weighting with intervals aggregation
+            if self.demand_weighted and interval_idx_context:
+                # Use demand from THIS specific interval
+                demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
+
+                if self.metric == "total":
+                    interval_obj = calculate_demand_weighted_total(
+                        waiting_times_this_interval, demand_this_interval, self.demand_power
+                    )
+                else:  # variance
+                    interval_obj = calculate_demand_weighted_variance(
+                        waiting_times_this_interval, demand_this_interval, self.demand_power
+                    )
+            else:
+                # Use standard calculation (population or unweighted)
+                interval_obj = self._calculate_final_objective(
+                    waiting_times_this_interval,
+                    peak_interval_idx=None,  # Not used for intervals aggregation
+                )
+
             interval_objectives.append(interval_obj)
 
         return np.mean(interval_objectives)
 
-    def _calculate_final_objective(self, waiting_times: np.ndarray) -> float:
+    def _calculate_final_objective(self, waiting_times: np.ndarray, peak_interval_idx: int | None = None) -> float:
         """
         Calculate final objective value from zone waiting times.
         (no spatial lag - doesn't make sense for waiting times)
+
+        Args:
+            waiting_times: Aggregated waiting times per zone (n_zones,)
+            peak_interval_idx: Index of peak interval (only used for peak aggregation)
+
+        Returns:
+            Objective value (total or variance of waiting times)
         """
         logger.debug(f"   Metric: {self.metric}")
         logger.debug(f"   Waiting times shape: {waiting_times.shape}")
         logger.debug(f"   Sample waiting times: {waiting_times[:10]}")
         logger.debug(f"   Min/Max waiting times: {waiting_times.min():.2f}/{waiting_times.max():.2f}")
 
-        if self.population_weighted:
+        if self.demand_weighted:
+            # ===== Aggregate demand to match time aggregation method =====
+            demand_per_zone = self._aggregate_demand_for_weighting(peak_interval_idx)
+
+            if self.metric == "total":
+                return calculate_demand_weighted_total(waiting_times, demand_per_zone, self.demand_power)
+            else:  # variance
+                return calculate_demand_weighted_variance(waiting_times, demand_per_zone, self.demand_power)
+        elif self.population_weighted:
             logger.debug(f"   Population per zone: {self.population_per_zone}")
             logger.debug(f"   Population power: {self.population_power}")
 
@@ -343,6 +441,43 @@ class WaitingTimeObjective(BaseSpatialObjective):
         )
 
         return waiting_times
+
+    def _aggregate_demand_for_weighting(self, peak_interval_idx: int | None = None) -> np.ndarray:
+        """
+        Aggregate demand across time intervals to match time_aggregation setting.
+
+        This method ensures demand weighting uses the same temporal aggregation
+        as the waiting time calculation.
+
+        Args:
+            peak_interval_idx: Index of peak interval (only used for peak aggregation)
+
+        Returns:
+            Demand per zone, aggregated across time (n_zones,)
+        """
+        if self.time_aggregation == "average":
+            # Average demand across all intervals
+            return np.mean(self.demand_per_zone_interval, axis=1)
+
+        elif self.time_aggregation == "sum":
+            # SAFETY CHECK: This shouldn't be called for demand + sum
+            # Sum aggregation with demand weighting is handled directly in evaluate()
+            raise ValueError(
+                "demand + sum aggregation should be handled in evaluate(), not in _aggregate_demand_for_weighting()"
+            )
+
+        elif self.time_aggregation == "peak":
+            # Use demand from the SAME peak interval used for vehicles
+            if peak_interval_idx is None:
+                # Fallback: get from opt_data
+                fleet_stats = self.opt_data["constraints"]["fleet_analysis"]["fleet_stats"]
+                peak_interval_idx = fleet_stats["peak_interval"]
+            return self.demand_per_zone_interval[:, peak_interval_idx]
+        elif self.time_aggregation == "intervals":
+            # This case shouldn't reach here - handled separately
+            raise ValueError("Intervals aggregation should be handled in _evaluate_intervals_separately()")
+        else:
+            raise ValueError(f"Unknown time_aggregation: {self.time_aggregation}")
 
     def visualize(
         self,
