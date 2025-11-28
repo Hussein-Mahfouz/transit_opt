@@ -610,7 +610,7 @@ class PSORuntimeCallback(Callback):
                     objectives=objectives,
                     generations=generations,
                     feasibles=feasibles,
-                    violations=violations_to_track
+                    violations=violations_to_track,
                 )
 
         # Track memory every N generations
@@ -1631,12 +1631,24 @@ class PSORunner:
                     objective_kwargs["spatial_lag"] = objective_config["spatial_lag"]
                 if "alpha" in objective_config:
                     objective_kwargs["alpha"] = objective_config["alpha"]
+                # Population weighting parameters
                 if "population_weighted" in objective_config:
                     objective_kwargs["population_weighted"] = objective_config["population_weighted"]
                 if "population_layer" in objective_config:
                     objective_kwargs["population_layer"] = objective_config["population_layer"]
                 if "population_power" in objective_config:
                     objective_kwargs["population_power"] = objective_config["population_power"]
+                # Demand weighting parameters
+                if "demand_weighted" in objective_config:
+                    objective_kwargs["demand_weighted"] = objective_config["demand_weighted"]
+                if "trip_data_path" in objective_config:
+                    objective_kwargs["trip_data_path"] = objective_config["trip_data_path"]
+                if "trip_data_crs" in objective_config:
+                    objective_kwargs["trip_data_crs"] = objective_config["trip_data_crs"]
+                if "demand_power" in objective_config:
+                    objective_kwargs["demand_power"] = objective_config["demand_power"]
+                if "min_trip_distance_m" in objective_config:
+                    objective_kwargs["min_trip_distance_m"] = objective_config["min_trip_distance_m"]
 
                 objective = StopCoverageObjective(**objective_kwargs)
 
@@ -1657,12 +1669,24 @@ class PSORunner:
                     objective_kwargs["time_aggregation"] = objective_config["time_aggregation"]
                 if "metric" in objective_config:
                     objective_kwargs["metric"] = objective_config["metric"]
+                # Population weighting parameters
                 if "population_weighted" in objective_config:
                     objective_kwargs["population_weighted"] = objective_config["population_weighted"]
                 if "population_layer" in objective_config:
                     objective_kwargs["population_layer"] = objective_config["population_layer"]
                 if "population_power" in objective_config:
                     objective_kwargs["population_power"] = objective_config["population_power"]
+                # Demand weighting parameters
+                if "demand_weighted" in objective_config:
+                    objective_kwargs["demand_weighted"] = objective_config["demand_weighted"]
+                if "trip_data_path" in objective_config:
+                    objective_kwargs["trip_data_path"] = objective_config["trip_data_path"]
+                if "trip_data_crs" in objective_config:
+                    objective_kwargs["trip_data_crs"] = objective_config["trip_data_crs"]
+                if "demand_power" in objective_config:
+                    objective_kwargs["demand_power"] = objective_config["demand_power"]
+                if "min_trip_distance_m" in objective_config:
+                    objective_kwargs["min_trip_distance_m"] = objective_config["min_trip_distance_m"]
 
                 objective = WaitingTimeObjective(**objective_kwargs)
 
@@ -1691,8 +1715,7 @@ class PSORunner:
                     logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == "FleetPerIntervalConstraintHandler":
-                    from ..problems.base import \
-                        FleetPerIntervalConstraintHandler
+                    from ..problems.base import FleetPerIntervalConstraintHandler
 
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
@@ -2223,4 +2246,3 @@ class PSORunner:
             "success_rate": 1.0,
             "feasibility_rate": feasible_count / len(run_summaries),
         }
-

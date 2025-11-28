@@ -6,6 +6,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
 class SolutionConverter:
     """Convert optimization solutions back to GTFS-compatible formats."""
 
@@ -17,22 +18,21 @@ class SolutionConverter:
             optimization_data: Complete optimization data from GTFSDataPreparator
         """
         self.opt_data = optimization_data
-        self.allowed_headways = optimization_data['allowed_headways']
-        self.no_service_index = optimization_data.get('no_service_index')
-        self.route_ids = optimization_data['routes']['ids']
-        self.interval_labels = optimization_data['intervals']['labels']
-        self.interval_hours = optimization_data['intervals']['hours']
+        self.allowed_headways = optimization_data["allowed_headways"]
+        self.no_service_index = optimization_data.get("no_service_index")
+        self.route_ids = optimization_data["routes"]["ids"]
+        self.interval_labels = optimization_data["intervals"]["labels"]
+        self.interval_hours = optimization_data["intervals"]["hours"]
 
         # Extract original GTFS data for reconstruction
-        self.gtfs_feed = optimization_data['reconstruction']['gtfs_feed']
-        self.route_mapping = optimization_data['reconstruction']['route_mapping']
+        self.gtfs_feed = optimization_data["reconstruction"]["gtfs_feed"]
+        self.route_mapping = optimization_data["reconstruction"]["route_mapping"]
 
-        logger.info("SolutionConverter initialized for %d routes, %d intervals",
-                    len(self.route_ids), len(self.interval_labels))
-
+        logger.info(
+            "SolutionConverter initialized for %d routes, %d intervals", len(self.route_ids), len(self.interval_labels)
+        )
 
     # ========== CORE CONVERSION METHODS ========== #
-
 
     def solution_to_headways(self, solution_matrix: np.ndarray) -> dict[str, dict[str, float | None]]:
         """
@@ -56,8 +56,10 @@ class SolutionConverter:
             }
         """
         if solution_matrix.shape != (len(self.route_ids), len(self.interval_labels)):
-            raise ValueError(f"Solution matrix shape {solution_matrix.shape} doesn't match "
-                           f"expected ({len(self.route_ids)}, {len(self.interval_labels)})")
+            raise ValueError(
+                f"Solution matrix shape {solution_matrix.shape} doesn't match "
+                f"expected ({len(self.route_ids)}, {len(self.interval_labels)})"
+            )
 
         headways_dict = {}
 
@@ -69,8 +71,12 @@ class SolutionConverter:
 
                 # Validate headway index
                 if headway_index < 0 or headway_index >= len(self.allowed_headways):
-                    logger.warning("Invalid headway index %d for route %s, interval %s. Using no service.",
-                                   headway_index, route_id, interval_label)
+                    logger.warning(
+                        "Invalid headway index %d for route %s, interval %s. Using no service.",
+                        headway_index,
+                        route_id,
+                        interval_label,
+                    )
                     headway_minutes = None
                 elif headway_index == self.no_service_index:
                     headway_minutes = None  # No service
@@ -83,7 +89,6 @@ class SolutionConverter:
 
         logger.debug("Converted solution matrix to headways for %d routes", len(headways_dict))
         return headways_dict
-
 
     def extract_route_templates(self) -> dict[str, dict[str, Any]]:
         """
@@ -128,51 +133,51 @@ class SolutionConverter:
                 zip(self.interval_labels, self.interval_hours, strict=False)
             ):
                 # Find trips that start within this time interval
-                interval_trips = self._get_trips_in_interval(
-                    route_stop_times, route_trips, start_hour, end_hour
-                )
+                interval_trips = self._get_trips_in_interval(route_stop_times, route_trips, start_hour, end_hour)
 
                 if not interval_trips.empty:
                     # Extract template for this specific interval
                     template = self._extract_interval_template(interval_trips, interval_label)
                     route_templates[interval_label] = template
-                    logger.debug("   ✅ %s: %.1fmin template", interval_label, template['duration_minutes'])
+                    logger.debug("   ✅ %s: %.1fmin template", interval_label, template["duration_minutes"])
                 else:
                     # No trips in this interval - use fallback
                     fallback_template = self._get_fallback_template(route_trips, route_stop_times)
                     route_templates[interval_label] = fallback_template
-                    logger.warning("   ⚠️  Route %s, %s: No trips found in this interval, using fallback template from another period (trip_id=%s, %.1fmin)",
-                             route_id,
-                             interval_label,
-                             fallback_template['trip_id'],
-                             fallback_template['duration_minutes'])
-
-
+                    logger.warning(
+                        "   ⚠️  Route %s, %s: No trips found in this interval, using fallback template from another period (trip_id=%s, %.1fmin)",
+                        route_id,
+                        interval_label,
+                        fallback_template["trip_id"],
+                        fallback_template["duration_minutes"],
+                    )
 
             template_trips[route_id] = route_templates
-
 
         # Clean stop times data for all templates by filling NaNs with forward and backward fill
         logger.info("Cleaning stop times data for all templates...")
         for route_id, route_templates in template_trips.items():
             for interval_label, template in route_templates.items():
                 # Clean the stop times data using the new cleaning method
-                original_count = len(template['stop_times'])
-                template['stop_times'] = self._clean_stop_times(template['stop_times'])
-                cleaned_count = len(template['stop_times'])
+                original_count = len(template["stop_times"])
+                template["stop_times"] = self._clean_stop_times(template["stop_times"])
+                cleaned_count = len(template["stop_times"])
 
                 if cleaned_count != original_count:
-                    logger.debug("Cleaned stop times for %s %s: %d -> %d stops",
-                                 route_id, interval_label, original_count, cleaned_count)
+                    logger.debug(
+                        "Cleaned stop times for %s %s: %d -> %d stops",
+                        route_id,
+                        interval_label,
+                        original_count,
+                        cleaned_count,
+                    )
 
         logger.info("Extracted time-varying templates for %d routes", len(template_trips))
         return template_trips
 
-
-
-
-    def generate_trips_and_stop_times(self, headways_dict: dict, templates: dict,
-                                service_id: str = 'optimized_service') -> tuple[pd.DataFrame, pd.DataFrame]:
+    def generate_trips_and_stop_times(
+        self, headways_dict: dict, templates: dict, service_id: str = "optimized_service"
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Generate new trips and stop_times based on optimized headways with time-of-day templates.
 
@@ -189,7 +194,7 @@ class SolutionConverter:
         trip_counter = 0
 
         # Get interval information
-        intervals = self.opt_data['intervals']
+        intervals = self.opt_data["intervals"]
 
         for route_id, route_headways in headways_dict.items():
             if route_id not in templates:
@@ -205,18 +210,26 @@ class SolutionConverter:
                 # Get interval-specific template
                 if interval_label in route_templates:
                     template = route_templates[interval_label]
-                    logger.debug("🚌 Using %s template for route %s: %.1fmin", interval_label, route_id, template['duration_minutes'])
+                    logger.debug(
+                        "🚌 Using %s template for route %s: %.1fmin",
+                        interval_label,
+                        route_id,
+                        template["duration_minutes"],
+                    )
                 else:
                     # Fallback to first available template
                     template = list(route_templates.values())[0]
-                    logger.warning("No template for route %s in interval %s, using fallback from another interval",
-                                   route_id, interval_label)
+                    logger.warning(
+                        "No template for route %s in interval %s, using fallback from another interval",
+                        route_id,
+                        interval_label,
+                    )
 
-                template_stop_times = template['stop_times']
-                trip_duration_minutes = template['duration_minutes']
+                template_stop_times = template["stop_times"]
+                trip_duration_minutes = template["duration_minutes"]
 
                 # Get interval time bounds
-                start_hour, end_hour = intervals['hours'][interval_idx]
+                start_hour, end_hour = intervals["hours"][interval_idx]
 
                 # Generate trips for this interval with the specific template
                 interval_trips, interval_stop_times = self._generate_interval_trips(
@@ -227,7 +240,7 @@ class SolutionConverter:
                     headway_minutes=headway,
                     trip_duration_minutes=trip_duration_minutes,
                     trip_counter_start=trip_counter,
-                    service_id=service_id
+                    service_id=service_id,
                 )
 
                 new_trips.extend(interval_trips)
@@ -238,19 +251,22 @@ class SolutionConverter:
         trips_df = pd.DataFrame(new_trips) if new_trips else pd.DataFrame()
         stop_times_df = pd.DataFrame(new_stop_times) if new_stop_times else pd.DataFrame()
 
-        logger.info("Generated %d trips with %d stop times using time-varying templates",
-                    len(trips_df), len(stop_times_df))
+        logger.info(
+            "Generated %d trips with %d stop times using time-varying templates", len(trips_df), len(stop_times_df)
+        )
         return trips_df, stop_times_df
 
-
-
-    def build_complete_gtfs(self, headways_dict: dict, templates: dict,
-                        output_dir: str = "output/optimized_gtfs",
-                        service_id: str = 'optimized_service',
-                        start_date: str = None,
-                        end_date: str = None,
-                        copy_calendar_dates: bool = False,
-                        zip_output: bool = False) -> str:  # ✅ NEW parameter
+    def build_complete_gtfs(
+        self,
+        headways_dict: dict,
+        templates: dict,
+        output_dir: str = "output/optimized_gtfs",
+        service_id: str = "optimized_service",
+        start_date: str = None,
+        end_date: str = None,
+        copy_calendar_dates: bool = False,
+        zip_output: bool = False,
+    ) -> str:  # ✅ NEW parameter
         """
         Build complete GTFS feed from optimization solution.
 
@@ -275,7 +291,7 @@ class SolutionConverter:
         # ✅ Handle ZIP output vs directory output
         if zip_output:
             # Create temporary directory for files
-            temp_dir = tempfile.mkdtemp(prefix='gtfs_temp_')
+            temp_dir = tempfile.mkdtemp(prefix="gtfs_temp_")
             working_dir = temp_dir
             logger.info("📦 Creating ZIP output: %s.zip", output_dir)
         else:
@@ -290,51 +306,60 @@ class SolutionConverter:
         )
 
         # 2. Copy unchanged files from original GTFS
-        original_gtfs = self.opt_data['reconstruction']['gtfs_feed']
+        original_gtfs = self.opt_data["reconstruction"]["gtfs_feed"]
 
         # Write stops.txt (unchanged)
         original_stops = original_gtfs.stops.copy()
         # Ensure parent_station references are valid. Some parent stops may have been removed in preprocessing of original GTFS
         fixed_stops = self._fix_parent_station_references(original_stops)
-        fixed_stops.to_csv(os.path.join(working_dir, 'stops.txt'), index=False)
+        fixed_stops.to_csv(os.path.join(working_dir, "stops.txt"), index=False)
         logger.info("✅ Fixed and copied stops.txt: %d stops", len(fixed_stops))
 
         # Write routes.txt (unchanged)
-        original_gtfs.routes.to_csv(os.path.join(working_dir, 'routes.txt'), index=False)
+        original_gtfs.routes.to_csv(os.path.join(working_dir, "routes.txt"), index=False)
         logger.info("✅ Copied routes.txt: %d routes", len(original_gtfs.routes))
 
         # Write agency.txt (unchanged)
-        original_gtfs.agency.to_csv(os.path.join(working_dir, 'agency.txt'), index=False)
+        original_gtfs.agency.to_csv(os.path.join(working_dir, "agency.txt"), index=False)
         logger.info("✅ Copied agency.txt: %d agencies", len(original_gtfs.agency))
 
         # 3. Write new trip files
-        new_trips_df.to_csv(os.path.join(working_dir, 'trips.txt'), index=False)
+        new_trips_df.to_csv(os.path.join(working_dir, "trips.txt"), index=False)
         logger.info("✅ Generated trips.txt: %d trips", len(new_trips_df))
 
-        new_stop_times_df.to_csv(os.path.join(working_dir, 'stop_times.txt'), index=False)
+        new_stop_times_df.to_csv(os.path.join(working_dir, "stop_times.txt"), index=False)
         logger.info("✅ Generated stop_times.txt: %d stop times", len(new_stop_times_df))
 
         # 4. Smart calendar.txt creation
         calendar_start_date, calendar_end_date = self._determine_calendar_dates(start_date, end_date)
 
-        calendar_df = pd.DataFrame([{
-            'service_id': service_id,
-            'monday': 1, 'tuesday': 1, 'wednesday': 1, 'thursday': 1,
-            'friday': 1, 'saturday': 1, 'sunday': 1,
-            'start_date': calendar_start_date,
-            'end_date': calendar_end_date
-        }])
-        calendar_df.to_csv(os.path.join(working_dir, 'calendar.txt'), index=False)
+        calendar_df = pd.DataFrame(
+            [
+                {
+                    "service_id": service_id,
+                    "monday": 1,
+                    "tuesday": 1,
+                    "wednesday": 1,
+                    "thursday": 1,
+                    "friday": 1,
+                    "saturday": 1,
+                    "sunday": 1,
+                    "start_date": calendar_start_date,
+                    "end_date": calendar_end_date,
+                }
+            ]
+        )
+        calendar_df.to_csv(os.path.join(working_dir, "calendar.txt"), index=False)
         logger.info("✅ Generated calendar.txt: %s (%s to %s)", service_id, calendar_start_date, calendar_end_date)
 
         # 5. Copy shapes.txt if it exists
-        if hasattr(original_gtfs, 'shapes') and not original_gtfs.shapes.empty:
-            original_gtfs.shapes.to_csv(os.path.join(working_dir, 'shapes.txt'), index=False)
+        if hasattr(original_gtfs, "shapes") and not original_gtfs.shapes.empty:
+            original_gtfs.shapes.to_csv(os.path.join(working_dir, "shapes.txt"), index=False)
             logger.info("✅ Copied shapes.txt: %d shape points", len(original_gtfs.shapes))
 
             # Validate shape references
-            shapes_used = set(new_trips_df['shape_id'].dropna()) if 'shape_id' in new_trips_df.columns else set()
-            shapes_available = set(original_gtfs.shapes['shape_id'].unique())
+            shapes_used = set(new_trips_df["shape_id"].dropna()) if "shape_id" in new_trips_df.columns else set()
+            shapes_available = set(original_gtfs.shapes["shape_id"].unique())
             missing_shapes = shapes_used - shapes_available
             if missing_shapes:
                 logger.warning("⚠️  Missing shapes: %s", missing_shapes)
@@ -342,9 +367,9 @@ class SolutionConverter:
                 logger.info("✅ All %d shape references validated", len(shapes_used))
 
         # 6. Handle calendar_dates.txt
-        if copy_calendar_dates and hasattr(original_gtfs, 'calendar_dates') and not original_gtfs.calendar_dates.empty:
+        if copy_calendar_dates and hasattr(original_gtfs, "calendar_dates") and not original_gtfs.calendar_dates.empty:
             logger.info("⚠️  WARNING: Copying calendar_dates.txt with original service IDs")
-            original_gtfs.calendar_dates.to_csv(os.path.join(working_dir, 'calendar_dates.txt'), index=False)
+            original_gtfs.calendar_dates.to_csv(os.path.join(working_dir, "calendar_dates.txt"), index=False)
             logger.info("✅ Copied calendar_dates.txt: %d exceptions", len(original_gtfs.calendar_dates))
         else:
             logger.info("✅ Skipped calendar_dates.txt: Using simplified calendar only")
@@ -355,36 +380,35 @@ class SolutionConverter:
             zip_path = f"{output_dir}.zip"
 
             # Ensure output directory exists for ZIP file
-            os.makedirs(os.path.dirname(zip_path) if os.path.dirname(zip_path) else '.', exist_ok=True)
+            os.makedirs(os.path.dirname(zip_path) if os.path.dirname(zip_path) else ".", exist_ok=True)
 
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 # Add all .txt files to ZIP
                 for filename in os.listdir(working_dir):
-                    if filename.endswith('.txt'):
+                    if filename.endswith(".txt"):
                         file_path = os.path.join(working_dir, filename)
                         zipf.write(file_path, filename)  # Store with just filename (no path)
 
             # Clean up temporary directory
             import shutil
+
             shutil.rmtree(temp_dir)
 
             # Show ZIP contents and size
             zip_size = os.path.getsize(zip_path)
-            with zipfile.ZipFile(zip_path, 'r') as zipf:
+            with zipfile.ZipFile(zip_path, "r") as zipf:
                 file_list = zipf.namelist()
 
             logger.info("📦 ZIP FILE CREATED: %s", zip_path)
             logger.info("   File size: %d bytes", zip_size)
-            logger.info("   Contains: %s", ', '.join(file_list))
+            logger.info("   Contains: %s", ", ".join(file_list))
 
             return zip_path
         else:
             logger.info("🎯 COMPLETE GTFS FEED CREATED: %s", working_dir)
             return working_dir
 
-
     # ========= VALIDATION & SUMMARY METHODS ========== #
-
 
     def validate_solution(self, solution_matrix: np.ndarray) -> dict[str, Any]:
         """
@@ -396,17 +420,12 @@ class SolutionConverter:
         Returns:
             Dict with validation results and statistics
         """
-        validation_result = {
-            'valid': True,
-            'errors': [],
-            'warnings': [],
-            'statistics': {}
-        }
+        validation_result = {"valid": True, "errors": [], "warnings": [], "statistics": {}}
 
-            # Check for None or invalid input types first
+        # Check for None or invalid input types first
         if solution_matrix is None:
-            validation_result['valid'] = False
-            validation_result['errors'].append("Solution matrix is None")
+            validation_result["valid"] = False
+            validation_result["errors"].append("Solution matrix is None")
             return validation_result
 
         # Check if input is a numpy array or can be converted to one
@@ -415,20 +434,20 @@ class SolutionConverter:
                 # Try to convert to numpy array
                 solution_matrix = np.array(solution_matrix)
             except (ValueError, TypeError) as e:
-                validation_result['valid'] = False
-                validation_result['errors'].append(f"Cannot convert input to numpy array: {e}")
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Cannot convert input to numpy array: {e}")
                 return validation_result
 
         # Check if array is empty
         if solution_matrix.size == 0:
-            validation_result['valid'] = False
-            validation_result['errors'].append("Solution matrix is empty")
+            validation_result["valid"] = False
+            validation_result["errors"].append("Solution matrix is empty")
             return validation_result
 
         # Check number of dimensions
         if solution_matrix.ndim != 2:
-            validation_result['valid'] = False
-            validation_result['errors'].append(
+            validation_result["valid"] = False
+            validation_result["errors"].append(
                 f"Solution matrix must be 2-dimensional, got {solution_matrix.ndim} dimensions"
             )
             return validation_result
@@ -436,8 +455,8 @@ class SolutionConverter:
         # Check shape
         expected_shape = (len(self.route_ids), len(self.interval_labels))
         if solution_matrix.shape != expected_shape:
-            validation_result['valid'] = False
-            validation_result['errors'].append(
+            validation_result["valid"] = False
+            validation_result["errors"].append(
                 f"Solution shape {solution_matrix.shape} doesn't match expected {expected_shape}"
             )
             return validation_result
@@ -448,14 +467,12 @@ class SolutionConverter:
         max_allowed = len(self.allowed_headways) - 1
 
         if min_val < 0:
-            validation_result['valid'] = False
-            validation_result['errors'].append(f"Solution contains negative values (min: {min_val})")
+            validation_result["valid"] = False
+            validation_result["errors"].append(f"Solution contains negative values (min: {min_val})")
 
         if max_val > max_allowed:
-            validation_result['valid'] = False
-            validation_result['errors'].append(
-                f"Solution contains values > {max_allowed} (max: {max_val})"
-            )
+            validation_result["valid"] = False
+            validation_result["errors"].append(f"Solution contains values > {max_allowed} (max: {max_val})")
 
         # Check for reasonable service patterns
         total_cells = solution_matrix.size
@@ -464,11 +481,11 @@ class SolutionConverter:
         service_percentage = (service_cells / total_cells) * 100
 
         if service_percentage < 10:
-            validation_result['warnings'].append(
+            validation_result["warnings"].append(
                 f"Very low service coverage: only {service_percentage:.1f}% of route-intervals have service"
             )
         elif service_percentage > 95:
-            validation_result['warnings'].append(
+            validation_result["warnings"].append(
                 f"Very high service coverage: {service_percentage:.1f}% of route-intervals have service"
             )
 
@@ -478,9 +495,9 @@ class SolutionConverter:
             count = np.sum(solution_matrix == i)
             if count > 0:
                 if headway >= 9000:  # No service threshold
-                    headway_counts['No Service'] = count
+                    headway_counts["No Service"] = count
                 else:
-                    headway_counts[f'{headway:.0f}min'] = count
+                    headway_counts[f"{headway:.0f}min"] = count
 
         # Check for at least some reasonable service frequencies
         frequent_service_count = 0
@@ -491,78 +508,79 @@ class SolutionConverter:
         frequent_percentage = (frequent_service_count / service_cells) * 100 if service_cells > 0 else 0
 
         if frequent_percentage < 20 and service_cells > 0:
-            validation_result['warnings'].append(
+            validation_result["warnings"].append(
                 f"Low frequent service: only {frequent_percentage:.1f}% of service cells have ≤30min headways"
             )
 
         # Store statistics
-        validation_result['statistics'] = {
-            'total_cells': total_cells,
-            'service_cells': service_cells,
-            'no_service_cells': no_service_cells,
-            'service_percentage': service_percentage,
-            'frequent_service_percentage': frequent_percentage,
-            'headway_distribution': headway_counts,
-            'value_range': (min_val, max_val)
+        validation_result["statistics"] = {
+            "total_cells": total_cells,
+            "service_cells": service_cells,
+            "no_service_cells": no_service_cells,
+            "service_percentage": service_percentage,
+            "frequent_service_percentage": frequent_percentage,
+            "headway_distribution": headway_counts,
+            "value_range": (min_val, max_val),
         }
 
-        logger.info("Solution validation: %s (%d errors, %d warnings)",
-                    'PASSED' if validation_result['valid'] else 'FAILED',
-                    len(validation_result['errors']),
-                    len(validation_result['warnings']))
+        logger.info(
+            "Solution validation: %s (%d errors, %d warnings)",
+            "PASSED" if validation_result["valid"] else "FAILED",
+            len(validation_result["errors"]),
+            len(validation_result["warnings"]),
+        )
 
         return validation_result
 
-
     def get_solution_summary(self, solution_matrix: np.ndarray) -> dict[str, Any]:
-            """
-            Get a comprehensive summary of the solution.
+        """
+        Get a comprehensive summary of the solution.
 
-            Args:
-                solution_matrix: Solution to summarize
+        Args:
+            solution_matrix: Solution to summarize
 
-            Returns:
-                Dict with solution summary statistics
-            """
-            headways_dict = self.solution_to_headways(solution_matrix)
-            validation = self.validate_solution(solution_matrix)
+        Returns:
+            Dict with solution summary statistics
+        """
+        headways_dict = self.solution_to_headways(solution_matrix)
+        validation = self.validate_solution(solution_matrix)
 
-            # Count active routes per interval
-            active_routes_per_interval = {}
-            total_service_minutes_per_interval = {}
+        # Count active routes per interval
+        active_routes_per_interval = {}
+        total_service_minutes_per_interval = {}
 
-            for interval_idx, interval_label in enumerate(self.interval_labels):
-                active_count = 0
-                total_service_minutes = 0
+        for interval_idx, interval_label in enumerate(self.interval_labels):
+            active_count = 0
+            total_service_minutes = 0
 
-                for route_idx, route_id in enumerate(self.route_ids):
-                    headway_idx = solution_matrix[route_idx, interval_idx]
-                    if headway_idx != self.no_service_index:
-                        active_count += 1
-                        headway_minutes = self.allowed_headways[headway_idx]
-                        if headway_minutes < 9000:  # Valid service
-                            interval_duration_minutes = (self.interval_hours[interval_idx][1] -
-                                                    self.interval_hours[interval_idx][0]) * 60
-                            trips_in_interval = max(1, interval_duration_minutes // headway_minutes)
-                            total_service_minutes += trips_in_interval * headway_minutes
+            for route_idx, route_id in enumerate(self.route_ids):
+                headway_idx = solution_matrix[route_idx, interval_idx]
+                if headway_idx != self.no_service_index:
+                    active_count += 1
+                    headway_minutes = self.allowed_headways[headway_idx]
+                    if headway_minutes < 9000:  # Valid service
+                        interval_duration_minutes = (
+                            self.interval_hours[interval_idx][1] - self.interval_hours[interval_idx][0]
+                        ) * 60
+                        trips_in_interval = max(1, interval_duration_minutes // headway_minutes)
+                        total_service_minutes += trips_in_interval * headway_minutes
 
-                active_routes_per_interval[interval_label] = active_count
-                total_service_minutes_per_interval[interval_label] = total_service_minutes
+            active_routes_per_interval[interval_label] = active_count
+            total_service_minutes_per_interval[interval_label] = total_service_minutes
 
-            return {
-                'validation': validation,
-                'headways_dict': headways_dict,
-                'active_routes_per_interval': active_routes_per_interval,
-                'total_service_minutes_per_interval': total_service_minutes_per_interval,
-                'overall_stats': {
-                    'total_routes': len(self.route_ids),
-                    'total_intervals': len(self.interval_labels),
-                    'service_percentage': validation['statistics']['service_percentage']
-                }
-            }
+        return {
+            "validation": validation,
+            "headways_dict": headways_dict,
+            "active_routes_per_interval": active_routes_per_interval,
+            "total_service_minutes_per_interval": total_service_minutes_per_interval,
+            "overall_stats": {
+                "total_routes": len(self.route_ids),
+                "total_intervals": len(self.interval_labels),
+                "service_percentage": validation["statistics"]["service_percentage"],
+            },
+        }
 
     # ========== UTILITY METHODS ========== #
-
 
     def get_interval_time_bounds(self, interval_label: str) -> tuple[int, int]:
         """
@@ -582,30 +600,36 @@ class SolutionConverter:
             logger.error("Unknown interval label: %s", interval_label)
             raise ValueError(f"Unknown interval label: {interval_label}")
 
-
     # ========== INTERNAL HELPER METHODS ========== #
 
-    def _generate_interval_trips(self, route_id: str, template_stop_times: pd.DataFrame,
-                            start_hour: int, end_hour: int, headway_minutes: float,
-                            trip_duration_minutes: float, trip_counter_start: int,
-                            service_id: str = 'optimized_service') -> tuple[list, list]:
+    def _generate_interval_trips(
+        self,
+        route_id: str,
+        template_stop_times: pd.DataFrame,
+        start_hour: int,
+        end_hour: int,
+        headway_minutes: float,
+        trip_duration_minutes: float,
+        trip_counter_start: int,
+        service_id: str = "optimized_service",
+    ) -> tuple[list, list]:
         """Generate trips and stop times for a single route-interval combination."""
 
         trips = []
         stop_times = []
 
         # Get original trip info for shape_id and other metadata
-        original_gtfs = self.opt_data['reconstruction']['gtfs_feed']
+        original_gtfs = self.opt_data["reconstruction"]["gtfs_feed"]
         original_route_trips = original_gtfs.trips[original_gtfs.trips.route_id == route_id]
 
         # Use first trip as template for shape_id and other fields
         if not original_route_trips.empty:
             template_trip = original_route_trips.iloc[0]
-            shape_id = template_trip.get('shape_id', '')
-            direction_id = template_trip.get('direction_id', 0)
-            trip_headsign = template_trip.get('trip_headsign', f"Route {route_id}")
+            shape_id = template_trip.get("shape_id", "")
+            direction_id = template_trip.get("direction_id", 0)
+            trip_headsign = template_trip.get("trip_headsign", f"Route {route_id}")
         else:
-            shape_id = ''
+            shape_id = ""
             direction_id = 0
             trip_headsign = f"Route {route_id}"
 
@@ -628,20 +652,18 @@ class SolutionConverter:
 
             # Create trip record
             trip_record = {
-                'trip_id': trip_id,
-                'route_id': route_id,
-                'service_id': service_id,  # Simplified service ID
-                'trip_headsign': trip_headsign,
-                'direction_id': direction_id,
-                'shape_id': shape_id
+                "trip_id": trip_id,
+                "route_id": route_id,
+                "service_id": service_id,  # Simplified service ID
+                "trip_headsign": trip_headsign,
+                "direction_id": direction_id,
+                "shape_id": shape_id,
             }
             trips.append(trip_record)
 
             # Create stop times for this trip
             trip_stop_times = self._create_trip_stop_times(
-                trip_id=trip_id,
-                template_stop_times=template_stop_times,
-                trip_start_seconds=current_start
+                trip_id=trip_id, template_stop_times=template_stop_times, trip_start_seconds=current_start
             )
             stop_times.extend(trip_stop_times)
 
@@ -651,19 +673,18 @@ class SolutionConverter:
 
         return trips, stop_times
 
-    def _create_trip_stop_times(self, trip_id: str, template_stop_times: pd.DataFrame,
-                            trip_start_seconds: int) -> list:
+    def _create_trip_stop_times(self, trip_id: str, template_stop_times: pd.DataFrame, trip_start_seconds: int) -> list:
         """Create stop_times records for a single trip based on template."""
 
         stop_times = []
 
         # Get the first stop's departure time from template (as offset from trip start)
-        template_first_departure = template_stop_times.iloc[0]['departure_seconds']
+        template_first_departure = template_stop_times.iloc[0]["departure_seconds"]
 
         for _, template_stop in template_stop_times.iterrows():
             # Calculate time offset from first stop
-            departure_offset = template_stop['departure_seconds'] - template_first_departure
-            arrival_offset = template_stop['arrival_seconds'] - template_first_departure
+            departure_offset = template_stop["departure_seconds"] - template_first_departure
+            arrival_offset = template_stop["arrival_seconds"] - template_first_departure
 
             # Apply offset to new trip start time
             new_departure = trip_start_seconds + departure_offset
@@ -671,15 +692,15 @@ class SolutionConverter:
 
             # Create stop time record
             stop_time_record = {
-                'trip_id': trip_id,
-                'stop_id': template_stop['stop_id'],
-                'stop_sequence': template_stop['stop_sequence'],
-                'arrival_time': self._seconds_to_gtfs_time(new_arrival),
-                'departure_time': self._seconds_to_gtfs_time(new_departure),
-                'arrival_seconds': new_arrival,
-                'departure_seconds': new_departure,
-                'pickup_type': template_stop.get('pickup_type', 0),
-                'drop_off_type': template_stop.get('drop_off_type', 0)
+                "trip_id": trip_id,
+                "stop_id": template_stop["stop_id"],
+                "stop_sequence": template_stop["stop_sequence"],
+                "arrival_time": self._seconds_to_gtfs_time(new_arrival),
+                "departure_time": self._seconds_to_gtfs_time(new_departure),
+                "arrival_seconds": new_arrival,
+                "departure_seconds": new_departure,
+                "pickup_type": template_stop.get("pickup_type", 0),
+                "drop_off_type": template_stop.get("drop_off_type", 0),
             }
             stop_times.append(stop_time_record)
 
@@ -695,9 +716,6 @@ class SolutionConverter:
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
-
-
-
     def _determine_calendar_dates(self, start_date: str = None, end_date: str = None) -> tuple[str, str]:
         """
         Determine calendar start and end dates with smart defaults.
@@ -709,7 +727,7 @@ class SolutionConverter:
         Returns:
             Tuple of (start_date, end_date) in YYYYMMDD format
         """
-        original_gtfs = self.opt_data['reconstruction']['gtfs_feed']
+        original_gtfs = self.opt_data["reconstruction"]["gtfs_feed"]
 
         # Handle start_date
         if start_date is not None:
@@ -717,12 +735,12 @@ class SolutionConverter:
             logger.info("📅 Using provided start_date: %s", start_date)
         else:
             # Find minimum start_date from original calendar
-            if hasattr(original_gtfs, 'calendar') and not original_gtfs.calendar.empty:
-                min_start_date = original_gtfs.calendar['start_date'].min()
+            if hasattr(original_gtfs, "calendar") and not original_gtfs.calendar.empty:
+                min_start_date = original_gtfs.calendar["start_date"].min()
                 calendar_start_date = str(min_start_date)
                 logger.info("📅 Using min original start_date: %s", calendar_start_date)
             else:
-                calendar_start_date = '20240101'
+                calendar_start_date = "20240101"
                 logger.info("📅 Using default start_date: %s", calendar_start_date)
 
         # Handle end_date
@@ -731,16 +749,15 @@ class SolutionConverter:
             logger.info("📅 Using provided end_date: %s", end_date)
         else:
             # Find maximum end_date from original calendar
-            if hasattr(original_gtfs, 'calendar') and not original_gtfs.calendar.empty:
-                max_end_date = original_gtfs.calendar['end_date'].max()
+            if hasattr(original_gtfs, "calendar") and not original_gtfs.calendar.empty:
+                max_end_date = original_gtfs.calendar["end_date"].max()
                 calendar_end_date = str(max_end_date)
                 logger.info("📅 Using max original end_date: %s", calendar_end_date)
             else:
-                calendar_end_date = '20241231'
+                calendar_end_date = "20241231"
                 logger.info("📅 Using default end_date: %s", calendar_end_date)
 
         return calendar_start_date, calendar_end_date
-
 
     def _fix_parent_station_references(self, stops_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -754,37 +771,37 @@ class SolutionConverter:
         """
         stops_df = stops_df.copy()
 
-        if 'parent_station' not in stops_df.columns:
+        if "parent_station" not in stops_df.columns:
             return stops_df
 
         # Get all valid stop_ids that exist in the file
-        valid_stop_ids = set(stops_df['stop_id'].astype(str))
+        valid_stop_ids = set(stops_df["stop_id"].astype(str))
 
         # Find rows where parent_station points to non-existent stop_id
         invalid_mask = (
-            (stops_df['parent_station'].notna()) &  # Has a parent_station value
-            (stops_df['parent_station'].astype(str) != '') &  # Not empty string
-            (~stops_df['parent_station'].astype(str).isin(valid_stop_ids))  # But it doesn't exist
+            (stops_df["parent_station"].notna())  # Has a parent_station value
+            & (stops_df["parent_station"].astype(str) != "")  # Not empty string
+            & (~stops_df["parent_station"].astype(str).isin(valid_stop_ids))  # But it doesn't exist
         )
 
         if invalid_mask.any():
             invalid_count = invalid_mask.sum()
-            invalid_refs = stops_df.loc[invalid_mask, 'parent_station'].unique()
+            invalid_refs = stops_df.loc[invalid_mask, "parent_station"].unique()
 
             logger.warning("Found %d stops with invalid parent_station references: %s", invalid_count, invalid_refs)
             logger.info("   Missing parent stations: %s", list(invalid_refs))
 
             # Clear the invalid parent_station references
-            stops_df.loc[invalid_mask, 'parent_station'] = ''
+            stops_df.loc[invalid_mask, "parent_station"] = ""
             logger.info("✅ Cleared %d invalid parent_station references", invalid_count)
         else:
             logger.info("✅ All parent_station references are valid")
 
         return stops_df
 
-
-    def _get_trips_in_interval(self, route_stop_times: pd.DataFrame, route_trips: pd.DataFrame,
-                               start_hour: int, end_hour: int) -> pd.DataFrame:
+    def _get_trips_in_interval(
+        self, route_stop_times: pd.DataFrame, route_trips: pd.DataFrame, start_hour: int, end_hour: int
+    ) -> pd.DataFrame:
         """
         Find trips that start within a specific time interval.
 
@@ -801,7 +818,7 @@ class SolutionConverter:
         end_seconds = end_hour * 3600
 
         # Get first stop time for each trip (trip start time)
-        trip_start_times = route_stop_times.groupby('trip_id')['departure_seconds'].min()
+        trip_start_times = route_stop_times.groupby("trip_id")["departure_seconds"].min()
 
         # Filter trips that start within the interval
         trips_in_interval = trip_start_times[
@@ -809,9 +826,7 @@ class SolutionConverter:
         ].index
 
         # Return stop times for these trips
-        interval_stop_times = route_stop_times[
-            route_stop_times['trip_id'].isin(trips_in_interval)
-        ].copy()
+        interval_stop_times = route_stop_times[route_stop_times["trip_id"].isin(trips_in_interval)].copy()
 
         logger.debug("Found %d trips starting between %02d:00-%02d:00", len(trips_in_interval), start_hour, end_hour)
         return interval_stop_times
@@ -834,21 +849,21 @@ class SolutionConverter:
         trip_durations = []
         trip_info = {}
 
-        for trip_id in interval_stop_times['trip_id'].unique():
-            trip_stops = interval_stop_times[interval_stop_times['trip_id'] == trip_id].sort_values('stop_sequence')
+        for trip_id in interval_stop_times["trip_id"].unique():
+            trip_stops = interval_stop_times[interval_stop_times["trip_id"] == trip_id].sort_values("stop_sequence")
 
             if len(trip_stops) < 2:  # Skip trips with insufficient stops
                 continue
 
-            first_departure = trip_stops.iloc[0]['departure_seconds']
-            last_arrival = trip_stops.iloc[-1]['arrival_seconds']
+            first_departure = trip_stops.iloc[0]["departure_seconds"]
+            last_arrival = trip_stops.iloc[-1]["arrival_seconds"]
             duration_minutes = (last_arrival - first_departure) / 60
 
             trip_durations.append(duration_minutes)
             trip_info[trip_id] = {
-                'duration_minutes': duration_minutes,
-                'n_stops': len(trip_stops),
-                'stop_times': trip_stops.copy()
+                "duration_minutes": duration_minutes,
+                "n_stops": len(trip_stops),
+                "stop_times": trip_stops.copy(),
             }
 
         if not trip_durations:
@@ -856,23 +871,26 @@ class SolutionConverter:
 
         # Select median duration trip as template (most representative)
         median_duration = np.median(trip_durations)
-        best_trip_id = min(trip_info.keys(),
-                        key=lambda x: abs(trip_info[x]['duration_minutes'] - median_duration))
+        best_trip_id = min(trip_info.keys(), key=lambda x: abs(trip_info[x]["duration_minutes"] - median_duration))
 
         template_data = trip_info[best_trip_id]
 
         # Get trip metadata from original trips table
         original_trip = self.gtfs_feed.trips[self.gtfs_feed.trips.trip_id == best_trip_id]
         if not original_trip.empty:
-            template_data['route_info'] = original_trip.iloc[0].to_dict()
+            template_data["route_info"] = original_trip.iloc[0].to_dict()
         else:
-            template_data['route_info'] = {}
+            template_data["route_info"] = {}
 
-        template_data['trip_id'] = best_trip_id
-        template_data['interval_label'] = interval_label
+        template_data["trip_id"] = best_trip_id
+        template_data["interval_label"] = interval_label
 
-        logger.debug("Selected template trip %d for %s: %.1fmin duration",
-                     best_trip_id, interval_label, template_data['duration_minutes'])
+        logger.debug(
+            "Selected template trip %s for %s: %.1fmin duration",
+            best_trip_id,
+            interval_label,
+            template_data["duration_minutes"],
+        )
 
         return template_data
 
@@ -893,26 +911,24 @@ class SolutionConverter:
         trip_id = template_trip.trip_id
 
         # Get stop times for this trip
-        trip_stop_times = route_stop_times[
-            route_stop_times['trip_id'] == trip_id
-        ].sort_values('stop_sequence').copy()
+        trip_stop_times = route_stop_times[route_stop_times["trip_id"] == trip_id].sort_values("stop_sequence").copy()
 
         if trip_stop_times.empty:
             raise ValueError(f"No stop times found for fallback trip {trip_id}")
 
         # Calculate duration
-        first_departure = trip_stop_times.iloc[0]['departure_seconds']
-        last_arrival = trip_stop_times.iloc[-1]['arrival_seconds']
+        first_departure = trip_stop_times.iloc[0]["departure_seconds"]
+        last_arrival = trip_stop_times.iloc[-1]["arrival_seconds"]
         duration_minutes = (last_arrival - first_departure) / 60
 
         return {
-            'trip_id': trip_id,
-            'stop_times': trip_stop_times,
-            'duration_minutes': duration_minutes,
-            'n_stops': len(trip_stop_times),
-            'route_info': template_trip.to_dict(),
-            'interval_label': 'fallback'
-    }
+            "trip_id": trip_id,
+            "stop_times": trip_stop_times,
+            "duration_minutes": duration_minutes,
+            "n_stops": len(trip_stop_times),
+            "route_info": template_trip.to_dict(),
+            "interval_label": "fallback",
+        }
 
     def _clean_stop_times(self, stop_times_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -934,32 +950,32 @@ class SolutionConverter:
         cleaned_df = stop_times_df.copy()
 
         # Sort by stop_sequence to ensure proper order for interpolation
-        if 'stop_sequence' in cleaned_df.columns:
-            cleaned_df = cleaned_df.sort_values('stop_sequence').reset_index(drop=True)
+        if "stop_sequence" in cleaned_df.columns:
+            cleaned_df = cleaned_df.sort_values("stop_sequence").reset_index(drop=True)
 
         # Clean arrival_seconds
-        if 'arrival_seconds' in cleaned_df.columns:
+        if "arrival_seconds" in cleaned_df.columns:
             # Forward fill then backward fill to use neighboring values
-            cleaned_df['arrival_seconds'] = cleaned_df['arrival_seconds'].ffill().bfill()
+            cleaned_df["arrival_seconds"] = cleaned_df["arrival_seconds"].ffill().bfill()
             # Fall back to zero for any remaining NaN values
-            cleaned_df['arrival_seconds'] = cleaned_df['arrival_seconds'].fillna(0)
+            cleaned_df["arrival_seconds"] = cleaned_df["arrival_seconds"].fillna(0)
 
         # Clean departure_seconds
-        if 'departure_seconds' in cleaned_df.columns:
+        if "departure_seconds" in cleaned_df.columns:
             # Forward fill then backward fill to use neighboring values
-            cleaned_df['departure_seconds'] = cleaned_df['departure_seconds'].ffill().bfill()
+            cleaned_df["departure_seconds"] = cleaned_df["departure_seconds"].ffill().bfill()
             # Fall back to zero for any remaining NaN values
-            cleaned_df['departure_seconds'] = cleaned_df['departure_seconds'].fillna(0)
+            cleaned_df["departure_seconds"] = cleaned_df["departure_seconds"].fillna(0)
 
         # Ensure departure >= arrival (basic consistency check)
-        if 'arrival_seconds' in cleaned_df.columns and 'departure_seconds' in cleaned_df.columns:
-            mask = cleaned_df['departure_seconds'] < cleaned_df['arrival_seconds']
-            cleaned_df.loc[mask, 'departure_seconds'] = cleaned_df.loc[mask, 'arrival_seconds']
+        if "arrival_seconds" in cleaned_df.columns and "departure_seconds" in cleaned_df.columns:
+            mask = cleaned_df["departure_seconds"] < cleaned_df["arrival_seconds"]
+            cleaned_df.loc[mask, "departure_seconds"] = cleaned_df.loc[mask, "arrival_seconds"]
 
         # Filter out any remaining non-finite values
-        if 'arrival_seconds' in cleaned_df.columns:
-            cleaned_df = cleaned_df[np.isfinite(cleaned_df['arrival_seconds'])]
-        if 'departure_seconds' in cleaned_df.columns:
-            cleaned_df = cleaned_df[np.isfinite(cleaned_df['departure_seconds'])]
+        if "arrival_seconds" in cleaned_df.columns:
+            cleaned_df = cleaned_df[np.isfinite(cleaned_df["arrival_seconds"])]
+        if "departure_seconds" in cleaned_df.columns:
+            cleaned_df = cleaned_df[np.isfinite(cleaned_df["departure_seconds"])]
 
         return cleaned_df
