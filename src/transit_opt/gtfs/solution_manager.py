@@ -126,9 +126,11 @@ class SolutionExportManager:
         results = []  # results to convert to gtfs / json
         summary_rows = []  # csv with objective value of each run
 
-        for i, solution_data in enumerate(solutions, 1):
+        for i, solution_data in enumerate(solutions):
+            # Use rank directly (already 0-indexed from extract_solutions_for_export)
+            rank = solution_data.get("rank", i)
             # Generate consistent solution ID
-            solution_id = f"{solution_prefix}_{i:02d}"
+            solution_id = f"{solution_prefix}_{rank:02d}"
 
             # Create minimal per-solution metadata
             solution_metadata = {}
@@ -137,8 +139,8 @@ class SolutionExportManager:
             if "objective" in solution_data:
                 solution_metadata["objective_value"] = solution_data["objective"]
 
-            # Add rank for convenience (can be inferred from filename but useful)
-            solution_metadata["rank"] = i
+            # Store the rank from extraction
+            solution_metadata["rank"] = rank
 
             # Export the solution
             result = self.export_single_solution(
@@ -155,7 +157,7 @@ class SolutionExportManager:
                 {
                     "solution_id": solution_id,
                     "swarm_id": solution_data.get("run_id", ""),
-                    "rank": i,
+                    "rank": rank,
                     "objective": solution_data.get("objective", ""),
                     "generation_found": solution_data.get("generation_found", ""),
                     "violations": solution_data.get("violations", ""),
@@ -211,19 +213,36 @@ class SolutionExportManager:
         The results of optimize() or optimize_multi_run() can vary in structure.
         this method standardizes the extraction of solutions to be exported.
         It also gives more control over which solutions to export in multi-run scenarios.
-        Options:
-            - best_run: Whether to export the best run's solutions only (default: True). If
-                False, exports solutions from all runs ranked by objective.
-            - max_to_save: Maximum number of solutions to export (default: None, meaning all).
 
         Args:
             result: OptimizationResult or MultiRunResult
-            output_cfg: Output config dict (should contain 'best_run', 'max_to_save')
+            output_cfg: Output config dict with keys:
+                - best_run: Export best run only (True) or all runs (False)
+                - save_every_nth: Save every Nth solution (optional, sparse sampling)
+                - max_to_save: Maximum number of solutions to save (hard cap)
 
         Returns:
-            List of solution dicts with 'solution' and 'objective'
+            List of solution dicts with 'solution', 'objective', and 'rank' keys
+            Note: 'rank' is 0-indexed (0 = best solution)
+
+        Examples:
+            # Dense saving (traditional):
+            output_cfg = {'track_best_n': 50, 'max_to_save': 10}
+            → Saves ranks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+            # Sparse saving (heterogeneity):
+            output_cfg = {'track_best_n': 50, 'save_every_nth': 5, 'max_to_save': 15}
+            → Tracks 50 solutions, samples every 5th: [0, 4, 9, 14, 19, 24, 29, 34, 39, 44, 49]
+            → Stops at max_to_save=15, so saves: [0, 4, 9, 14, 19, 24, 29, 34, 39, 44, 49] (11 solutions)
+
+            # Sparse with early stop:
+            output_cfg = {'track_best_n': 50, 'save_every_nth': 5, 'max_to_save': 5}
+            → Would sample: [0, 4, 9, 14, 19, ...]
+            → Stops at max_to_save=5, so saves: [0, 4, 9, 14, 19] (5 solutions)
+
         """
         best_run = output_cfg.get("best_run", True)
+        save_every_nth = output_cfg.get("save_every_nth", None)
         max_to_save = output_cfg.get("max_to_save", None)
 
         # MultiRunResult
@@ -242,18 +261,52 @@ class SolutionExportManager:
         if len(sols) > 1:
             original_count = len(sols)
             sols = self._remove_duplicate_solutions(sols)
-            logger.info(
-                f"📊 Removed duplicates: {original_count - len(sols)} duplicate solutions"
-            )
+            logger.info(f"📊 Removed duplicates: {original_count - len(sols)} duplicate solutions")
 
         # Sort by objective (lower is better)
         sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
 
         # Apply max_to_save limit AFTER deduplication
-        if max_to_save is not None:
-            sols = sols[:max_to_save]
+        # ===== SPARSE SAMPLING LOGIC =====
+        if save_every_nth is not None and save_every_nth > 1:
+            logger.info(f"📊 Sparse sampling strategy:")
+            logger.info(f"   Tracked solutions: {len(sols)}")
+            logger.info(f"   Save every Nth: {save_every_nth}")
+            logger.info(f"   Max to save: {max_to_save if max_to_save else 'unlimited'}")
 
-        return sols
+            selected_solutions = []
+
+            # Iterate through all tracked solutions
+            for idx in range(len(sols)):
+                # Always include rank 0 (best solution) OR solutions divisible by save_every_nth
+                if idx == 0 or idx % save_every_nth == 0:
+                    # Check if we've hit the max_to_save limit
+                    if max_to_save is not None and len(selected_solutions) >= max_to_save:
+                        logger.info(f"   ⚠️  Stopping at max_to_save limit: {max_to_save}")
+                        break
+
+                    sol = sols[idx].copy()
+                    sol["rank"] = idx
+                    selected_solutions.append(sol)
+
+            logger.info(f"   ✅ Selected {len(selected_solutions)} solutions")
+            logger.info(f"   Ranks saved: {[s['rank'] for s in selected_solutions]}")
+
+            return selected_solutions
+
+        else:
+            # ===== TRADITIONAL DENSE SAMPLING =====
+            # Apply max_to_save limit directly
+            if max_to_save is not None:
+                sols = sols[:max_to_save]
+
+            # Add ranks (0-indexed)
+            for i, sol in enumerate(sols):
+                sol["rank"] = i
+
+            logger.info(f"📊 Dense sampling: saving {len(sols)} solutions (ranks 0-{len(sols) - 1})")
+
+            return sols
 
     def _remove_duplicate_solutions(self, solutions: list[dict]) -> list[dict]:
         """
