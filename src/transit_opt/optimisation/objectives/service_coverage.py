@@ -243,10 +243,6 @@ class StopCoverageObjective(BaseSpatialObjective):
             vehicles_per_zone = vehicles_data["intervals"][peak_interval_idx, :]
 
         elif self.time_aggregation == "sum":
-            # Use total vehicles across all intervals
-            vehicles_per_zone = vehicles_data["sum"]
-
-        elif self.time_aggregation == "sum":
             # Handle demand vs population weighting differently
             if self.demand_weighted:
                 # DEMAND WEIGHTING: Calculate variance across all intervals
@@ -272,10 +268,15 @@ class StopCoverageObjective(BaseSpatialObjective):
                 # Variance of total service across all time periods
                 vehicles_per_zone = vehicles_data["sum"]
 
-        else:
-            raise ValueError(f"Unknown time_aggregation: {self.time_aggregation}. Must be 'average', 'peak', 'sum'")
+        elif self.time_aggregation == "intervals":
+            return self._evaluate_intervals_separately(vehicles_data, peak_interval_idx, interval_idx_context=True)
 
-        # Calculate variance (only reached if NOT demand_weighted + sum)
+        else:
+            raise ValueError(
+                f"Unknown time_aggregation: {self.time_aggregation}. Must be one of 'average', 'peak', 'sum', 'intervals'"
+            )
+
+        # Calculate variance (only reached if NOT demand_weighted + sum OR intervals)
         if len(vehicles_per_zone) > 1 and np.sum(vehicles_per_zone) > 0:
             # Choose calculation method based on parameters
             if self.demand_weighted and self.spatial_lag:
@@ -414,6 +415,75 @@ class StopCoverageObjective(BaseSpatialObjective):
 
         else:
             raise ValueError(f"Unknown time_aggregation: {self.time_aggregation}")
+
+    def _evaluate_intervals_separately(
+        self, vehicles_data: dict, peak_interval_idx: int, interval_idx_context: bool = False
+    ) -> float:
+        """
+        Calculate variance for each interval separately, then average.
+
+        Args:
+            vehicles_data: Dict with 'intervals' key containing (n_intervals, n_zones) array
+            peak_interval_idx: Peak interval index (not used here, but kept for consistency)
+            interval_idx_context: If True, use per-interval demand weighting
+
+        Returns:
+            Average variance across all intervals
+        """
+        interval_variances = []
+
+        for interval_idx in range(vehicles_data["intervals"].shape[0]):
+            vehicles_this_interval = vehicles_data["intervals"][interval_idx, :]
+
+            # Handle demand weighting with interval context
+            if self.demand_weighted and interval_idx_context:
+                # Use demand from THIS specific interval
+                demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
+
+                if self.spatial_lag:
+                    # Calculate accessibility scores
+                    accessibility_scores = self.spatial_system._calculate_accessibility_scores(
+                        vehicles_this_interval, self.alpha
+                    )
+
+                    # Calculate demand-weighted variance of accessibility
+                    interval_var = calculate_demand_weighted_variance(
+                        accessibility_scores, demand_this_interval, self.demand_power
+                    )
+                else:
+                    # Calculate demand-weighted variance directly
+                    interval_var = calculate_demand_weighted_variance(
+                        vehicles_this_interval, demand_this_interval, self.demand_power
+                    )
+
+            # Handle other weighting methods (population, spatial lag, unweighted)
+            elif self.population_weighted and self.spatial_lag:
+                accessibility_scores = self.spatial_system._calculate_accessibility_scores(
+                    vehicles_this_interval, self.alpha
+                )
+                interval_var = calculate_population_weighted_variance(
+                    accessibility_scores, self.population_per_zone, self.population_power
+                )
+
+            elif self.population_weighted:
+                interval_var = calculate_population_weighted_variance(
+                    vehicles_this_interval, self.population_per_zone, self.population_power
+                )
+
+            elif self.spatial_lag:
+                accessibility_scores = self.spatial_system._calculate_accessibility_scores(
+                    vehicles_this_interval, self.alpha
+                )
+                interval_var = np.var(accessibility_scores)
+
+            else:
+                # Standard unweighted variance
+                interval_var = np.var(vehicles_this_interval)
+
+            interval_variances.append(interval_var)
+
+        # Return average variance across intervals
+        return float(np.mean(interval_variances))
 
     def visualize(
         self,

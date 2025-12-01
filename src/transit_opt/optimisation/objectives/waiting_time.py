@@ -162,7 +162,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
         interval_waiting_times = np.array(interval_waiting_times)  # [intervals x zones]
 
         # Store peak interval index for demand aggregation
-        peak_interval_idx = None
+        fleet_stats = self.opt_data["constraints"]["fleet_analysis"]["fleet_stats"]
+        peak_interval_idx = fleet_stats["peak_interval"]
 
         # Apply time aggregation
         if self.time_aggregation == "average":
@@ -202,8 +203,6 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         elif self.time_aggregation == "peak":
             # Use pre-calculated peak interval from optimization_data
-            fleet_stats = self.opt_data["constraints"]["fleet_analysis"]["fleet_stats"]
-            peak_interval_idx = fleet_stats["peak_interval"]
             aggregated_waiting_times = interval_waiting_times[peak_interval_idx, :]
         elif self.time_aggregation == "intervals":
             # Calculate objective for each interval, then average

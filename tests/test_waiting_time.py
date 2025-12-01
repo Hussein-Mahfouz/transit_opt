@@ -223,44 +223,81 @@ class TestWaitingTimeObjective:
 
     def test_peak_interval_selection(self, sample_optimization_data):
         """
-        Test peak interval selection logic.
+        Test that peak aggregation correctly uses the pre-calculated peak interval.
 
-        Peak aggregation should:
-        - Find the SINGLE interval with most vehicles system-wide
-        - Use waiting times from that interval for ALL zones
-        - Represent system performance during peak service period
+        This test validates that:
+        1. The correct peak interval is identified from fleet analysis
+        2. Waiting times are calculated using ONLY that peak interval's data
+        3. Other intervals' data is ignored when time_aggregation='peak'
         """
+        print("\n🧪 TESTING PEAK INTERVAL SELECTION LOGIC")
+        print("=" * 70)
+
         objective = WaitingTimeObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0, time_aggregation="peak"
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            metric="total",
+            time_aggregation="peak",
         )
 
-        # Test vehicle counts (zones × intervals)
-        vehicles_intervals = np.array(
-            [
-                [2, 3, 4, 1],  # Zone 0
-                [1, 0, 2, 0],  # Zone 1
-                [0, 1, 2, 0],  # Zone 2
-            ]
+        # Get expected peak interval from fleet analysis
+        fleet_stats = sample_optimization_data["constraints"]["fleet_analysis"]["fleet_stats"]
+        expected_peak_idx = fleet_stats["peak_interval"]
+
+        print(f"\n📊 FLEET ANALYSIS:")
+        print(f"   Expected peak interval: {expected_peak_idx}")
+
+        # Get the initial solution
+        solution = sample_optimization_data["initial_solution"]
+
+        # ===== KEY TEST: Manually calculate what the peak result SHOULD be =====
+
+        # 1. Get vehicles per zone for ALL intervals
+        vehicles_data = objective.spatial_system._vehicles_per_zone(solution, sample_optimization_data)
+
+        print(f"\n🚗 VEHICLE DATA:")
+        print(f"   Intervals shape: {vehicles_data['intervals'].shape}")
+
+        # 2. Extract vehicles for the PEAK INTERVAL ONLY
+        vehicles_peak_interval = vehicles_data["intervals"][expected_peak_idx, :]
+
+        print(f"   Vehicles in peak interval {expected_peak_idx}: {vehicles_peak_interval}")
+
+        # 3. Manually calculate waiting times for peak interval
+        interval_length = objective._get_interval_length_minutes()
+        expected_waiting_times = np.array(
+            [objective._convert_vehicle_count_to_waiting_time(v, interval_length) for v in vehicles_peak_interval]
         )
-        # Total by interval: [3, 4, 8, 1] → Peak is interval 2 (index 2)
 
-        # Test interval waiting times matrix (intervals × zones)
-        interval_waiting_times = np.array(
-            [
-                [10.0, 5.0, 15.0],  # Interval 0
-                [8.0, 12.0, 20.0],  # Interval 1
-                [6.0, 8.0, 10.0],  # Interval 2 (PEAK - 8 total vehicles)
-                [12.0, 15.0, 25.0],  # Interval 3
-            ]
+        # 4. Calculate expected total waiting time (sum across zones)
+        expected_total = np.sum(expected_waiting_times)
+
+        print(f"\n🧮 MANUAL CALCULATION:")
+        print(f"   Interval length: {interval_length:.0f} minutes")
+        print(f"   Peak interval waiting times (sample): {expected_waiting_times[:5]}")
+        print(f"   Expected total waiting time: {expected_total:.2f}")
+
+        # ===== NOW EVALUATE THE OBJECTIVE AND COMPARE =====
+
+        actual_result = objective.evaluate(solution)
+
+        print(f"\n🎯 OBJECTIVE EVALUATION:")
+        print(f"   Actual result from evaluate(): {actual_result:.2f}")
+        print(f"   Expected result (manual calc): {expected_total:.2f}")
+        print(f"   Difference: {abs(actual_result - expected_total):.6f}")
+
+        # ===== ASSERT THEY MATCH =====
+
+        np.testing.assert_almost_equal(
+            actual_result,
+            expected_total,
+            decimal=2,
+            err_msg=f"Peak aggregation result doesn't match manual calculation using peak interval {expected_peak_idx}",
         )
 
-        peak_waiting_times = objective._get_peak_interval_waiting_times(interval_waiting_times, vehicles_intervals)
-
-        # ALL zones should use interval 2 (system-wide peak)
-        expected = np.array([6.0, 8.0, 10.0])  # All from interval 2
-        np.testing.assert_array_equal(peak_waiting_times, expected)
-
-        print("✅ Peak interval selection uses system-wide peak correctly")
+        print("\n✅ Test passed: Peak interval correctly used in calculation!")
+        print(f"   ✓ Used peak interval: {expected_peak_idx}")
+        print(f"   ✓ Result matches manual calculation")
 
     def test_intervals_separate_evaluation(self, sample_optimization_data):
         """

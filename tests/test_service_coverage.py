@@ -726,7 +726,7 @@ class TestTimeAggregation:
             objective = StopCoverageObjective(
                 optimization_data=sample_optimization_data,
                 spatial_resolution_km=3.0,
-                time_aggregation="intervals",  # NOT valid for coverage objective
+                time_aggregation="whatever",  # NOT valid for coverage objective
             )
             objective.evaluate(sample_optimization_data["initial_solution"])
 
@@ -846,3 +846,199 @@ class TestTimeAggregation:
             print(f"   ✅ {aggregation}: correctly stored")
 
         print("   ✅ All configurations stored correctly")
+
+
+class TestIntervals:
+    def test_intervals_separate_evaluation(self, sample_optimization_data):
+        """
+        Test separate evaluation of each interval for service coverage variance.
+
+        The 'intervals' aggregation method:
+        - Calculates variance for each time interval separately
+        - Averages the interval-specific variance values
+        - Tests that the implementation matches expected behavior
+        """
+        print("\n🧪 TESTING INTERVALS SEPARATE EVALUATION (SERVICE COVERAGE)")
+        print("=" * 70)
+
+        objective = StopCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            time_aggregation="intervals",
+
+        )
+
+        print(f"\n📊 OBJECTIVE CONFIGURATION:")
+        print(f"   Spatial resolution: {objective.spatial_resolution}km")
+        print(f"   Time aggregation: {objective.time_aggregation}")
+        print(f"   Demand weighted: {objective.demand_weighted}")
+        print(f"   Population weighted: {objective.population_weighted}")
+        print(f"   Spatial lag: {objective.spatial_lag}")
+
+        # Evaluate using intervals method
+        result = objective.evaluate(sample_optimization_data["initial_solution"])
+
+        print(f"\n🎯 OBJECTIVE EVALUATION:")
+        print(f"   Intervals aggregation result: {result:.6f}")
+
+        # Should return valid result
+        assert isinstance(result, (int, float)), "Result should be numeric"
+        assert result >= 0, "Variance should be non-negative"
+        assert not np.isnan(result), "Result should not be NaN"
+        assert not np.isinf(result), "Result should be finite"
+
+        # ===== MANUAL VERIFICATION: Calculate what result SHOULD be =====
+        print(f"\n🔍 MANUAL VERIFICATION:")
+
+        # Get vehicle data
+        vehicles_data = objective.spatial_system._vehicles_per_zone(
+            sample_optimization_data["initial_solution"], sample_optimization_data
+        )
+
+        n_intervals = vehicles_data["intervals"].shape[0]
+        print(f"   Number of intervals: {n_intervals}")
+
+        # Manually calculate variance for each interval
+        manual_variances = []
+        for interval_idx in range(n_intervals):
+            vehicles_this_interval = vehicles_data["intervals"][interval_idx, :]
+            interval_variance = np.var(vehicles_this_interval)
+            manual_variances.append(interval_variance)
+            print(f"   Interval {interval_idx}: variance = {interval_variance:.6f}")
+
+        # Calculate expected result (mean of interval variances)
+        expected_result = np.mean(manual_variances)
+
+        print(f"\n📈 COMPARISON:")
+        print(f"   Expected (manual): {expected_result:.6f}")
+        print(f"   Actual (evaluate): {result:.6f}")
+        print(f"   Difference: {abs(result - expected_result):.10f}")
+
+        # Assert they match
+        np.testing.assert_almost_equal(
+            result, expected_result, decimal=6, err_msg="Intervals aggregation should match manual calculation"
+        )
+
+        print("\n✅ Test passed: Intervals aggregation correctly averages per-interval variances!")
+
+    def test_intervals_with_demand_weighting(self, sample_optimization_data, tmp_path):
+        """
+        Test intervals aggregation with demand weighting.
+
+        This validates that demand weighting works correctly when using
+        interval-specific aggregation, using per-interval demand data.
+        """
+        print("\n🧪 TESTING INTERVALS WITH DEMAND WEIGHTING (SERVICE COVERAGE)")
+        print("=" * 70)
+
+        # ===== CORRECT SPATIAL EXTENT FOR DUKE STUDY AREA =====
+        X_MIN = -8787809.85
+        X_MAX = -8781761.64
+        Y_MIN = 4297044.40
+        Y_MAX = 4302984.19
+
+        # Create test trip data
+        n_trips = 200
+        trip_data = pd.DataFrame(
+            {
+                "origin_x": np.random.uniform(X_MIN, X_MAX, n_trips),
+                "origin_y": np.random.uniform(Y_MIN, Y_MAX, n_trips),
+                "departure_time": np.random.randint(0, 86400, n_trips),
+                "euclidean_distance": np.random.uniform(1000, 10000, n_trips),
+            }
+        )
+
+        trip_file = tmp_path / "test_trips.csv"
+        trip_data.to_csv(trip_file, index=False)
+
+        print(f"\n📊 TEST DATA SETUP:")
+        print(f"   Generated trips: {n_trips}")
+        print(f"   Trip file: {trip_file}")
+
+        # Create demand-weighted objective with intervals
+        obj_demand = StopCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            time_aggregation="intervals",
+            demand_weighted=True,
+            trip_data_path=str(trip_file),
+            trip_data_crs="EPSG:3857",
+            min_trip_distance_m=3000,
+        )
+
+        print(f"\n🔧 OBJECTIVE CONFIGURATION:")
+        print(f"   Time aggregation: {obj_demand.time_aggregation}")
+        print(f"   Demand weighted: {obj_demand.demand_weighted}")
+
+        # Verify demand data was loaded
+        assert obj_demand.demand_per_zone_interval is not None
+        total_trips = np.sum(obj_demand.demand_per_zone_interval)
+        print(f"\n📈 DEMAND DATA:")
+        print(f"   Total trips assigned: {total_trips:.0f}/{n_trips}")
+
+        # Evaluate
+        result = obj_demand.evaluate(sample_optimization_data["initial_solution"])
+
+        print(f"\n🎯 RESULT:")
+        print(f"   Demand-weighted intervals variance: {result:.6f}")
+
+        # Validate
+        assert isinstance(result, float), "Result should be float"
+        assert result >= 0, "Variance should be non-negative"
+        assert not np.isnan(result), "Result should not be NaN"
+
+        print("\n✅ Test passed: Intervals with demand weighting works correctly!")
+
+    def test_intervals_with_spatial_lag(self, sample_optimization_data):
+        """
+        Test intervals aggregation with spatial lag.
+
+        Validates that spatial lag calculations work correctly when
+        calculating variance per interval separately.
+        """
+        print("\n🧪 TESTING INTERVALS WITH SPATIAL LAG (SERVICE COVERAGE)")
+        print("=" * 70)
+
+        objective = StopCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            time_aggregation="intervals",
+            spatial_lag=True,
+            alpha=0.3,
+        )
+
+        print(f"\n🔧 OBJECTIVE CONFIGURATION:")
+        print(f"   Time aggregation: {objective.time_aggregation}")
+        print(f"   Spatial lag: {objective.spatial_lag}")
+        print(f"   Alpha: {objective.alpha}")
+
+        # Evaluate
+        result = objective.evaluate(sample_optimization_data["initial_solution"])
+
+        print(f"\n🎯 RESULT:")
+        print(f"   Spatial lag intervals variance: {result:.6f}")
+
+        # Compare with non-spatial-lag version
+        obj_no_lag = StopCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            time_aggregation="intervals",
+            spatial_lag=False,
+        )
+
+        result_no_lag = obj_no_lag.evaluate(sample_optimization_data["initial_solution"])
+
+        print(f"\n📊 COMPARISON:")
+        print(f"   With spatial lag: {result:.6f}")
+        print(f"   Without spatial lag: {result_no_lag:.6f}")
+        print(f"   Difference: {abs(result - result_no_lag):.6f}")
+
+        # Validate
+        assert isinstance(result, float)
+        assert result >= 0
+        assert not np.isnan(result)
+
+        # Results should generally differ (unless all zones identical)
+        # Don't assert inequality since edge cases might be equal
+
+        print("\n✅ Test passed: Intervals with spatial lag works correctly!")
