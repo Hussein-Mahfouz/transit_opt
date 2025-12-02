@@ -60,6 +60,7 @@ from typing import Any
 import numpy as np
 from pymoo.algorithms.soo.nonconvex.pso import PSO
 from pymoo.core.callback import Callback
+from pymoo.operators.repair.to_bound import ToBoundOutOfBoundsRepair
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 from pymoo.termination.max_time import TimeBasedTermination
@@ -1715,7 +1716,8 @@ class PSORunner:
                     logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == "FleetPerIntervalConstraintHandler":
-                    from ..problems.base import FleetPerIntervalConstraintHandler
+                    from ..problems.base import \
+                        FleetPerIntervalConstraintHandler
 
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
@@ -1808,6 +1810,7 @@ class PSORunner:
             c1=pso_config.cognitive_coeff,  # Initial cognitive coefficient
             c2=pso_config.social_coeff,  # Initial social coefficient
             adaptive=pso_config.adaptive,  # Whether to use pymoo's adaptive algorithm
+            repair=ToBoundOutOfBoundsRepair(), # pymoo does repair by default. I can remove this
             # TODO: Other pymoo parameters we might want to expose:
             # initial_velocity='random',           # or 'zero'
             # max_velocity_rate=0.20,             # velocity clamping
