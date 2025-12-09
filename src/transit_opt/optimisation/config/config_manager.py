@@ -540,6 +540,55 @@ class SamplingConfig:
             if self.gaussian_sigma <= 0:
                 raise ValueError("gaussian_sigma must be positive")
 
+@dataclass
+class SolutionSamplingStrategyConfig:
+    """
+    Configuration for solution sampling strategy.
+
+    Determines which solutions from tracked pool get exported for downstream analysis.
+    """
+    type: str = "uniform"  # "uniform", "power", "geometric", "fibonacci", "manual"
+    max_to_save: int = 10
+    max_rank: int | None = None  # Defaults to track_best_n if not specified
+
+    # Type-specific parameters
+    power_exponent: float = 2.0
+    geometric_base: float = 2.0
+    manual_ranks: list[int] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Validate type
+        valid_types = ["uniform", "power", "geometric", "fibonacci", "manual"]
+        if self.type not in valid_types:
+            raise ValueError(f"type must be one of {valid_types}, got '{self.type}'")
+
+        # Validate max_to_save
+        if self.max_to_save < 1:
+            raise ValueError(f"max_to_save must be >= 1, got {self.max_to_save}")
+
+        # Validate max_rank when specified
+        if self.max_rank is not None and self.max_rank < 1:
+            raise ValueError(
+                f"max_rank must be positive when specified, got {self.max_rank}"
+            )
+
+        # Validate type-specific parameters
+        if self.type == "power" and self.power_exponent < 1.0:
+            raise ValueError(f"power_exponent must be >= 1.0, got {self.power_exponent}")
+
+        if self.type == "geometric" and self.geometric_base <= 1.0:
+            raise ValueError(f"geometric_base must be > 1.0, got {self.geometric_base}")
+
+        if self.type == "manual":
+            if not self.manual_ranks:
+                raise ValueError("manual_ranks must be provided when type='manual'")
+            # Ensure manual ranks are integers
+            self.manual_ranks = [int(r) for r in self.manual_ranks]
+            # Validate no duplicates
+            if len(self.manual_ranks) != len(set(self.manual_ranks)):
+                raise ValueError("manual_ranks must contain unique values")
+
+
 class OptimizationConfigManager:
     """
     Comprehensive configuration manager for transit optimization.
@@ -746,6 +795,19 @@ class OptimizationConfigManager:
             statistical_analysis=multi_config.get("statistical_analysis", ["basic"]),
         )
 
+        # Setup output sampling strategy
+        output_cfg = self.config.get("output", {})
+        sampling_strategy_cfg = output_cfg.get("sampling_strategy", {})
+
+        self.sampling_strategy_config = SolutionSamplingStrategyConfig(
+            type=sampling_strategy_cfg.get("type", "uniform"),
+            max_to_save=sampling_strategy_cfg.get("max_to_save", 10),
+            max_rank=sampling_strategy_cfg.get("max_rank"),  # None is OK
+            power_exponent=sampling_strategy_cfg.get("power_exponent", 2.0),
+            geometric_base=sampling_strategy_cfg.get("geometric_base", 2.0),
+            manual_ranks=sampling_strategy_cfg.get("manual_ranks", [])
+        )
+
     def get_pso_config(self) -> PSOConfig:
         """Get PSO algorithm configuration."""
         return self.pso_config
@@ -769,6 +831,10 @@ class OptimizationConfigManager:
     def get_problem_config(self) -> dict[str, Any]:
         """Get problem configuration (objective + constraints)."""
         return self.config["problem"]
+
+    def get_sampling_strategy_config(self) -> SolutionSamplingStrategyConfig:
+        """Get output sampling strategy configuration."""
+        return self.sampling_strategy_config
 
     def get_full_config(self) -> dict[str, Any]:
         """Get complete configuration dictionary."""
@@ -854,3 +920,4 @@ class OptimizationConfigManager:
                 )
             else:
                 print(f"      Statistical runs: {self.multi_run_config.num_runs}")
+
