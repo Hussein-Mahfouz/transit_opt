@@ -1,21 +1,11 @@
-from dataclasses import dataclass
 
 import numpy as np
 
-
-@dataclass
-class SamplingStrategyConfig:
-    """Lightweight config for sampling (mirrors config_manager dataclass)."""
-
-    type: str
-    max_to_save: int
-    max_rank: int
-    power_exponent: float = 2.0
-    geometric_base: float = 2.0
-    manual_ranks: list[int] = None
+from transit_opt.optimisation.config.config_manager import \
+    SolutionSamplingStrategyConfig
 
 
-def generate_sampling_ranks(config: SamplingStrategyConfig) -> list[int]:
+def generate_sampling_ranks(config: SolutionSamplingStrategyConfig) -> list[int]:
     """
     Generate list of integer ranks to sample based on strategy.
 

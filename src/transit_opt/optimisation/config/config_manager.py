@@ -566,6 +566,12 @@ class SolutionSamplingStrategyConfig:
         if self.max_to_save < 1:
             raise ValueError(f"max_to_save must be >= 1, got {self.max_to_save}")
 
+        # Validate max_rank when specified
+        if self.max_rank is not None and self.max_rank < 1:
+            raise ValueError(
+                f"max_rank must be positive when specified, got {self.max_rank}"
+            )
+
         # Validate type-specific parameters
         if self.type == "power" and self.power_exponent < 1.0:
             raise ValueError(f"power_exponent must be >= 1.0, got {self.power_exponent}")

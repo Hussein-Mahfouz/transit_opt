@@ -14,6 +14,8 @@ import numpy as np
 
 from transit_opt.gtfs.drt import DRTSolutionExporter
 from transit_opt.gtfs.gtfs import SolutionConverter
+from transit_opt.optimisation.config.config_manager import \
+    SolutionSamplingStrategyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +220,7 @@ class SolutionExportManager:
         Returns:
             List of solution dicts with 'solution', 'objective', and 'rank' keys
         """
-        from transit_opt.gtfs.solution_sampling import (
-            SamplingStrategyConfig, generate_sampling_ranks)
+        from transit_opt.gtfs.solution_sampling import generate_sampling_ranks
 
         best_run = output_cfg.get("best_run", True)
 
@@ -246,7 +247,7 @@ class SolutionExportManager:
             sampling_cfg["max_rank"] = len(sols)
 
         # Create config object
-        strategy_config = SamplingStrategyConfig(
+        strategy_config = SolutionSamplingStrategyConfig(
             type=sampling_cfg.get("type", "uniform"),
             max_to_save=sampling_cfg.get("max_to_save", 10),
             max_rank=sampling_cfg["max_rank"],
@@ -332,4 +333,62 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
