@@ -262,6 +262,15 @@ def calculate_demand_weighted_total(values: np.ndarray, demand: np.ndarray, dema
         logger.error("Demand data not available")
         raise ValueError("Demand data not available")
 
+    if values is None or len(values) == 0:
+        logger.error("Values data is None or empty")
+        raise ValueError("Values data is None or empty")
+
+
+    if len(values) != len(demand):
+        logger.error(f"Shape mismatch: values {len(values)} vs demand {len(demand)}")
+        raise ValueError(f"Shape mismatch: values {len(values)} vs demand {len(demand)}")
+
     demand_weighted = np.power(demand, demand_power)
     logger.debug("Demand weights: %s", demand_weighted)
 
