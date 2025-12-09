@@ -267,91 +267,6 @@ class TestSolutionExportManager:
 
         print("🎉 Combined PT+DRT solution export works correctly with minimal metadata!")
 
-    def test_extract_solutions_with_sparse_sampling(self, sample_optimization_data):
-        """Test sparse sampling extraction strategy."""
-        print("\n🧪 TESTING SPARSE SAMPLING EXTRACTION")
-
-        manager = SolutionExportManager(sample_optimization_data)
-
-        # Create mock result with multiple solutions
-        mock_result = type(
-            "obj",
-            (object,),
-            {
-                "best_feasible_solutions": [
-                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0}
-                    for i in range(50)  # 50 solutions ranked 0-49
-                ]
-            },
-        )()
-
-        # Test 1: Sparse with save_every_nth=5, no max_to_save
-        output_cfg = {"best_run": True, "save_every_nth": 5, "max_to_save": None}
-
-        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
-
-        # Should select: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45
-        expected_ranks = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45]
-        actual_ranks = [sol["rank"] for sol in extracted]
-
-        print(f"   Expected ranks: {expected_ranks}")
-        print(f"   Actual ranks: {actual_ranks}")
-
-        assert actual_ranks == expected_ranks, f"Sparse sampling produced wrong ranks"
-        assert len(extracted) == 10
-
-        # Test 2: Sparse with max_to_save limit
-        output_cfg = {"best_run": True, "save_every_nth": 5, "max_to_save": 7}
-
-        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
-
-        # Should stop at max_to_save=7
-        expected_ranks = [0, 5, 10, 15, 20, 25, 30]
-        actual_ranks = [sol["rank"] for sol in extracted]
-
-        assert actual_ranks == expected_ranks
-        assert len(extracted) == 7
-
-        print("✅ Sparse sampling extraction works correctly")
-
-    def test_extract_solutions_with_dense_sampling(self, sample_optimization_data):
-        """Test dense sampling (traditional) extraction strategy."""
-        print("\n🧪 TESTING DENSE SAMPLING EXTRACTION")
-
-        manager = SolutionExportManager(sample_optimization_data)
-
-        # Create mock result with multiple solutions
-        mock_result = type(
-            "obj",
-            (object,),
-            {
-                "best_feasible_solutions": [
-                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(50)
-                ]
-            },
-        )()
-
-        # Dense: max_to_save=10, no save_every_nth
-        output_cfg = {
-            "best_run": True,
-            "max_to_save": 10,
-            # save_every_nth not specified
-        }
-
-        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
-
-        # Should select: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-        expected_ranks = list(range(10))
-        actual_ranks = [sol["rank"] for sol in extracted]
-
-        print(f"   Expected ranks: {expected_ranks}")
-        print(f"   Actual ranks: {actual_ranks}")
-
-        assert actual_ranks == expected_ranks
-        assert len(extracted) == 10
-
-        print("✅ Dense sampling extraction works correctly")
-
     def test_export_solution_set_uses_rank_field(self, sample_optimization_data):
         """Test that export_solution_set properly uses the rank field in filenames."""
         print("\n🧪 TESTING EXPORT WITH RANK FIELD")
@@ -381,3 +296,186 @@ class TestSolutionExportManager:
                 assert solution_id in ["combined_solution_00", "combined_solution_05", "combined_solution_10"]
 
             print("✅ Solution export uses rank field correctly")
+
+    #########################
+    # tests for different sampling approaches
+    #########################
+
+    def test_extract_with_power_law_sampling(self, sample_optimization_data):
+        """Test power law sampling extraction strategy."""
+        print("\n🧪 TESTING POWER LAW SAMPLING EXTRACTION")
+
+        manager = SolutionExportManager(sample_optimization_data)
+
+        mock_result = type(
+            "obj",
+            (object,),
+            {
+                "best_feasible_solutions": [
+                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(100)
+                ]
+            },
+        )()
+
+        output_cfg = {
+            "best_run": True,
+            "sampling_strategy": {
+                "type": "power",
+                "max_to_save": 10,
+                "max_rank": 100,
+                "power_exponent": 2.5,
+            },
+        }
+
+        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
+
+        ranks = [sol["rank"] for sol in extracted]
+        print(f"   Power law ranks: {ranks}")
+        print(f"   Expected: ~10, Got: {len(extracted)}")
+
+        # Power law may return 8-10 due to rounding
+        assert 8 <= len(extracted) <= 10
+        assert ranks[0] == 0
+
+        print("✅ Power law sampling works correctly")
+
+    def test_extract_with_manual_ranks(self, sample_optimization_data):
+        """Test manual rank specification."""
+        print("\n🧪 TESTING MANUAL RANK SAMPLING")
+
+        manager = SolutionExportManager(sample_optimization_data)
+
+        mock_result = type(
+            "obj",
+            (object,),
+            {
+                "best_feasible_solutions": [
+                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(50)
+                ]
+            },
+        )()
+
+        manual_ranks = [0, 1, 5, 10, 25, 49]
+        output_cfg = {
+            "best_run": True,
+            "sampling_strategy": {
+                "type": "manual",
+                "max_to_save": len(manual_ranks),
+                "max_rank": 50,
+                "manual_ranks": manual_ranks,
+            },
+        }
+
+        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
+
+        actual_ranks = [sol["rank"] for sol in extracted]
+        print(f"   Expected ranks: {manual_ranks}")
+        print(f"   Actual ranks: {actual_ranks}")
+
+        assert actual_ranks == manual_ranks
+        print("✅ Manual rank sampling works correctly")
+
+    def test_extract_with_geometric_sampling(self, sample_optimization_data):
+        """Test geometric (logarithmic) sampling."""
+        print("\n🧪 TESTING GEOMETRIC SAMPLING")
+
+        manager = SolutionExportManager(sample_optimization_data)
+
+        mock_result = type(
+            "obj",
+            (object,),
+            {
+                "best_feasible_solutions": [
+                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(128)
+                ]
+            },
+        )()
+
+        output_cfg = {
+            "best_run": True,
+            "sampling_strategy": {
+                "type": "geometric",
+                "max_to_save": 8,
+                "max_rank": 128,
+                "geometric_base": 2.0,
+            },
+        }
+
+        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
+
+        actual_ranks = [sol["rank"] for sol in extracted]
+        print(f"   Geometric ranks: {actual_ranks}")
+        print(f"   Count: {len(actual_ranks)} (max 8)")
+
+        assert len(actual_ranks) <= 8
+        assert actual_ranks[0] == 0
+
+        print("✅ Geometric sampling works correctly")
+
+    def test_max_rank_defaults_to_all_solutions(self, sample_optimization_data):
+        """Test that max_rank defaults to number of tracked solutions when not specified."""
+        print("\n🧪 TESTING MAX_RANK DEFAULT BEHAVIOR")
+
+        manager = SolutionExportManager(sample_optimization_data)
+
+        mock_result = type(
+            "obj",
+            (object,),
+            {
+                "best_feasible_solutions": [
+                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(75)
+                ]
+            },
+        )()
+
+        output_cfg = {
+            "best_run": True,
+            "sampling_strategy": {
+                "type": "uniform",
+                "max_to_save": 10,
+                # max_rank NOT specified - should default to 75
+            },
+        }
+
+        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
+
+        ranks = [sol["rank"] for sol in extracted]
+        print(f"   Sampled ranks: {ranks}")
+        print(f"   Last rank: {ranks[-1]} (should be ≥60)")
+
+        assert len(extracted) == 10
+        assert ranks[-1] >= 60
+
+        print("✅ max_rank correctly defaults to all tracked solutions")
+
+    def test_sampling_with_insufficient_solutions(self, sample_optimization_data):
+        """Test sampling when fewer solutions available than requested."""
+        print("\n🧪 TESTING SAMPLING WITH INSUFFICIENT SOLUTIONS")
+
+        manager = SolutionExportManager(sample_optimization_data)
+
+        mock_result = type(
+            "obj",
+            (object,),
+            {
+                "best_feasible_solutions": [
+                    {"solution": np.random.randint(0, 3, (10, 4)), "objective": i * 10.0} for i in range(5)
+                ]
+            },
+        )()
+
+        output_cfg = {
+            "best_run": True,
+            "sampling_strategy": {"type": "uniform", "max_to_save": 10, "max_rank": 5},
+        }
+
+        extracted = manager.extract_solutions_for_export(mock_result, output_cfg)
+
+        ranks = [sol["rank"] for sol in extracted]
+        print(f"   Available: 5, Requested: 10, Got: {len(extracted)}")
+        print(f"   Ranks: {ranks}")
+
+        assert len(extracted) == 5
+        assert set(ranks) == {0, 1, 2, 3, 4}
+
+        print("✅ Correctly handles insufficient solutions")

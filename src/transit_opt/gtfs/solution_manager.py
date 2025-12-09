@@ -209,104 +209,72 @@ class SolutionExportManager:
 
     def extract_solutions_for_export(self, result, output_cfg: dict) -> list[dict]:
         """
-        Extract solutions for export based on result type and output config.
-        The results of optimize() or optimize_multi_run() can vary in structure.
-        this method standardizes the extraction of solutions to be exported.
-        It also gives more control over which solutions to export in multi-run scenarios.
+        Extract solutions for export using sampling strategy from config.
 
         Args:
             result: OptimizationResult or MultiRunResult
-            output_cfg: Output config dict with keys:
-                - best_run: Export best run only (True) or all runs (False)
-                - save_every_nth: Save every Nth solution (optional, sparse sampling)
-                - max_to_save: Maximum number of solutions to save (hard cap)
+            output_cfg: Output config dict with 'sampling_strategy' key
 
         Returns:
             List of solution dicts with 'solution', 'objective', and 'rank' keys
-            Note: 'rank' is 0-indexed (0 = best solution)
-
-        Examples:
-            # Dense saving (traditional):
-            output_cfg = {'track_best_n': 50, 'max_to_save': 10}
-            → Saves ranks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-
-            # Sparse saving (heterogeneity):
-            output_cfg = {'track_best_n': 50, 'save_every_nth': 5, 'max_to_save': 15}
-            → Tracks 50 solutions, samples every 5th: [0, 4, 9, 14, 19, 24, 29, 34, 39, 44, 49]
-            → Stops at max_to_save=15, so saves: [0, 4, 9, 14, 19, 24, 29, 34, 39, 44, 49] (11 solutions)
-
-            # Sparse with early stop:
-            output_cfg = {'track_best_n': 50, 'save_every_nth': 5, 'max_to_save': 5}
-            → Would sample: [0, 4, 9, 14, 19, ...]
-            → Stops at max_to_save=5, so saves: [0, 4, 9, 14, 19] (5 solutions)
-
         """
+        from transit_opt.gtfs.solution_sampling import (
+            SamplingStrategyConfig, generate_sampling_ranks)
+
         best_run = output_cfg.get("best_run", True)
-        save_every_nth = output_cfg.get("save_every_nth", None)
-        max_to_save = output_cfg.get("max_to_save", None)
 
-        # MultiRunResult
-        if hasattr(result, "num_runs_completed"):  # Only exists in MultiRunResult
-            if best_run:
-                # Export best run's solutions
-                sols = getattr(result.best_result, "best_feasible_solutions", [])
-            else:
-                # Export best_feasible_solutions_all_runs (ranked)
-                sols = getattr(result, "best_feasible_solutions_all_runs", [])
+        # Get solutions based on result type
+        if hasattr(result, "num_runs_completed"):
+            sols = result.best_result.best_feasible_solutions if best_run else result.best_feasible_solutions_all_runs
         else:
-            # Single run: OptimizationResult
-            sols = getattr(result, "best_feasible_solutions", [])
+            sols = result.best_feasible_solutions
 
-        # ===== REMOVE DUPLICATES BEFORE SORTING =====
+        # Remove duplicates
         if len(sols) > 1:
             original_count = len(sols)
             sols = self._remove_duplicate_solutions(sols)
-            logger.info(f"📊 Removed duplicates: {original_count - len(sols)} duplicate solutions")
+            logger.info(f"📊 Removed {original_count - len(sols)} duplicate solutions")
 
-        # Sort by objective (lower is better)
+        # Sort by objective (best first)
         sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
 
-        # Apply max_to_save limit AFTER deduplication
-        # ===== SPARSE SAMPLING LOGIC =====
-        if save_every_nth is not None and save_every_nth > 1:
-            logger.info(f"📊 Sparse sampling strategy:")
-            logger.info(f"   Tracked solutions: {len(sols)}")
-            logger.info(f"   Save every Nth: {save_every_nth}")
-            logger.info(f"   Max to save: {max_to_save if max_to_save else 'unlimited'}")
+        # Get sampling strategy config
+        sampling_cfg = output_cfg.get("sampling_strategy", {})
 
-            selected_solutions = []
+        # Set max_rank if not specified (default to all tracked solutions)
+        if "max_rank" not in sampling_cfg or sampling_cfg["max_rank"] is None:
+            sampling_cfg["max_rank"] = len(sols)
 
-            # Iterate through all tracked solutions
-            for idx in range(len(sols)):
-                # Always include rank 0 (best solution) OR solutions divisible by save_every_nth
-                if idx == 0 or idx % save_every_nth == 0:
-                    # Check if we've hit the max_to_save limit
-                    if max_to_save is not None and len(selected_solutions) >= max_to_save:
-                        logger.info(f"   ⚠️  Stopping at max_to_save limit: {max_to_save}")
-                        break
+        # Create config object
+        strategy_config = SamplingStrategyConfig(
+            type=sampling_cfg.get("type", "uniform"),
+            max_to_save=sampling_cfg.get("max_to_save", 10),
+            max_rank=sampling_cfg["max_rank"],
+            power_exponent=sampling_cfg.get("power_exponent", 2.0),
+            geometric_base=sampling_cfg.get("geometric_base", 2.0),
+            manual_ranks=sampling_cfg.get("manual_ranks", []),
+        )
 
-                    sol = sols[idx].copy()
-                    sol["rank"] = idx
-                    selected_solutions.append(sol)
+        # Generate ranks using strategy
+        ranks = generate_sampling_ranks(strategy_config)
 
-            logger.info(f"   ✅ Selected {len(selected_solutions)} solutions")
-            logger.info(f"   Ranks saved: {[s['rank'] for s in selected_solutions]}")
+        logger.info("📊 Sampling strategy:")
+        logger.info(f"   Type: {strategy_config.type}")
+        logger.info(f"   Tracked solutions: {len(sols)}")
+        logger.info(f"   Selected ranks: {ranks}")
 
-            return selected_solutions
+        # Extract selected solutions
+        selected = []
+        for rank in ranks:
+            if rank < len(sols):
+                sol = sols[rank].copy()
+                sol["rank"] = rank
+                selected.append(sol)
 
-        else:
-            # ===== TRADITIONAL DENSE SAMPLING =====
-            # Apply max_to_save limit directly
-            if max_to_save is not None:
-                sols = sols[:max_to_save]
+        if len(selected) < len(ranks):
+            logger.warning(f"⚠️  Only {len(selected)}/{len(ranks)} ranks available (tracked {len(sols)} solutions)")
 
-            # Add ranks (0-indexed)
-            for i, sol in enumerate(sols):
-                sol["rank"] = i
-
-            logger.info(f"📊 Dense sampling: saving {len(sols)} solutions (ranks 0-{len(sols) - 1})")
-
-            return sols
+        return selected
 
     def _remove_duplicate_solutions(self, solutions: list[dict]) -> list[dict]:
         """
@@ -364,3 +332,4 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
+
