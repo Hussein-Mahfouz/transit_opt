@@ -40,6 +40,9 @@ dependencies = [
 
     # Progress bars
     "alive-progress>=3.3.0",
+
+    # Real-time system utilisation
+    "psutil>=5.9.0"
 ]
 
 requires-python = ">= 3.10"
