@@ -1,5 +1,40 @@
+# ===== Old environment files (keep for safety) =====
 poetry.lock
 genet/
-__pycache__/
 /miniconda3/envs/transit_opt_env/
+
+# ===== Virtual environments =====
+.transit_opt_uv/      # New uv environment
+.venv/                # Standard venv name
+.venv_*/              # Any temporary venvs
+venv/
+env/
+
+# ===== Python cache =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ===== Testing =====
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== IDE =====
+.vscode/
+.idea/
 .DS_Store
+
+# ===== Project outputs =====
+output/               # Optimization results
+logs/                 # Log files
+*.log
+
+# ===== Old config files (no longer needed but tracked for reference) =====
+environment.yml       # Old conda environment file
