@@ -14,6 +14,8 @@ import numpy as np
 
 from transit_opt.gtfs.drt import DRTSolutionExporter
 from transit_opt.gtfs.gtfs import SolutionConverter
+from transit_opt.optimisation.config.config_manager import \
+    SolutionSamplingStrategyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +128,11 @@ class SolutionExportManager:
         results = []  # results to convert to gtfs / json
         summary_rows = []  # csv with objective value of each run
 
-        for i, solution_data in enumerate(solutions, 1):
+        for i, solution_data in enumerate(solutions):
+            # Use rank directly (already 0-indexed from extract_solutions_for_export)
+            rank = solution_data.get("rank", i)
             # Generate consistent solution ID
-            solution_id = f"{solution_prefix}_{i:02d}"
+            solution_id = f"{solution_prefix}_{rank:02d}"
 
             # Create minimal per-solution metadata
             solution_metadata = {}
@@ -137,8 +141,8 @@ class SolutionExportManager:
             if "objective" in solution_data:
                 solution_metadata["objective_value"] = solution_data["objective"]
 
-            # Add rank for convenience (can be inferred from filename but useful)
-            solution_metadata["rank"] = i
+            # Store the rank from extraction
+            solution_metadata["rank"] = rank
 
             # Export the solution
             result = self.export_single_solution(
@@ -155,7 +159,7 @@ class SolutionExportManager:
                 {
                     "solution_id": solution_id,
                     "swarm_id": solution_data.get("run_id", ""),
-                    "rank": i,
+                    "rank": rank,
                     "objective": solution_data.get("objective", ""),
                     "generation_found": solution_data.get("generation_found", ""),
                     "violations": solution_data.get("violations", ""),
@@ -207,60 +211,77 @@ class SolutionExportManager:
 
     def extract_solutions_for_export(self, result, output_cfg: dict) -> list[dict]:
         """
-        Extract solutions for export based on result type and output config.
-        The results of optimize() or optimize_multi_run() can vary in structure.
-        this method standardizes the extraction of solutions to be exported.
-        It also gives more control over which solutions to export in multi-run scenarios.
-        Options:
-            - best_run: Whether to export the best run's solutions only (default: True). If
-                False, exports solutions from all runs ranked by objective.
-            - max_to_save: Maximum number of solutions to export (default: None, meaning all).
+        Extract solutions for export using sampling strategy from config.
 
         Args:
             result: OptimizationResult or MultiRunResult
-            output_cfg: Output config dict (should contain 'best_run', 'max_to_save')
+            output_cfg: Output config dict with 'sampling_strategy' key
 
         Returns:
-            List of solution dicts with 'solution' and 'objective'
+            List of solution dicts with 'solution', 'objective', and 'rank' keys
         """
+        from transit_opt.gtfs.solution_sampling import generate_sampling_ranks
+
         best_run = output_cfg.get("best_run", True)
-        max_to_save = output_cfg.get("max_to_save", None)
 
-        # MultiRunResult
-        if hasattr(result, "num_runs_completed"):  # Only exists in MultiRunResult
-            if best_run:
-                # Export best run's solutions
-                sols = getattr(result.best_result, "best_feasible_solutions", [])
-            else:
-                # Export best_feasible_solutions_all_runs (ranked)
-                sols = getattr(result, "best_feasible_solutions_all_runs", [])
+        # Get solutions based on result type
+        if hasattr(result, "num_runs_completed"):
+            sols = result.best_result.best_feasible_solutions if best_run else result.best_feasible_solutions_all_runs
         else:
-            # Single run: OptimizationResult
-            sols = getattr(result, "best_feasible_solutions", [])
+            sols = result.best_feasible_solutions
 
-        # ===== REMOVE DUPLICATES BEFORE SORTING =====
+        # Remove duplicates
         if len(sols) > 1:
             original_count = len(sols)
             sols = self._remove_duplicate_solutions(sols)
-            logger.info(
-                f"📊 Removed duplicates: {original_count - len(sols)} duplicate solutions"
-            )
+            logger.info(f"📊 Removed {original_count - len(sols)} duplicate solutions")
 
-        # Sort by objective (lower is better)
+        # Sort by objective (best first)
         sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
 
-        # Apply max_to_save limit AFTER deduplication
-        if max_to_save is not None:
-            sols = sols[:max_to_save]
+        # Get sampling strategy config
+        sampling_cfg = output_cfg.get("sampling_strategy", {})
 
-        return sols
+        # Set max_rank if not specified (default to all tracked solutions)
+        if "max_rank" not in sampling_cfg or sampling_cfg["max_rank"] is None:
+            sampling_cfg["max_rank"] = len(sols)
+
+        # Create config object
+        strategy_config = SolutionSamplingStrategyConfig(
+            type=sampling_cfg.get("type", "uniform"),
+            max_to_save=sampling_cfg.get("max_to_save", 10),
+            max_rank=sampling_cfg["max_rank"],
+            power_exponent=sampling_cfg.get("power_exponent", 2.0),
+            geometric_base=sampling_cfg.get("geometric_base", 2.0),
+            manual_ranks=sampling_cfg.get("manual_ranks", []),
+        )
+
+        # Generate ranks using strategy
+        ranks = generate_sampling_ranks(strategy_config)
+
+        logger.info("📊 Sampling strategy:")
+        logger.info(f"   Type: {strategy_config.type}")
+        logger.info(f"   Tracked solutions: {len(sols)}")
+        logger.info(f"   Selected ranks: {ranks}")
+
+        # Extract selected solutions
+        selected = []
+        for rank in ranks:
+            if rank < len(sols):
+                sol = sols[rank].copy()
+                sol["rank"] = rank
+                selected.append(sol)
+
+        if len(selected) < len(ranks):
+            logger.warning(f"⚠️  Only {len(selected)}/{len(ranks)} ranks available (tracked {len(sols)} solutions)")
+
+        return selected
 
     def _remove_duplicate_solutions(self, solutions: list[dict]) -> list[dict]:
         """
-        Remove duplicate solutions based on solution matrix content.
+        Remove duplicate solutions using efficient fingerprinting.
 
-        Duplicates occur when multiple swarms converge to the same solution.
-        We use numpy array comparison to detect identical solutions.
+        Uses numpy array comparison with shape validation for fast deduplication.
 
         Args:
             solutions: List of solution dicts with 'solution' and 'objective' keys
@@ -271,33 +292,36 @@ class SolutionExportManager:
         if not solutions:
             return []
 
+        logger.info(f"📊 Deduplicating {len(solutions)} solutions...")
+
         unique_solutions = []
-        seen_solutions = []
+        seen_fingerprints = set()
 
         for sol in solutions:
             solution_matrix = sol["solution"]
 
-            # Handle PT+DRT dict format
+            # Create simple fingerprint: hash of (bytes, shape)
             if isinstance(solution_matrix, dict):
-                # Create hashable representation
-                pt_bytes = solution_matrix["pt"].tobytes()
-                drt_bytes = solution_matrix["drt"].tobytes()
-                solution_key = (pt_bytes, drt_bytes)
+                # PT+DRT case
+                fingerprint = hash((
+                    solution_matrix["pt"].tobytes(),
+                    solution_matrix["pt"].shape,
+                    solution_matrix["drt"].tobytes(),
+                    solution_matrix["drt"].shape
+                ))
             else:
-                # PT-only numpy array
-                solution_key = solution_matrix.tobytes()
+                # PT-only case
+                fingerprint = hash((
+                    solution_matrix.tobytes(),
+                    solution_matrix.shape
+                ))
 
-            # Check if we've seen this solution before
-            is_duplicate = False
-            for seen_key in seen_solutions:
-                if solution_key == seen_key:
-                    is_duplicate = True
-                    logger.info(f"   Duplicate found: objective={sol.get('objective', 'N/A'):.4f}")
-                    break
-
-            if not is_duplicate:
+            # O(1) set lookup
+            if fingerprint not in seen_fingerprints:
                 unique_solutions.append(sol)
-                seen_solutions.append(solution_key)
+                seen_fingerprints.add(fingerprint)
+            else:
+                logger.debug(f"   Duplicate found: objective={sol.get('objective', 'N/A'):.4f}")
 
         logger.info(f"   Deduplication: {len(solutions)} → {len(unique_solutions)} unique solutions")
         return unique_solutions
@@ -311,3 +335,18 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

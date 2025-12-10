@@ -64,15 +64,17 @@ def prepare_opt_data(cfg: dict) -> dict:
         return preparator.extract_optimization_data(allowed_headways=allowed_headways)
 
 
-def export_results(opt_data: dict, res, cfg: dict) -> None:
+def export_results(opt_data: dict, res, cfg: dict, iteration_dir: Path) -> None:
     logger = logging.getLogger("transit_opt.scripts.run")
 
     out_cfg = cfg.get("output", {})
     if not out_cfg.get("save_results", False):
         return
 
-    out_dir = Path(out_cfg.get("results_dir"))
+    # Use iteration-specific pso_results directory
+    out_dir = iteration_dir / "pso_results"
     out_dir.mkdir(parents=True, exist_ok=True)
+
 
     export_manager = SolutionExportManager(opt_data)
 
@@ -95,30 +97,60 @@ def export_results(opt_data: dict, res, cfg: dict) -> None:
             logger.info("  %s -> %s", k, v["path"])
 
 
-def main(config_path: str):
+def main(config_path: str, iteration: int = 1, overwrite: bool = False):
     # 1. Load config and set up logging
     cfg = load_config(config_path)
-    # Set up logging
+
+    # Get base results directory from config
+    out_cfg = cfg.get("output", {})
+    base_results_dir = Path(out_cfg.get("results_dir", "output/run"))
+
+    # Create iteration-specific directory
+    iteration_dir = base_results_dir / f"iteration_{iteration:02d}"
+    pso_results_dir = iteration_dir / "pso_results"
+
+    # overwrite check
+    if pso_results_dir.exists() and not overwrite:
+        print(f"\n❌ ERROR: Iteration directory already exists: {iteration_dir}")
+        print(f"   Use --overwrite flag to replace existing results, or:")
+        print(f"   • Run with different --iteration number")
+        print(f"   • Manually delete: rm -rf {iteration_dir}")
+        print(f"   • Move existing results: mv {iteration_dir} {iteration_dir}_backup")
+        sys.exit(1)
+
+    if pso_results_dir.exists() and overwrite:
+        import shutil
+        print(f"\n⚠️  WARNING: Overwriting existing iteration directory: {iteration_dir}")
+        shutil.rmtree(iteration_dir)
+
+    pso_results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set up logging in iteration directory
     log_cfg = cfg.get("logging", {})
-    log_dir = log_cfg.get("log_dir")
     log_file = log_cfg.get("log_file", "run.log")
     console_level = log_cfg.get("console_level", "INFO")
     file_level = log_cfg.get("file_level", "DEBUG")
+
     setup_logger(
-        name="transit_opt", log_dir=log_dir, log_file=log_file, console_level=console_level, file_level=file_level
+        name="transit_opt",
+        log_dir=str(pso_results_dir),
+        log_file=log_file,
+        console_level=console_level,
+        file_level=file_level,
     )
+
     logger = logging.getLogger("transit_opt.scripts.run")
-    logger.info("🚀 Starting transit optimization run")
+    logger.info(f"🔄 Starting optimization iteration {iteration}")
+    logger.info(f"📁 Iteration directory: {iteration_dir}")
+    logger.info(f"📁 PSO results directory: {pso_results_dir}")
     logger.info("📋 Config file:\n%s", yaml.dump(cfg, sort_keys=False, default_flow_style=False))
 
-    # Save config to output directory (copy original file)
-    out_cfg = cfg.get("output", {})
     if out_cfg.get("save_results", False):
         import shutil
 
         out_dir = Path(out_cfg.get("results_dir"))
         out_dir.mkdir(parents=True, exist_ok=True)
-        cfg_dest = out_dir / "config.yaml"
+        cfg_dest = pso_results_dir / "config.yaml"
 
         shutil.copy2(config_path, cfg_dest)
         logger.info(f"💾 Saved config to {cfg_dest}")
@@ -151,13 +183,16 @@ def main(config_path: str):
     else:
         res = runner.optimize(opt_data, track_best_n=run_cfg.get("track_best_n"))
     # 6. Export results to file
-    export_results(opt_data, res, cfg)
+    export_results(opt_data, res, cfg, iteration_dir)
 
     logger.info("✅ Optimization complete!")
+    logger.info(f"📊 Results saved to: {iteration_dir}")
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Run transit_opt PSO from config")
     p.add_argument("--config", "-c", default="configs/config_basic.yaml", help="YAML config path")
+    p.add_argument("--iteration", "-i", type=int, default=1, help="Iteration number (default: 1)")
+    p.add_argument("--overwrite", action="store_true", help="Overwrite existing iteration directory")
     args = p.parse_args()
-    main(args.config)
+    main(args.config, iteration=args.iteration, overwrite=args.overwrite)
