@@ -13,7 +13,8 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
+from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
+                   FleetTotalConstraintHandler)
 
 logger = logging.getLogger(__name__)
 
