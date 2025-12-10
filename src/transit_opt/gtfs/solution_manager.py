@@ -279,10 +279,9 @@ class SolutionExportManager:
 
     def _remove_duplicate_solutions(self, solutions: list[dict]) -> list[dict]:
         """
-        Remove duplicate solutions based on solution matrix content.
+        Remove duplicate solutions using efficient fingerprinting.
 
-        Duplicates occur when multiple swarms converge to the same solution.
-        We use numpy array comparison to detect identical solutions.
+        Uses numpy array comparison with shape validation for fast deduplication.
 
         Args:
             solutions: List of solution dicts with 'solution' and 'objective' keys
@@ -293,33 +292,36 @@ class SolutionExportManager:
         if not solutions:
             return []
 
+        logger.info(f"📊 Deduplicating {len(solutions)} solutions...")
+
         unique_solutions = []
-        seen_solutions = []
+        seen_fingerprints = set()
 
         for sol in solutions:
             solution_matrix = sol["solution"]
 
-            # Handle PT+DRT dict format
+            # Create simple fingerprint: hash of (bytes, shape)
             if isinstance(solution_matrix, dict):
-                # Create hashable representation
-                pt_bytes = solution_matrix["pt"].tobytes()
-                drt_bytes = solution_matrix["drt"].tobytes()
-                solution_key = (pt_bytes, drt_bytes)
+                # PT+DRT case
+                fingerprint = hash((
+                    solution_matrix["pt"].tobytes(),
+                    solution_matrix["pt"].shape,
+                    solution_matrix["drt"].tobytes(),
+                    solution_matrix["drt"].shape
+                ))
             else:
-                # PT-only numpy array
-                solution_key = solution_matrix.tobytes()
+                # PT-only case
+                fingerprint = hash((
+                    solution_matrix.tobytes(),
+                    solution_matrix.shape
+                ))
 
-            # Check if we've seen this solution before
-            is_duplicate = False
-            for seen_key in seen_solutions:
-                if solution_key == seen_key:
-                    is_duplicate = True
-                    logger.info(f"   Duplicate found: objective={sol.get('objective', 'N/A'):.4f}")
-                    break
-
-            if not is_duplicate:
+            # O(1) set lookup
+            if fingerprint not in seen_fingerprints:
                 unique_solutions.append(sol)
-                seen_solutions.append(solution_key)
+                seen_fingerprints.add(fingerprint)
+            else:
+                logger.debug(f"   Duplicate found: objective={sol.get('objective', 'N/A'):.4f}")
 
         logger.info(f"   Deduplication: {len(solutions)} → {len(unique_solutions)} unique solutions")
         return unique_solutions
@@ -333,50 +335,6 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
