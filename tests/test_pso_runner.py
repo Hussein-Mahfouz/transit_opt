@@ -2288,7 +2288,7 @@ class TestPSORunnerWithSeeding:
         runner_default._create_problem()
 
         algorithm_default = runner_default._create_algorithm()
-        pop_default = algorithm_default.initialization.do(runner_default.problem, algorithm_default.pop_size, random_state=42)
+        pop_default = algorithm_default.initialization.do(runner_default.problem, algorithm_default.pop_size, random_state=np.random.RandomState(42))
         X_default = pop_default.get('X')
 
         print("   📊 Default LHS sampling:")
@@ -2311,7 +2311,7 @@ class TestPSORunnerWithSeeding:
         runner_custom._create_problem()
 
         algorithm_custom = runner_custom._create_algorithm()
-        pop_custom = algorithm_custom.initialization.do(runner_custom.problem, algorithm_custom.pop_size, random_state=42)
+        pop_custom = algorithm_custom.initialization.do(runner_custom.problem, algorithm_custom.pop_size, random_state=np.random.RandomState(42))
         X_custom = pop_custom.get('X')
 
         print("   📊 Custom sampling:")
@@ -2603,3 +2603,7 @@ if __name__ == "__main__":
     """
     print("🧪 Running PSO runner tests...")
     pytest.main([__file__, "-v", "-s"])
+
+
+
+
