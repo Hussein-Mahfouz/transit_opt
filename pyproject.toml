@@ -1,7 +1,7 @@
 [project]
 name = "transit_opt"
 version = "0.1.0"
-description = "Optimisation tool for public transit network design"
+description = "Optimisation tool for combined PT frequency setting and DRT fleet sizing"
 readme = "README.md"
 authors = [
   {name = "Hussein Mahfouz", email = "husseinmahfouz93@gmail.com"}
@@ -9,31 +9,57 @@ authors = [
 maintainers = [
   {name = "Hussein Mahfouz", email = "husseinmahfouz93@gmail.com"}
 ]
-classifiers = [
-
-]
 license = {text = "MIT"}
+
+# ===== CORE DEPENDENCIES =====
 dependencies = [
-  "typer",
-  "pandas (>=2.3.1,<3.0.0)",
-  "rasterstats (>=0.20.0,<0.21.0)",
-  "numpy (<2)"
+    # CLI
+    "typer>=0.16.1",
+
+    # Data manipulation
+    "pandas>=2.3.1,<3.0.0",
+    "numpy<2",  # Keep numpy<2 for compatibility
+
+    # Geospatial
+    "geopandas>=1.1.1",
+    "rasterstats>=0.20.0,<0.21.0",
+    "shapely>=2.0.0",
+    "pyproj>=3.6.0",
+    "libpysal>=4.12.1",
+    "rasterio>=1.3.0",
+
+    # Transit/GTFS
+    "gtfs-kit>=10.3.1",
+
+    # Optimization
+    "pymoo>=0.6.1.5",
+    "autograd>=1.8.0",
+
+    # Config/YAML
+    "pyyaml>=6.0",
+
+    # Progress bars
+    "alive-progress>=3.3.0",
 ]
+
 requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 test = [
-    "coverage",  # testing
-    "pytest",  # testing
-    "ruff",  # linting
-    "ty", # checking types
-    "ipdb"    
+    "pytest>=8.4.1",
+    "pytest-cov",
+    "coverage",
+    "ruff",
+]
+
+dev = [
+    "ipdb",
+    "jupyter",
+    "matplotlib",
 ]
 
 [project.urls]
-
 bugs = "https://github.com/Hussein-Mahfouz/transit_opt/issues"
-changelog = "https://github.com/Hussein-Mahfouz/transit_opt/blob/master/changelog.md"
 homepage = "https://github.com/Hussein-Mahfouz/transit_opt"
 
 [tool.setuptools]
@@ -45,17 +71,7 @@ package-dir = {"" = "src"}
 [project.scripts]
 transit_opt = "transit_opt.cli:app"
 
-[tool.ty]
-# All rules are enabled as "error" by default; no need to specify unless overriding.
-# Example override: relax a rule for the entire project (uncomment if needed).
-# rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
-
-# Optional: Per-directory overrides for flexibility in boilerplates with tests or examples.
-[[tool.ty.overrides]]
-match = ["tests/**.py"]
-rules.TY016 = "ignore"  # Ignore invalid-assignment in tests, e.g., for dynamic fixtures.
-rules.TY029 = "ignore"  # Ignore invalid-return-type in tests.
-
+# ===== RUFF CONFIG =====
 [tool.ruff]
 line-length = 120
 
@@ -69,5 +85,10 @@ select = [
     "UP",  # pyupgrade
 ]
 
+# ===== UV CONFIG =====
 [tool.uv]
 package = true
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
