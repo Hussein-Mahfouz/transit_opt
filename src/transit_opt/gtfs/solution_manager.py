@@ -14,8 +14,7 @@ import numpy as np
 
 from transit_opt.gtfs.drt import DRTSolutionExporter
 from transit_opt.gtfs.gtfs import SolutionConverter
-from transit_opt.optimisation.config.config_manager import \
-    SolutionSamplingStrategyConfig
+from transit_opt.optimisation.config.config_manager import SolutionSamplingStrategyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +232,14 @@ class SolutionExportManager:
         # Remove duplicates
         if len(sols) > 1:
             original_count = len(sols)
-            sols = self._remove_duplicate_solutions(sols)
-            logger.info(f"📊 Removed {original_count - len(sols)} duplicate solutions")
+
+            # Get deduplication config
+            deduplicate = output_cfg.get("deduplicate_solutions", True)
+            rounding_decimals = output_cfg.get("rounding_decimals", 0)
+
+            if deduplicate:
+                sols = self._remove_duplicate_solutions(sols, rounding_decimals)
+                logger.info(f"📊 Removed {original_count - len(sols)} duplicate solutions")
 
         # Sort by objective (best first)
         sols = sorted(sols, key=lambda s: s.get("objective", float("inf")))
@@ -277,51 +282,74 @@ class SolutionExportManager:
 
         return selected
 
-    def _remove_duplicate_solutions(self, solutions: list[dict]) -> list[dict]:
+    def _remove_duplicate_solutions(self, solutions: list[dict], rounding_decimals: int = 0) -> list[dict]:
         """
-        Remove duplicate solutions using efficient fingerprinting.
+        Remove duplicate solutions using efficient fingerprinting and objective rounding.
 
-        Uses numpy array comparison with shape validation for fast deduplication.
+        Fingerprinting (always done):
+            Uses numpy array comparison with shape validation for fast deduplication.
+        Objective rounding (optional):
+            Decide whether and how to round objective values before deduplicaiton.
+
 
         Args:
             solutions: List of solution dicts with 'solution' and 'objective' keys
+            rounding_decimals: Number of decimals to round objective to.
+                             0 = nearest integer
+                             2 = nearest 0.01
+                             -2 = nearest 100
+                             None = exact match only
 
         Returns:
-            List of unique solutions (preserves order, keeps first occurrence)
+            List of unique solutions
         """
         if not solutions:
             return []
 
-        logger.info(f"📊 Deduplicating {len(solutions)} solutions...")
+        logger.info(f"📊 Deduplicating {len(solutions)} solutions (rounding decimals: {rounding_decimals})...")
 
         unique_solutions = []
         seen_fingerprints = set()
+        seen_objectives = set()
 
-        for sol in solutions:
-            solution_matrix = sol["solution"]
+        # Sort by objective first to ensure we keep the best version of duplicates
+        sorted_solutions = sorted(solutions, key=lambda s: s.get("objective", float("inf")))
 
-            # Create simple fingerprint: hash of (bytes, shape)
-            if isinstance(solution_matrix, dict):
-                # PT+DRT case
-                fingerprint = hash((
-                    solution_matrix["pt"].tobytes(),
-                    solution_matrix["pt"].shape,
-                    solution_matrix["drt"].tobytes(),
-                    solution_matrix["drt"].shape
-                ))
+        for sol in sorted_solutions:
+            # 1. Check objective value (rounded)
+            # This prevents simulating solutions that are effectively identical in performance
+            obj = sol.get("objective")
+
+            if obj is not None and rounding_decimals is not None:
+                # Round the objective
+                rounded_obj = round(obj, rounding_decimals)
+
+                # If rounding to integer or larger (decimals <= 0), convert to int for cleaner sets
+                if isinstance(rounding_decimals, int) and rounding_decimals <= 0:
+                    rounded_obj = int(rounded_obj)
+
+                if rounded_obj in seen_objectives:
+                    continue
+                seen_objectives.add(rounded_obj)
+
+            # 2. Check solution structure (fingerprint)
+            # This handles cases where objective might be missing or we want extra safety
+            solution_data = sol["solution"]
+
+            if isinstance(solution_data, dict):
+                # Combined PT+DRT
+                pt_bytes = solution_data["pt"].tobytes()
+                drt_bytes = solution_data.get("drt").tobytes() if solution_data.get("drt") is not None else b""
+                fingerprint = pt_bytes + drt_bytes
             else:
-                # PT-only case
-                fingerprint = hash((
-                    solution_matrix.tobytes(),
-                    solution_matrix.shape
-                ))
+                # PT only
+                fingerprint = solution_data.tobytes()
 
-            # O(1) set lookup
-            if fingerprint not in seen_fingerprints:
-                unique_solutions.append(sol)
-                seen_fingerprints.add(fingerprint)
-            else:
-                logger.debug(f"   Duplicate found: objective={sol.get('objective', 'N/A'):.4f}")
+            if fingerprint in seen_fingerprints:
+                continue
+
+            seen_fingerprints.add(fingerprint)
+            unique_solutions.append(sol)
 
         logger.info(f"   Deduplication: {len(solutions)} → {len(unique_solutions)} unique solutions")
         return unique_solutions
@@ -335,18 +363,3 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
