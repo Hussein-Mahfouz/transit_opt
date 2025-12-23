@@ -5,11 +5,12 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.demand import (calculate_demand_weighted_total,
-                            calculate_demand_weighted_variance)
-from ..utils.population import (calculate_population_weighted_total,
-                                calculate_population_weighted_variance,
-                                interpolate_population_to_zones)
+from ..utils.demand import calculate_demand_weighted_total, calculate_demand_weighted_variance
+from ..utils.population import (
+    calculate_population_weighted_total,
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+)
 from .base import BaseSpatialObjective
 
 logger = logging.getLogger(__name__)
@@ -95,9 +96,11 @@ class WaitingTimeObjective(BaseSpatialObjective):
             self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
 
         if self.demand_weighted:
-            from ..utils.demand import (assign_trips_to_time_intervals,
-                                        calculate_demand_per_zone_interval,
-                                        load_trip_data)
+            from ..utils.demand import (
+                assign_trips_to_time_intervals,
+                calculate_demand_per_zone_interval,
+                load_trip_data,
+            )
 
             # Load trip data with explicit CRS (no guessing)
             trips_gdf = load_trip_data(
@@ -233,6 +236,9 @@ class WaitingTimeObjective(BaseSpatialObjective):
         vehicles_with_service = vehicles_per_zone[has_vehicle_mask]
 
         # Convert to vehicles per hour and then to waiting time
+
+        # Round up to at least 1 vehicle for any nonzero service
+        vehicles_with_service = np.ceil(vehicles_with_service)
         vehicles_per_hour = vehicles_with_service * (60 / interval_length_minutes)
         effective_headway = 60 / vehicles_per_hour
         waiting_times[has_vehicle_mask] = effective_headway / 2.0
