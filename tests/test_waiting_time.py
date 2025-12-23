@@ -189,7 +189,7 @@ class TestWaitingTimeObjective:
 
     def test_different_time_aggregation_methods(self, sample_optimization_data):
         """
-        Test different time aggregation methods.
+        Test different time aggregation methods combined with different metrics.
 
         The objective function supports multiple ways to aggregate across time:
         - 'average': Mean waiting time across all time intervals
@@ -197,29 +197,33 @@ class TestWaitingTimeObjective:
         - 'peak': Waiting time from interval with most vehicles (best service)
         - 'intervals': Calculate objective per interval, then average
 
-        Different methods serve different policy goals.
+        It also supports different metrics:
+        - 'total': The raw waiting time values
+        - 'variance': The variance/spread of waiting times
         """
         aggregation_methods = ["average", "sum", "peak", "intervals"]
+        metrics = ["total", "variance"]
 
         for method in aggregation_methods:
-            print(f"Testing {method} aggregation...")
+            for metric in metrics:
+                print(f"Testing {method} aggregation with {metric} metric...")
 
-            objective = WaitingTimeObjective(
-                optimization_data=sample_optimization_data,
-                spatial_resolution_km=2.0,
-                metric="total",
-                time_aggregation=method,
-            )
+                objective = WaitingTimeObjective(
+                    optimization_data=sample_optimization_data,
+                    spatial_resolution_km=2.0,
+                    metric=metric,  # Updated to use the loop variable
+                    time_aggregation=method,
+                )
 
-            # Each method should evaluate successfully
-            result = objective.evaluate(sample_optimization_data["initial_solution"])
+                # Each combination should evaluate successfully
+                result = objective.evaluate(sample_optimization_data["initial_solution"])
 
-            # Validate result properties
-            assert isinstance(result, (int | float))
-            assert not np.isnan(result)
-            assert result >= 0
+                # Validate result properties
+                assert isinstance(result, (int | float))
+                assert not np.isnan(result)
+                assert result >= 0
 
-            print(f"✅ {method} aggregation result: {result:.2f}")
+                print(f"✅ {method}/{metric} result: {result:.2f}")
 
     def test_peak_interval_selection(self, sample_optimization_data):
         """
@@ -244,7 +248,7 @@ class TestWaitingTimeObjective:
         fleet_stats = sample_optimization_data["constraints"]["fleet_analysis"]["fleet_stats"]
         expected_peak_idx = fleet_stats["peak_interval"]
 
-        print(f"\n📊 FLEET ANALYSIS:")
+        print("\n📊 FLEET ANALYSIS:")
         print(f"   Expected peak interval: {expected_peak_idx}")
 
         # Get the initial solution
@@ -255,7 +259,7 @@ class TestWaitingTimeObjective:
         # 1. Get vehicles per zone for ALL intervals
         vehicles_data = objective.spatial_system._vehicles_per_zone(solution, sample_optimization_data)
 
-        print(f"\n🚗 VEHICLE DATA:")
+        print("\n🚗 VEHICLE DATA:")
         print(f"   Intervals shape: {vehicles_data['intervals'].shape}")
 
         # 2. Extract vehicles for the PEAK INTERVAL ONLY
@@ -272,7 +276,7 @@ class TestWaitingTimeObjective:
         # 4. Calculate expected total waiting time (sum across zones)
         expected_total = np.sum(expected_waiting_times)
 
-        print(f"\n🧮 MANUAL CALCULATION:")
+        print("\n🧮 MANUAL CALCULATION:")
         print(f"   Interval length: {interval_length:.0f} minutes")
         print(f"   Peak interval waiting times (sample): {expected_waiting_times[:5]}")
         print(f"   Expected total waiting time: {expected_total:.2f}")
@@ -281,7 +285,7 @@ class TestWaitingTimeObjective:
 
         actual_result = objective.evaluate(solution)
 
-        print(f"\n🎯 OBJECTIVE EVALUATION:")
+        print("\n🎯 OBJECTIVE EVALUATION:")
         print(f"   Actual result from evaluate(): {actual_result:.2f}")
         print(f"   Expected result (manual calc): {expected_total:.2f}")
         print(f"   Difference: {abs(actual_result - expected_total):.6f}")
@@ -297,7 +301,7 @@ class TestWaitingTimeObjective:
 
         print("\n✅ Test passed: Peak interval correctly used in calculation!")
         print(f"   ✓ Used peak interval: {expected_peak_idx}")
-        print(f"   ✓ Result matches manual calculation")
+        print("   ✓ Result matches manual calculation")
 
     def test_intervals_separate_evaluation(self, sample_optimization_data):
         """
@@ -601,7 +605,7 @@ class TestWaitingTimeDemandWeighting:
         trip_file = tmp_path / "test_trips.csv"
         trip_data.to_csv(trip_file, index=False)
 
-        print(f"\n📊 TEST DATA SETUP:")
+        print("\n📊 TEST DATA SETUP:")
         print(f"   Generated trips: {n_trips}")
         print(f"   Spatial extent: X=[{X_MIN:.0f}, {X_MAX:.0f}], Y=[{Y_MIN:.0f}, {Y_MAX:.0f}]")
         print(f"   Trip file: {trip_file}")
@@ -617,7 +621,7 @@ class TestWaitingTimeDemandWeighting:
             trip_data_crs="EPSG:3857",
         )
 
-        print(f"\n🔧 OBJECTIVE CONFIGURATION:")
+        print("\n🔧 OBJECTIVE CONFIGURATION:")
         print(f"   Spatial resolution: {obj_demand.spatial_resolution}km")
         print(f"   Metric: {obj_demand.metric}")
         print(f"   Time aggregation: {obj_demand.time_aggregation}")
@@ -632,7 +636,7 @@ class TestWaitingTimeDemandWeighting:
         zones_with_demand = np.sum(np.any(obj_demand.demand_per_zone_interval > 0, axis=1))
         max_trips_zone = np.max(obj_demand.demand_per_zone_interval)
 
-        print(f"\n📈 DEMAND DATA ANALYSIS:")
+        print("\n📈 DEMAND DATA ANALYSIS:")
         print(f"   Total trips assigned: {total_trips:.0f}/{n_trips} ({100 * total_trips / n_trips:.1f}%)")
         print(f"   Zones with demand: {zones_with_demand}/{obj_demand.demand_per_zone_interval.shape[0]}")
         print(f"   Max trips in any zone-interval: {max_trips_zone:.0f}")
@@ -643,7 +647,7 @@ class TestWaitingTimeDemandWeighting:
         # Evaluate
         total_wt = obj_demand.evaluate(sample_optimization_data["initial_solution"])
 
-        print(f"\n🎯 OBJECTIVE EVALUATION:")
+        print("\n🎯 OBJECTIVE EVALUATION:")
         print(f"   Demand-weighted total waiting time: {total_wt:,.2f} person-minutes")
 
         # Calculate some comparison metrics
@@ -653,7 +657,7 @@ class TestWaitingTimeDemandWeighting:
         avg_vehicles = np.mean(vehicles_data["average"])
         zones_with_service = np.sum(vehicles_data["average"] > 0)
 
-        print(f"\n📊 SERVICE METRICS:")
+        print("\n📊 SERVICE METRICS:")
         print(f"   Average vehicles per zone: {avg_vehicles:.2f}")
         print(f"   Zones with service: {zones_with_service}/{len(vehicles_data['average'])}")
         print(f"   Implied average waiting time: {total_wt / total_trips:.2f} min/person")
@@ -687,7 +691,7 @@ class TestWaitingTimeDemandWeighting:
         trip_file = tmp_path / "test_trips.csv"
         trip_data.to_csv(trip_file, index=False)
 
-        print(f"\n📊 TEST DATA:")
+        print("\n📊 TEST DATA:")
         print(f"   Generated trips: {n_trips}")
 
         obj_variance = WaitingTimeObjective(
@@ -700,19 +704,19 @@ class TestWaitingTimeDemandWeighting:
             trip_data_crs="EPSG:3857",
         )
 
-        print(f"\n🔧 OBJECTIVE:")
-        print(f"   Metric: variance (equity measure)")
-        print(f"   Demand weighted: True")
+        print("\n🔧 OBJECTIVE:")
+        print("   Metric: variance (equity measure)")
+        print("   Demand weighted: True")
 
         total_trips = np.sum(obj_variance.demand_per_zone_interval)
-        print(f"\n📈 DEMAND:")
+        print("\n📈 DEMAND:")
         print(f"   Trips assigned: {total_trips:.0f}/{n_trips}")
 
         variance = obj_variance.evaluate(sample_optimization_data["initial_solution"])
 
-        print(f"\n🎯 OBJECTIVE VALUE:")
+        print("\n🎯 OBJECTIVE VALUE:")
         print(f"   Demand-weighted waiting time variance: {variance:,.4f}")
-        print(f"   (Lower variance = more equitable service distribution)")
+        print("   (Lower variance = more equitable service distribution)")
 
         assert isinstance(variance, float)
         assert variance >= 0
@@ -747,7 +751,7 @@ class TestWaitingTimeDemandWeighting:
 
         # Test all valid time aggregations
         results = {}
-        print(f"\n🔄 TESTING AGGREGATION METHODS:")
+        print("\n🔄 TESTING AGGREGATION METHODS:")
 
         for aggregation in ["average", "peak", "sum"]:
             obj = WaitingTimeObjective(
@@ -770,7 +774,7 @@ class TestWaitingTimeDemandWeighting:
             print(f"   {aggregation:10s}: {result:>15,.2f} person-minutes")
 
         # Compare results
-        print(f"\n📊 COMPARISON:")
+        print("\n📊 COMPARISON:")
         print(f"   Sum vs Average ratio: {results['sum'] / results['average']:.2f}x")
         print(f"   Peak vs Average ratio: {results['peak'] / results['average']:.2f}x")
 
@@ -802,9 +806,9 @@ class TestWaitingTimeDemandWeighting:
         trip_file = tmp_path / "test_trips.csv"
         trip_data.to_csv(trip_file, index=False)
 
-        print(f"\n⚠️  ATTEMPTING TO CREATE OBJECTIVE WITH BOTH WEIGHTINGS:")
-        print(f"   population_weighted=True")
-        print(f"   demand_weighted=True")
+        print("\n⚠️  ATTEMPTING TO CREATE OBJECTIVE WITH BOTH WEIGHTINGS:")
+        print("   population_weighted=True")
+        print("   demand_weighted=True")
 
         with pytest.raises(ValueError, match="Cannot use both population and demand weighting"):
             WaitingTimeObjective(

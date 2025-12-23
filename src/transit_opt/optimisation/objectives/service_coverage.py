@@ -5,12 +5,11 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.demand import calculate_demand_weighted_variance, validate_demand_config
-from ..utils.population import (
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-    validate_population_config,
-)
+from ..utils.demand import (calculate_demand_weighted_variance,
+                            validate_demand_config)
+from ..utils.population import (calculate_population_weighted_variance,
+                                interpolate_population_to_zones,
+                                validate_population_config)
 from .base import BaseSpatialObjective
 
 logger = logging.getLogger(__name__)
@@ -162,11 +161,9 @@ class StopCoverageObjective(BaseSpatialObjective):
 
         # Load and process demand data
         if self.demand_weighted:
-            from ..utils.demand import (
-                assign_trips_to_time_intervals,
-                calculate_demand_per_zone_interval,
-                load_trip_data,
-            )
+            from ..utils.demand import (assign_trips_to_time_intervals,
+                                        calculate_demand_per_zone_interval,
+                                        load_trip_data)
 
             # Load trip data
             trips_gdf = load_trip_data(
@@ -245,23 +242,16 @@ class StopCoverageObjective(BaseSpatialObjective):
         elif self.time_aggregation == "sum":
             # Handle demand vs population weighting differently
             if self.demand_weighted:
-                # DEMAND WEIGHTING: Calculate variance across all intervals
-                # Each interval contributes: variance(vehicles[i], demand[i])
-                # Then average variances across intervals
-                interval_variances = []
-
-                for interval_idx in range(vehicles_data["intervals"].shape[0]):
-                    vehicles_this_interval = vehicles_data["intervals"][interval_idx, :]
-                    demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
-
-                    # Calculate variance for this interval
-                    interval_variance = calculate_demand_weighted_variance(
-                        vehicles_this_interval, demand_this_interval, self.demand_power
-                    )
-                    interval_variances.append(interval_variance)
-
-                # Return average variance across intervals
-                return float(np.mean(interval_variances))
+                # 1. Sum vehicles across intervals for each zone
+                summed_vehicles = vehicles_data["sum"]
+                # 2. Sum demand across intervals for each zone
+                summed_demand = np.sum(self.demand_per_zone_interval, axis=1)
+                # 3. Compute the demand-weighted variance of the summed vehicles
+                return calculate_demand_weighted_variance(
+                    summed_vehicles,
+                    summed_demand,
+                    self.demand_power
+                )
 
             else:
                 # POPULATION/UNWEIGHTED: Original logic (sum vehicles per zone)

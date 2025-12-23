@@ -36,5 +36,8 @@ output/               # Optimization results
 logs/                 # Log files
 *.log
 
+# ===== Cluster scripts =====
+bash/
+
 # ===== Old config files (no longer needed but tracked for reference) =====
 environment.yml       # Old conda environment file

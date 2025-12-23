@@ -5,12 +5,11 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.demand import calculate_demand_weighted_total, calculate_demand_weighted_variance, validate_demand_config
-from ..utils.population import (
-    calculate_population_weighted_total,
-    calculate_population_weighted_variance,
-    interpolate_population_to_zones,
-)
+from ..utils.demand import (calculate_demand_weighted_total,
+                            calculate_demand_weighted_variance)
+from ..utils.population import (calculate_population_weighted_total,
+                                calculate_population_weighted_variance,
+                                interpolate_population_to_zones)
 from .base import BaseSpatialObjective
 
 logger = logging.getLogger(__name__)
@@ -96,11 +95,9 @@ class WaitingTimeObjective(BaseSpatialObjective):
             self.population_per_zone = interpolate_population_to_zones(self.spatial_system, self.population_layer)
 
         if self.demand_weighted:
-            from ..utils.demand import (
-                assign_trips_to_time_intervals,
-                calculate_demand_per_zone_interval,
-                load_trip_data,
-            )
+            from ..utils.demand import (assign_trips_to_time_intervals,
+                                        calculate_demand_per_zone_interval,
+                                        load_trip_data)
 
             # Load trip data with explicit CRS (no guessing)
             trips_gdf = load_trip_data(
@@ -177,28 +174,28 @@ class WaitingTimeObjective(BaseSpatialObjective):
             )
 
         elif self.time_aggregation == "sum":
-            # Handle demand vs population weighting differently
             if self.demand_weighted:
-                # DEMAND WEIGHTING: Calculate total across intervals properly
-                # Each trip is counted once in its departure interval
-                # Total = sum_over_intervals(demand[i] × waiting_time[i])
-                total_waiting_time = 0.0
-
-                for interval_idx in range(interval_waiting_times.shape[0]):
-                    waiting_times_this_interval = interval_waiting_times[interval_idx, :]
-                    demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
-
-                    # Add this interval's contribution to total
-                    interval_contribution = calculate_demand_weighted_total(
-                        waiting_times_this_interval, demand_this_interval, self.demand_power
-                    )
-                    total_waiting_time += interval_contribution
-                # Return directly - no further processing needed
-                return total_waiting_time
+                # For metric == "total": sum demand-weighted totals for each interval
+                if self.metric == "total":
+                    total_waiting_time = 0.0
+                    for interval_idx in range(interval_waiting_times.shape[0]):
+                        waiting_times_this_interval = interval_waiting_times[interval_idx, :]
+                        demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
+                        interval_contribution = calculate_demand_weighted_total(
+                            waiting_times_this_interval, demand_this_interval, self.demand_power
+                        )
+                        total_waiting_time += interval_contribution
+                    return total_waiting_time
+                # For metric == "variance": sum waiting times across intervals for each zone, then compute demand-weighted variance
+                elif self.metric == "variance":
+                    summed_waiting_times = np.sum(interval_waiting_times, axis=0)
+                    summed_demand = np.sum(self.demand_per_zone_interval, axis=1)
+                    return calculate_demand_weighted_variance(summed_waiting_times, summed_demand, self.demand_power)
+                else:
+                    raise ValueError(f"Unknown metric: {self.metric}")
             else:
                 # POPULATION/UNWEIGHTED: Original logic (sum waiting times per zone)
                 # Same population experiences waiting in each interval
-                # Total = population × sum(waiting_times) OR sum(waiting_times) if unweighted
                 aggregated_waiting_times = np.sum(interval_waiting_times, axis=0)
 
         elif self.time_aggregation == "peak":
