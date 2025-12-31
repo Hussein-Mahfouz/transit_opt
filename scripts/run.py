@@ -75,7 +75,6 @@ def export_results(opt_data: dict, res, cfg: dict, iteration_dir: Path) -> None:
     out_dir = iteration_dir / "pso_results"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-
     export_manager = SolutionExportManager(opt_data)
 
     # Use SolutionExportManager to extract solutions ---
@@ -120,6 +119,7 @@ def main(config_path: str, iteration: int = 1, overwrite: bool = False):
 
     if pso_results_dir.exists() and overwrite:
         import shutil
+
         print(f"\n⚠️  WARNING: Overwriting existing iteration directory: {iteration_dir}")
         shutil.rmtree(iteration_dir)
 
@@ -182,6 +182,7 @@ def main(config_path: str, iteration: int = 1, overwrite: bool = False):
         )
     else:
         res = runner.optimize(opt_data, track_best_n=run_cfg.get("track_best_n"))
+
     # 6. Export results to file
     export_results(opt_data, res, cfg, iteration_dir)
 

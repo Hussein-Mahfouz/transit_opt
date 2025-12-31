@@ -14,6 +14,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
 class BaseConstraintHandler(ABC):
     """
     Abstract base class for constraint handlers in transit optimization.
@@ -124,6 +125,14 @@ class BaseConstraintHandler(ABC):
         """
         from ..utils.fleet_calculations import calculate_fleet_requirements
 
+        # Handle PT+DRT dictionary structure
+        if isinstance(solution_matrix, dict):
+            pt_matrix = solution_matrix.get("pt")
+            if pt_matrix is None:
+                raise ValueError("Solution dict missing 'pt' key")
+        else:
+            pt_matrix = solution_matrix
+
         # Extract operational parameters directly from optimization data
         fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
         operational_buffer = fleet_analysis["operational_buffer"]
@@ -152,30 +161,38 @@ class BaseConstraintHandler(ABC):
         Returns:
             Array of DRT fleet per interval (length n_intervals)
         """
-        if not self.opt_data.get('drt_enabled', False):
+        if not self.opt_data.get("drt_enabled", False):
             # Return zeros if DRT not enabled
             return np.zeros(self.n_intervals)
 
+        # Handle input format
+        if isinstance(drt_solution_matrix, dict):
+            drt_matrix = drt_solution_matrix.get("drt")
+            if drt_matrix is None:
+                # Should not happen if drt_enabled is True and we have a dict
+                return np.zeros(self.n_intervals)
+        else:
+            # It's already a matrix (explicitly passed 'drt' component)
+            drt_matrix = drt_solution_matrix
+
         # Get DRT configuration
-        drt_zones = self.opt_data['drt_config']['zones']
-        n_intervals = self.n_intervals
+        drt_zones = self.opt_data["drt_config"]["zones"]
 
         # Initialize fleet per interval
-        drt_fleet_per_interval = np.zeros(n_intervals)
+        drt_fleet_per_interval = np.zeros(self.n_intervals)
 
         # Sum fleet across all DRT zones for each interval
         for zone_idx, zone_config in enumerate(drt_zones):
-            allowed_fleet_sizes = zone_config['allowed_fleet_sizes']
+            allowed_fleet_sizes = zone_config["allowed_fleet_sizes"]
 
-            for interval_idx in range(n_intervals):
+            for interval_idx in range(self.n_intervals):
                 # Get fleet choice index for this zone and interval
-                fleet_choice_idx = drt_solution_matrix[zone_idx, interval_idx]
-
-                # Convert choice index to actual fleet size
-                fleet_size = allowed_fleet_sizes[fleet_choice_idx]
-
-                # Add to total for this interval
-                drt_fleet_per_interval[interval_idx] += fleet_size
+                fleet_choice_idx = int(drt_matrix[zone_idx, interval_idx])
+                if 0 <= fleet_choice_idx < len(allowed_fleet_sizes):
+                    # Convert choice index to actual fleet size
+                    fleet_size = allowed_fleet_sizes[fleet_choice_idx]
+                    # Add to total for this interval
+                    drt_fleet_per_interval[interval_idx] += fleet_size
 
         return drt_fleet_per_interval
 
@@ -336,18 +353,18 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             Negative values indicate constraint satisfaction
         """
         # Check if DRT is enabled
-        drt_enabled = self.opt_data.get('drt_enabled', False)
+        drt_enabled = self.opt_data.get("drt_enabled", False)
 
         if drt_enabled:
             # Handle PT+DRT case
-            if not isinstance(solution_matrix, dict) or 'pt' not in solution_matrix or 'drt' not in solution_matrix:
+            if not isinstance(solution_matrix, dict) or "pt" not in solution_matrix or "drt" not in solution_matrix:
                 raise ValueError("DRT-enabled problems require solution dict with 'pt' and 'drt' keys")
 
             # Calculate PT fleet requirements
-            pt_fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix['pt'])
+            pt_fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix["pt"])
 
             # Calculate DRT fleet requirements
-            drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix['drt'])
+            drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix["drt"])
 
             # Combine PT and DRT fleet
             total_fleet_per_interval = pt_fleet_per_interval + drt_fleet_per_interval
@@ -356,7 +373,7 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             # Handle PT-only case (existing logic)
             if isinstance(solution_matrix, dict):
                 # If dict format but DRT not enabled, extract PT part
-                pt_solution = solution_matrix.get('pt', solution_matrix)
+                pt_solution = solution_matrix.get("pt", solution_matrix)
                 total_fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
             else:
                 # Standard PT-only matrix
@@ -520,13 +537,17 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
 
     def _calculate_n_constraints(self) -> int:
         """Calculate constraints: intervals × (ceiling + floor constraints)."""
-        n_ceiling = self.n_intervals if self.config.get('tolerance') is not None else 0
-        n_floor = self.n_intervals if self.config.get('min_fraction') is not None else 0
+        n_ceiling = self.n_intervals if self.config.get("tolerance") is not None else 0
+        n_floor = self.n_intervals if self.config.get("min_fraction") is not None else 0
         total = n_ceiling + n_floor
 
         logger.debug(f"FleetPerIntervalConstraintHandler constraint count calculation:")
-        logger.debug(f"  tolerance specified: {self.config.get('tolerance') is not None} → {n_ceiling} ceiling constraints")
-        logger.debug(f"  min_fraction specified: {self.config.get('min_fraction') is not None} → {n_floor} floor constraints")
+        logger.debug(
+            f"  tolerance specified: {self.config.get('tolerance') is not None} → {n_ceiling} ceiling constraints"
+        )
+        logger.debug(
+            f"  min_fraction specified: {self.config.get('min_fraction') is not None} → {n_floor} floor constraints"
+        )
         logger.debug(f"  TOTAL: {total} constraints")
 
         return total
@@ -535,14 +556,13 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         """Validate per-interval fleet constraint configuration."""
         super()._validate_config()
 
-        tolerance = self.config.get('tolerance', None)
-        min_fraction = self.config.get('min_fraction', None)
+        tolerance = self.config.get("tolerance", None)
+        min_fraction = self.config.get("min_fraction", None)
 
         # At least one constraint must be specified
         if tolerance is None and min_fraction is None:
             raise ValueError(
-                "FleetPerIntervalConstraintHandler must specify either 'tolerance' "
-                "or 'min_fraction' or both"
+                "FleetPerIntervalConstraintHandler must specify either 'tolerance' or 'min_fraction' or both"
             )
         # Validate parameter ranges
         if tolerance is not None and tolerance < 0:
@@ -575,31 +595,38 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
             Array of constraint violations where <= 0 means satisfied.
             Order: [ceiling_violations_per_interval..., floor_violations_per_interval...]
         """
+        # Extract PT component only (this constraint ignores DRT)
+        if isinstance(solution_matrix, dict):
+            pt_solution = solution_matrix.get("pt")
+            if pt_solution is None:
+                raise ValueError("Solution dict missing 'pt' key")
+        else:
+            pt_solution = solution_matrix
+
         # Calculate fleet requirements by interval
-        fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
+        fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
 
         violations = []
 
         # Check ceiling constraints
-        tolerance = self.config.get('tolerance', None)
+        tolerance = self.config.get("tolerance", None)
         if tolerance is not None:
             ceiling_violations = self._check_ceiling_violations(fleet_per_interval)
             violations.extend(ceiling_violations)
 
         # Check floor constraints
-        min_fraction = self.config.get('min_fraction', None)
+        min_fraction = self.config.get("min_fraction", None)
         if min_fraction is not None:
             floor_violations = self._check_floor_violations(fleet_per_interval)
             violations.extend(floor_violations)
 
         return np.array(violations)
 
-
     def _check_ceiling_violations(self, fleet_per_interval: np.ndarray) -> list[float]:
         """Check ceiling constraint violations"""
         violations = []
         baseline_fleet = self._get_interval_baselines()
-        tolerance = self.config['tolerance']
+        tolerance = self.config["tolerance"]
 
         for interval_idx in range(self.n_intervals):
             current_fleet = fleet_per_interval[interval_idx]
@@ -615,7 +642,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         """Check floor constraint violations"""
         violations = []
         baseline_fleet = self._get_interval_baselines()
-        min_fraction = self.config['min_fraction']
+        min_fraction = self.config["min_fraction"]
 
         for interval_idx in range(self.n_intervals):
             current_fleet = fleet_per_interval[interval_idx]
@@ -650,23 +677,21 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
     def get_constraint_info(self) -> dict[str, Any]:
         """Get information about this constraint handler."""
         constraint_types = []
-        if self.config.get('tolerance') is not None:
+        if self.config.get("tolerance") is not None:
             constraint_types.append(f"ceiling (tolerance: {self.config['tolerance']})")
-        if self.config.get('min_fraction') is not None:
+        if self.config.get("min_fraction") is not None:
             constraint_types.append(f"floor (min_fraction: {self.config['min_fraction']})")
 
         return {
             "handler_type": f"FleetPerInterval ({', '.join(constraint_types)})",
             "n_constraints": self.n_constraints,
-            "baseline": self.config['baseline'],
+            "baseline": self.config["baseline"],
             "constraint_details": {
-                "tolerance": self.config.get('tolerance'),
-                "min_fraction": self.config.get('min_fraction'),
-                "allow_borrowing": self.config.get('allow_borrowing', False)
-            }
+                "tolerance": self.config.get("tolerance"),
+                "min_fraction": self.config.get("min_fraction"),
+                "allow_borrowing": self.config.get("allow_borrowing", False),
+            },
         }
-
-
 
     def _get_interval_limits(self) -> np.ndarray:
         """Get fleet limits for each time interval."""
@@ -682,8 +707,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
                 # Try to get per-interval data, fall back to peak
                 baseline_values = fleet_analysis.get(
                     "current_fleet_by_interval",
-                    [fleet_analysis.get("total_current_fleet_peak")]
-                    * self.n_intervals,
+                    [fleet_analysis.get("total_current_fleet_peak")] * self.n_intervals,
                 )
                 baseline_values = np.array(baseline_values)
             elif self.config["baseline"] == "current_peak":
@@ -698,9 +722,7 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
 
         return limits
 
-    def _apply_borrowing_logic(
-        self, violations: np.ndarray, limits: np.ndarray
-    ) -> np.ndarray:
+    def _apply_borrowing_logic(self, violations: np.ndarray, limits: np.ndarray) -> np.ndarray:
         """
         Apply borrowing logic if enabled.
 
@@ -937,8 +959,16 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
             - Interval level: Per-interval [min_required_i - actual_fleet_i, ...]
             Positive values indicate constraint violation (too little fleet)
         """
+        # Extract PT component only (this constraint ignores DRT)
+        if isinstance(solution_matrix, dict):
+            pt_solution = solution_matrix.get("pt")
+            if pt_solution is None:
+                raise ValueError("Solution dict missing 'pt' key")
+        else:
+            pt_solution = solution_matrix
+
         # Calculate current fleet usage
-        fleet_per_interval = self._calculate_fleet_from_solution(solution_matrix)
+        fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
 
         if self.config["level"] == "system":
             return self._evaluate_system_constraint(fleet_per_interval)
@@ -965,9 +995,7 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
 
         return np.array([violation])
 
-    def _evaluate_interval_constraints(
-        self, fleet_per_interval: np.ndarray
-    ) -> np.ndarray:
+    def _evaluate_interval_constraints(self, fleet_per_interval: np.ndarray) -> np.ndarray:
         """Evaluate per-interval minimum fleet constraints."""
         # Get minimum required fleet for each interval
         min_required_per_interval = self._get_interval_minimums()
@@ -1005,9 +1033,7 @@ class MinimumFleetConstraintHandler(BaseConstraintHandler):
         fleet_analysis = self.opt_data["constraints"]["fleet_analysis"]
 
         if self.config["baseline"] == "current_by_interval":
-            original_fleet_by_interval = np.array(
-                fleet_analysis["current_fleet_by_interval"]
-            )
+            original_fleet_by_interval = np.array(fleet_analysis["current_fleet_by_interval"])
         elif self.config["baseline"] == "current_peak":
             # Use peak fleet for all intervals
             peak_fleet = fleet_analysis["total_current_fleet_peak"]

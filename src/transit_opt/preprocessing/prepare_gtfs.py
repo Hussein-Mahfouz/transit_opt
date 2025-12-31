@@ -1315,7 +1315,7 @@ class GTFSDataPreparator:
                     zone["drt_speed_kmh"] = zone.get("drt_speed_kmh", default_drt_speed)
 
                     logger.info(
-                        "   DRT Zone %d: %.2f km², speed %.2f km/h",
+                        "   DRT Zone %s: %.2f km², speed %.2f km/h",
                         zone["zone_id"],
                         zone["area_km2"],
                         zone["drt_speed_kmh"],
@@ -1422,7 +1422,7 @@ class GTFSDataPreparator:
 
                 fleet_size = allowed_fleet_sizes[initial_fleet_idx]
                 logger.info(
-                    "      Zone %d: Initial fleet choice %d (%d vehicles)",
+                    "      Zone %s: Initial fleet choice %d (%d vehicles)",
                     zone["zone_id"],
                     initial_fleet_idx,
                     fleet_size,
@@ -1430,7 +1430,7 @@ class GTFSDataPreparator:
             else:
                 # Fallback: use index 0
                 drt_initial_matrix[zone_idx, :] = 0
-                logger.info("      Zone %d: Default fleet choice 0", zone["zone_id"])
+                logger.info("      Zone %s: Default fleet choice 0", zone["zone_id"])
 
         # Flatten DRT solution
         drt_flat = drt_initial_matrix.flatten()
