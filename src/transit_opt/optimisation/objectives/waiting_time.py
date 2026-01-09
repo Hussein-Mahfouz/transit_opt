@@ -39,6 +39,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
         population_weighted: Enable population weighting
         population_layer: Population raster path
         population_power: Population weighting exponent
+        atkinson_epsilon: Inequality aversion for Atkinson (higher = focus on worst-off)
+
     """
 
     def __init__(
@@ -59,6 +61,8 @@ class WaitingTimeObjective(BaseSpatialObjective):
         trip_data_crs: str | None = None,
         demand_power: float = 1.0,
         min_trip_distance_m: float | None = None,
+        # Atkinson-specific parameters
+        atkinson_epsilon: float = 2.0,
     ):
         if population_weighted and demand_weighted:
             raise ValueError("Cannot use both population and demand weighting")
@@ -68,9 +72,9 @@ class WaitingTimeObjective(BaseSpatialObjective):
             if trip_data_crs is None:
                 raise ValueError("trip_data_crs required when demand_weighted=True")
 
-        # Validate parameters
-        if metric not in ["total", "variance"]:
-            raise ValueError("metric must be 'total' or 'variance'")
+        # Update metric validation
+        if metric not in ["total", "variance", "atkinson"]:
+            raise ValueError("metric must be 'total', 'variance', or 'atkinson'")
         if time_aggregation not in ["average", "peak", "intervals", "sum"]:
             raise ValueError("time_aggregation must be 'average', 'peak', 'sum' or 'intervals'")
 
@@ -87,6 +91,7 @@ class WaitingTimeObjective(BaseSpatialObjective):
         self.demand_per_zone_interval = None
         self.demand_power = demand_power
         self.min_trip_distance_m = min_trip_distance_m
+        self.atkinson_epsilon = atkinson_epsilon
 
         super().__init__(optimization_data, spatial_resolution_km, crs)
 
@@ -194,6 +199,11 @@ class WaitingTimeObjective(BaseSpatialObjective):
                     summed_waiting_times = np.sum(interval_waiting_times, axis=0)
                     summed_demand = np.sum(self.demand_per_zone_interval, axis=1)
                     return calculate_demand_weighted_variance(summed_waiting_times, summed_demand, self.demand_power)
+                # For metric = "atkinson"
+                elif self.metric == "atkinson":
+                    summed_waiting_times = np.sum(interval_waiting_times, axis=0)
+                    summed_demand = np.sum(self.demand_per_zone_interval, axis=1)
+                    return self._calculate_atkinson(summed_waiting_times, weights=summed_demand)
                 else:
                     raise ValueError(f"Unknown metric: {self.metric}")
             else:
@@ -327,10 +337,13 @@ class WaitingTimeObjective(BaseSpatialObjective):
                     interval_obj = calculate_demand_weighted_total(
                         waiting_times_this_interval, demand_this_interval, self.demand_power
                     )
-                else:  # variance
+                elif self.metric == "variance":
                     interval_obj = calculate_demand_weighted_variance(
                         waiting_times_this_interval, demand_this_interval, self.demand_power
                     )
+                elif self.metric == "atkinson":
+                    # NEW: Atkinson for this interval
+                    interval_obj = self._calculate_atkinson(waiting_times_this_interval, weights=demand_this_interval)
             else:
                 # Use standard calculation (population or unweighted)
                 interval_obj = self._calculate_final_objective(
@@ -359,41 +372,68 @@ class WaitingTimeObjective(BaseSpatialObjective):
         logger.debug(f"   Sample waiting times: {waiting_times[:10]}")
         logger.debug(f"   Min/Max waiting times: {waiting_times.min():.2f}/{waiting_times.max():.2f}")
 
+        # Get weights based on weighting method
+        weights = None
         if self.demand_weighted:
-            # ===== Aggregate demand to match time aggregation method =====
-            demand_per_zone = self._aggregate_demand_for_weighting(peak_interval_idx)
-
-            if self.metric == "total":
-                return calculate_demand_weighted_total(waiting_times, demand_per_zone, self.demand_power)
-            else:  # variance
-                return calculate_demand_weighted_variance(waiting_times, demand_per_zone, self.demand_power)
+            weights = self._aggregate_demand_for_weighting(peak_interval_idx)
         elif self.population_weighted:
+            weights = self.population_per_zone
             logger.debug(f"   Population per zone: {self.population_per_zone}")
             logger.debug(f"   Population power: {self.population_power}")
 
-            if self.metric == "total":
-                result = calculate_population_weighted_total(
-                    waiting_times, self.population_per_zone, self.population_power
-                )
+        # Calculate based on metric
+        if self.metric == "total":
+            if self.demand_weighted:
+                return calculate_demand_weighted_total(waiting_times, weights, self.demand_power)
+            elif self.population_weighted:
+                result = calculate_population_weighted_total(waiting_times, weights, self.population_power)
                 logger.debug(f"   Population-weighted total result: {result}")
                 return result
-
-            else:  # variance
-                result = calculate_population_weighted_variance(
-                    waiting_times, self.population_per_zone, self.population_power
-                )
-                logger.debug(f"   Population-weighted variance result: {result}")
-                return result
-        else:
-            # Unweighted calculations
-            if self.metric == "total":
+            else:
                 result = np.sum(waiting_times)
                 logger.debug(f"   Unweighted total result: {result}")
                 return result
-            else:  # variance
+
+        elif self.metric == "variance":
+            if self.demand_weighted:
+                result = calculate_demand_weighted_variance(waiting_times, weights, self.demand_power)
+                logger.debug(f"   Demand-weighted variance result: {result}")
+                return result
+            elif self.population_weighted:
+                result = calculate_population_weighted_variance(waiting_times, weights, self.population_power)
+                logger.debug(f"   Population-weighted variance result: {result}")
+                return result
+            else:
                 result = np.var(waiting_times)
                 logger.debug(f"   Unweighted variance result: {result}")
                 return result
+
+        elif self.metric == "atkinson":
+            # NEW: Atkinson Index calculation
+            return self._calculate_atkinson(waiting_times, weights=weights)
+
+        else:
+            raise ValueError(f"Unknown metric: {self.metric}")
+
+    def _calculate_atkinson(self, waiting_times: np.ndarray, weights: np.ndarray | None = None) -> float:
+        """
+        Calculate Atkinson Index for waiting times.
+
+        Args:
+            waiting_times: Waiting times per zone (minutes)
+            weights: Optional population/demand weights
+
+        Returns:
+            Atkinson Index value [0, 1]. Lower = more equitable.
+        """
+        from ..utils.equity import calculate_atkinson_index
+
+        return calculate_atkinson_index(
+            waiting_times=waiting_times,
+            weights=weights,
+            epsilon=self.atkinson_epsilon,
+            min_waiting_time=1.0,  # 1 minute minimum to avoid infinity
+        )
 
     def _get_spatial_summary(self) -> str:
         """Return summary string for logging."""

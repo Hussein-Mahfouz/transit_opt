@@ -15,11 +15,9 @@ license = {text = "MIT"}
 dependencies = [
     # CLI
     "typer>=0.16.1",
-
     # Data manipulation
     "pandas>=2.3.1,<3.0.0",
     "numpy<2",  # Keep numpy<2 for compatibility
-
     # Geospatial
     "geopandas>=1.1.1",
     "rasterstats>=0.20.0,<0.21.0",
@@ -27,22 +25,17 @@ dependencies = [
     "pyproj>=3.6.0",
     "libpysal>=4.12.1",
     "rasterio>=1.3.0",
-
     # Transit/GTFS
     "gtfs-kit>=10.3.1",
-
     # Optimization
     "pymoo>=0.6.1.5",
     "autograd>=1.8.0",
-
     # Config/YAML
     "pyyaml>=6.0",
-
     # Progress bars
     "alive-progress>=3.3.0",
-
     # Real-time system utilisation
-    "psutil>=5.9.0"
+    "psutil>=5.9.0",
 ]
 
 requires-python = ">= 3.10"
@@ -95,3 +88,11 @@ package = true
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.1.0",
+    "jupyterlab>=4.5.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.11",
+]

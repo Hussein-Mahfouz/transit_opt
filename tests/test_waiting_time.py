@@ -132,6 +132,25 @@ class TestWaitingTimeObjective:
 
         print(f"✅ Waiting time variance: {waiting_time_variance:.2f}")
 
+    def test_basic_evaluation_atkinson_metric(self, sample_optimization_data):
+        """
+        Test that objective works with Atkinson metric.
+        This verifies the 'metric="atkinson"' plumbing works.
+        """
+        objective = WaitingTimeObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=2.0,
+            metric="atkinson",
+            atkinson_epsilon=2.0,
+        )
+
+        # Evaluate should return a value between 0 and 1
+        score = objective.evaluate(sample_optimization_data["initial_solution"])
+
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 1.0
+        print(f"✅ Atkinson Index: {score:.4f}")
+
     def test_vehicle_count_to_waiting_time_conversion(self, sample_optimization_data):
         """
         Test the core vehicle count to waiting time conversion logic.

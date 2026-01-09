@@ -1628,6 +1628,10 @@ class PSORunner:
                     objective_kwargs["boundary"] = objective_config["boundary"]
                 if "time_aggregation" in objective_config:
                     objective_kwargs["time_aggregation"] = objective_config["time_aggregation"]
+                if "metric" in objective_config:
+                    objective_kwargs["metric"] = objective_config["metric"]
+                if "atkinson_epsilon" in objective_config:
+                    objective_kwargs["atkinson_epsilon"] = objective_config["atkinson_epsilon"]
                 if "spatial_lag" in objective_config:
                     objective_kwargs["spatial_lag"] = objective_config["spatial_lag"]
                 if "alpha" in objective_config:
@@ -1670,6 +1674,8 @@ class PSORunner:
                     objective_kwargs["time_aggregation"] = objective_config["time_aggregation"]
                 if "metric" in objective_config:
                     objective_kwargs["metric"] = objective_config["metric"]
+                if "atkinson_epsilon" in objective_config:
+                    objective_kwargs["atkinson_epsilon"] = objective_config["atkinson_epsilon"]
                 # Population weighting parameters
                 if "population_weighted" in objective_config:
                     objective_kwargs["population_weighted"] = objective_config["population_weighted"]
@@ -1716,8 +1722,7 @@ class PSORunner:
                     logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == "FleetPerIntervalConstraintHandler":
-                    from ..problems.base import \
-                        FleetPerIntervalConstraintHandler
+                    from ..problems.base import FleetPerIntervalConstraintHandler
 
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
@@ -1810,7 +1815,7 @@ class PSORunner:
             c1=pso_config.cognitive_coeff,  # Initial cognitive coefficient
             c2=pso_config.social_coeff,  # Initial social coefficient
             adaptive=pso_config.adaptive,  # Whether to use pymoo's adaptive algorithm
-            repair=ToBoundOutOfBoundsRepair(), # pymoo does repair by default. I can remove this
+            repair=ToBoundOutOfBoundsRepair(),  # pymoo does repair by default. I can remove this
             # TODO: Other pymoo parameters we might want to expose:
             # initial_velocity='random',           # or 'zero'
             # max_velocity_rate=0.20,             # velocity clamping

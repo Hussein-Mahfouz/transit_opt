@@ -40,8 +40,8 @@ problem:
           # sum: sum vehicles across intervals for each zone
           # peak: Use vehicles per zone from interval with most vehicles per zone
     time_aggregation: average # WaitingTimeObjective: [average, peak, sum, intervals]. StopCoverageObjective [average, peak, sum]
-    metric: variance # Only applies for WaitingTimeObjective. Options: [variance, total].
-
+    metric: variance # Options for WaitingTimeObjective: [variance, total, atkinson]. StopCoverageObjective [variance, atkinson]
+    atkinson_epsilon: 2.0  # Inequality Aversion Parameter (Only for metric = atkinson): Higher = more focus on worst-off zones
     # WEIGHTING (you can only use one of population_weighted and demand_weighted, not both)
     ##### Demand weighting configuration
     population_weighted: true # Weight objective values per zone by population or not
