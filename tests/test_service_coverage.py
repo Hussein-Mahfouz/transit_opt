@@ -110,6 +110,26 @@ class TestStopCoverageObjective:
         variance = objective.evaluate(no_service_solution)
         assert variance == 0.0
 
+    def test_atkinson_metric_integration(self, sample_optimization_data):
+        """
+        Test that StopCoverageObjective accepts and calculates Atkinson index.
+        """
+        objective = StopCoverageObjective(
+            optimization_data=sample_optimization_data,
+            spatial_resolution_km=3.0,
+            metric="atkinson",
+            atkinson_epsilon=2.0,
+        )
+
+        score = objective.evaluate(sample_optimization_data["initial_solution"])
+
+        # Atkinson index is always between 0 and 1
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 1.0
+        assert not np.isnan(score)
+
+        print(f"✅ Service Coverage Atkinson Index: {score:.4f}")
+
     def test_spatial_lag_mode(self, sample_optimization_data):
         """
         Test spatial lag functionality.
@@ -865,7 +885,6 @@ class TestIntervals:
             optimization_data=sample_optimization_data,
             spatial_resolution_km=2.0,
             time_aggregation="intervals",
-
         )
 
         print(f"\n📊 OBJECTIVE CONFIGURATION:")

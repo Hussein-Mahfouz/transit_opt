@@ -117,6 +117,7 @@ def evaluate_baseline(cfg: dict, opt_data: dict) -> dict:
             spatial_resolution_km=obj_cfg.get("spatial_resolution_km", 2.0),
             crs=obj_cfg.get("crs", "EPSG:3857"),
             boundary=boundary,
+            metric=obj_cfg.get("metric", "variance"),
             time_aggregation=obj_cfg.get("time_aggregation", "average"),
             spatial_lag=obj_cfg.get("spatial_lag", False),
             alpha=obj_cfg.get("alpha", 0.0),
@@ -128,6 +129,7 @@ def evaluate_baseline(cfg: dict, opt_data: dict) -> dict:
             trip_data_crs=obj_cfg.get("trip_data_crs"),
             demand_power=obj_cfg.get("demand_power", 1.0),
             min_trip_distance_m=obj_cfg.get("min_trip_distance_m"),
+            atkinson_epsilon=obj_cfg.get("atkinson_epsilon"),
         )
     elif objective_type == "WaitingTimeObjective":
         objective = WaitingTimeObjective(
@@ -145,6 +147,7 @@ def evaluate_baseline(cfg: dict, opt_data: dict) -> dict:
             trip_data_crs=obj_cfg.get("trip_data_crs"),
             demand_power=obj_cfg.get("demand_power", 1.0),
             min_trip_distance_m=obj_cfg.get("min_trip_distance_m"),
+            atkinson_epsilon=obj_cfg.get("atkinson_epsilon"),
         )
     else:
         raise ValueError(f"Unknown objective type: {objective_type}")

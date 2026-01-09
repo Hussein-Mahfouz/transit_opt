@@ -5,11 +5,12 @@ import numpy as np
 
 from ..spatial.boundaries import StudyAreaBoundary
 from ..spatial.zoning import HexagonalZoneSystem
-from ..utils.demand import (calculate_demand_weighted_variance,
-                            validate_demand_config)
-from ..utils.population import (calculate_population_weighted_variance,
-                                interpolate_population_to_zones,
-                                validate_population_config)
+from ..utils.demand import calculate_demand_weighted_variance, validate_demand_config
+from ..utils.population import (
+    calculate_population_weighted_variance,
+    interpolate_population_to_zones,
+    validate_population_config,
+)
 from .base import BaseSpatialObjective
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class StopCoverageObjective(BaseSpatialObjective):
                                                         Defaults to None.
         time_aggregation (str, optional): Time aggregation method. Options:
                                         'average', 'peak', 'sum'. Defaults to 'average'.
+        metric: 'variance' (minimize variance) or 'atkinson' (minimize Atkinson index)
         spatial_lag (bool, optional): Enable spatial lag accessibility.
                                     Defaults to False.
         alpha (float, optional): Spatial lag decay factor [0,1]. Higher values
@@ -62,6 +64,8 @@ class StopCoverageObjective(BaseSpatialObjective):
         population_power (float, optional): Exponent for population weighting.
                                           Defaults to 1.0 (linear). Values <1.0
                                           dampen influence of high-pop areas.
+        atkinson_epsilon: Inequality aversion for Atkinson (higher = focus on worst-off)
+
 
     Mathematical Details:
         Standard variance: σ² = Σ(vᵢ - μ)² / n
@@ -107,6 +111,7 @@ class StopCoverageObjective(BaseSpatialObjective):
         crs: str = "EPSG:3857",
         boundary: Optional["StudyAreaBoundary"] = None,
         time_aggregation: str = "average",
+        metric: str = "variance",  # 'variance' or 'atkinson'
         spatial_lag: bool = False,
         alpha: float = 0.1,
         # ===== WEIGHTING OPTIONS =====
@@ -121,6 +126,8 @@ class StopCoverageObjective(BaseSpatialObjective):
         trip_data_crs: str | None = None,
         demand_power: float = 1.0,
         min_trip_distance_m: float | None = None,
+        # Atkinson-specific parameters
+        atkinson_epsilon: float = 2.0,
     ):
         # Validate that only one weighting method is used
         if population_weighted and demand_weighted:
@@ -131,8 +138,12 @@ class StopCoverageObjective(BaseSpatialObjective):
                 raise ValueError("trip_data_path required when demand_weighted=True")
             if trip_data_crs is None:
                 raise ValueError("trip_data_crs required when demand_weighted=True")
+        # Validate metric
+        if metric not in ["variance", "atkinson"]:
+            raise ValueError("metric must be 'variance' or 'atkinson'")
 
         self.boundary = boundary
+        self.metric = metric
         self.time_aggregation = time_aggregation
         self.spatial_lag = spatial_lag
         self.alpha = alpha  # Decay factor for neighbor influence
@@ -148,6 +159,7 @@ class StopCoverageObjective(BaseSpatialObjective):
         self.demand_per_zone_interval = None  # Shape: (n_zones, n_intervals)
         self.demand_power = demand_power
         self.min_trip_distance_m = min_trip_distance_m
+        self.atkinson_epsilon = atkinson_epsilon
 
         super().__init__(optimization_data, spatial_resolution_km, crs)
 
@@ -161,9 +173,11 @@ class StopCoverageObjective(BaseSpatialObjective):
 
         # Load and process demand data
         if self.demand_weighted:
-            from ..utils.demand import (assign_trips_to_time_intervals,
-                                        calculate_demand_per_zone_interval,
-                                        load_trip_data)
+            from ..utils.demand import (
+                assign_trips_to_time_intervals,
+                calculate_demand_per_zone_interval,
+                load_trip_data,
+            )
 
             # Load trip data
             trips_gdf = load_trip_data(
@@ -247,11 +261,11 @@ class StopCoverageObjective(BaseSpatialObjective):
                 # 2. Sum demand across intervals for each zone
                 summed_demand = np.sum(self.demand_per_zone_interval, axis=1)
                 # 3. Compute the demand-weighted variance of the summed vehicles
-                return calculate_demand_weighted_variance(
-                    summed_vehicles,
-                    summed_demand,
-                    self.demand_power
-                )
+                if self.metric == "variance":
+                    return calculate_demand_weighted_variance(summed_vehicles, summed_demand, self.demand_power)
+                elif self.metric == "atkinson":
+                    # NEW: Atkinson for summed vehicles
+                    return self._calculate_atkinson(summed_vehicles, weights=summed_demand)
 
             else:
                 # POPULATION/UNWEIGHTED: Original logic (sum vehicles per zone)
@@ -266,34 +280,74 @@ class StopCoverageObjective(BaseSpatialObjective):
                 f"Unknown time_aggregation: {self.time_aggregation}. Must be one of 'average', 'peak', 'sum', 'intervals'"
             )
 
-        # Calculate variance (only reached if NOT demand_weighted + sum OR intervals)
-        if len(vehicles_per_zone) > 1 and np.sum(vehicles_per_zone) > 0:
-            # Choose calculation method based on parameters
-            if self.demand_weighted and self.spatial_lag:
-                variance = self._calculate_demand_weighted_spatial_variance(
-                    vehicles_per_zone, vehicles_data, peak_interval_idx
-                )
-            elif self.demand_weighted:
-                variance = self._calculate_demand_weighted_variance(vehicles_per_zone, vehicles_data, peak_interval_idx)
-            elif self.population_weighted and self.spatial_lag:
-                variance = self._calculate_population_weighted_spatial_variance(vehicles_per_zone)
-            elif self.population_weighted:
-                variance = self._calculate_population_weighted_variance(vehicles_per_zone)
-            elif self.spatial_lag:
-                variance = self._calculate_spatial_lag_variance(vehicles_per_zone)
-            else:
-                variance = np.var(vehicles_per_zone)  # Standard variance
+        # Calculate inequality metric
+        return self._calculate_inequality(vehicles_per_zone, vehicles_data, peak_interval_idx)
 
-            logger.debug(
-                "📊 Vehicles per zone (%s): min=%d, max=%d, var=%.2f",
-                self.time_aggregation,
-                np.min(vehicles_per_zone),
-                np.max(vehicles_per_zone),
-                variance,
-            )
-            return float(variance)
-        else:
+    def _calculate_inequality(
+        self, vehicles_per_zone: np.ndarray, vehicles_data: dict, peak_interval_idx: int | None = None
+    ) -> float:
+        """
+        Calculate inequality metric (variance or Atkinson) for vehicle distribution.
+
+        Args:
+            vehicles_per_zone: Vehicle counts per zone
+            vehicles_data: Full vehicles data dict (for spatial lag if needed)
+            peak_interval_idx: Peak interval index for demand aggregation
+
+        Returns:
+            Inequality metric value
+        """
+        if len(vehicles_per_zone) <= 1 or np.sum(vehicles_per_zone) <= 0:
             return 0.0
+
+        # Get weights
+        weights = None
+        if self.demand_weighted:
+            weights = self._aggregate_demand_for_weighting(peak_interval_idx)
+        elif self.population_weighted:
+            weights = self.population_per_zone
+
+        # Apply spatial lag if enabled
+        if self.spatial_lag:
+            values_to_measure = self.spatial_system._calculate_accessibility_scores(vehicles_per_zone, self.alpha)
+        else:
+            values_to_measure = vehicles_per_zone
+
+        # Calculate based on metric
+        if self.metric == "variance":
+            if self.demand_weighted:
+                return calculate_demand_weighted_variance(values_to_measure, weights, self.demand_power)
+            elif self.population_weighted:
+                return calculate_population_weighted_variance(values_to_measure, weights, self.population_power)
+            else:
+                return np.var(values_to_measure)
+
+        elif self.metric == "atkinson":
+            # NEW: Atkinson Index calculation
+            return self._calculate_atkinson(values_to_measure, weights=weights)
+
+        else:
+            raise ValueError(f"Unknown metric: {self.metric}")
+
+    def _calculate_atkinson(self, vehicles_per_zone: np.ndarray, weights: np.ndarray | None = None) -> float:
+        """
+        Calculate Atkinson Index for vehicle distribution.
+
+        Args:
+            vehicles_per_zone: Vehicle counts per zone (already "goods" - more is better)
+            weights: Optional population/demand weights
+
+        Returns:
+            Atkinson Index value [0, 1]. Lower = more equitable.
+        """
+        from ..utils.equity import calculate_atkinson_index_from_vehicles
+
+        return calculate_atkinson_index_from_vehicles(
+            vehicles_per_zone=vehicles_per_zone,
+            weights=weights,
+            epsilon=self.atkinson_epsilon,
+            min_vehicles=0.1,
+        )
 
     def _calculate_spatial_lag_variance(self, vehicles_per_zone: np.ndarray) -> float:
         """Calculate variance using spatial lag (accessibility scores)."""
@@ -410,70 +464,56 @@ class StopCoverageObjective(BaseSpatialObjective):
         self, vehicles_data: dict, peak_interval_idx: int, interval_idx_context: bool = False
     ) -> float:
         """
-        Calculate variance for each interval separately, then average.
+        Calculate inequality for each interval separately, then average.
 
         Args:
             vehicles_data: Dict with 'intervals' key containing (n_intervals, n_zones) array
-            peak_interval_idx: Peak interval index (not used here, but kept for consistency)
+            peak_interval_idx: Peak interval index (not used here)
             interval_idx_context: If True, use per-interval demand weighting
 
         Returns:
-            Average variance across all intervals
+            Average inequality across all intervals
         """
-        interval_variances = []
+        interval_results = []
 
         for interval_idx in range(vehicles_data["intervals"].shape[0]):
             vehicles_this_interval = vehicles_data["intervals"][interval_idx, :]
 
-            # Handle demand weighting with interval context
+            # Get weights for this interval
+            weights = None
             if self.demand_weighted and interval_idx_context:
-                # Use demand from THIS specific interval
-                demand_this_interval = self.demand_per_zone_interval[:, interval_idx]
+                weights = self.demand_per_zone_interval[:, interval_idx]
+            elif self.population_weighted:
+                weights = self.population_per_zone
 
-                if self.spatial_lag:
-                    # Calculate accessibility scores
-                    accessibility_scores = self.spatial_system._calculate_accessibility_scores(
-                        vehicles_this_interval, self.alpha
-                    )
+            # Apply spatial lag if enabled
+            if self.spatial_lag:
+                values_to_measure = self.spatial_system._calculate_accessibility_scores(
+                    vehicles_this_interval, self.alpha
+                )
+            else:
+                values_to_measure = vehicles_this_interval
 
-                    # Calculate demand-weighted variance of accessibility
-                    interval_var = calculate_demand_weighted_variance(
-                        accessibility_scores, demand_this_interval, self.demand_power
+            # Calculate inequality for this interval
+            if self.metric == "variance":
+                if self.demand_weighted and interval_idx_context:
+                    interval_result = calculate_demand_weighted_variance(values_to_measure, weights, self.demand_power)
+                elif self.population_weighted:
+                    interval_result = calculate_population_weighted_variance(
+                        values_to_measure, weights, self.population_power
                     )
                 else:
-                    # Calculate demand-weighted variance directly
-                    interval_var = calculate_demand_weighted_variance(
-                        vehicles_this_interval, demand_this_interval, self.demand_power
-                    )
+                    interval_result = np.var(values_to_measure)
 
-            # Handle other weighting methods (population, spatial lag, unweighted)
-            elif self.population_weighted and self.spatial_lag:
-                accessibility_scores = self.spatial_system._calculate_accessibility_scores(
-                    vehicles_this_interval, self.alpha
-                )
-                interval_var = calculate_population_weighted_variance(
-                    accessibility_scores, self.population_per_zone, self.population_power
-                )
-
-            elif self.population_weighted:
-                interval_var = calculate_population_weighted_variance(
-                    vehicles_this_interval, self.population_per_zone, self.population_power
-                )
-
-            elif self.spatial_lag:
-                accessibility_scores = self.spatial_system._calculate_accessibility_scores(
-                    vehicles_this_interval, self.alpha
-                )
-                interval_var = np.var(accessibility_scores)
+            elif self.metric == "atkinson":
+                interval_result = self._calculate_atkinson(values_to_measure, weights=weights)
 
             else:
-                # Standard unweighted variance
-                interval_var = np.var(vehicles_this_interval)
+                raise ValueError(f"Unknown metric: {self.metric}")
 
-            interval_variances.append(interval_var)
+            interval_results.append(interval_result)
 
-        # Return average variance across intervals
-        return float(np.mean(interval_variances))
+        return float(np.mean(interval_results))
 
     def visualize(
         self,
