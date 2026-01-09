@@ -65,7 +65,7 @@ class TestWaitingTimeObjective:
         and provides helpful error messages for debugging.
         """
         # Test invalid metric
-        with pytest.raises(ValueError, match="metric must be 'total' or 'variance'"):
+        with pytest.raises(ValueError, match="metric must be 'total', 'variance', or 'atkinson'"):
             WaitingTimeObjective(sample_optimization_data, metric="invalid_metric")
 
         # Test invalid time aggregation
