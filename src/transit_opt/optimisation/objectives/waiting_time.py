@@ -172,9 +172,28 @@ class WaitingTimeObjective(BaseSpatialObjective):
 
         # Apply time aggregation
         if self.time_aggregation == "average":
-            # Average waiting time across intervals for each zone
-            # aggregated_waiting_times = np.mean(interval_waiting_times, axis=0)
-            # Use pre-computed vehicle averages, not averaged waiting times
+            # SPECIAL CASE: Global Volume-Weighted Sum for Total Efficiency (Pinto et al.)
+            # If we are minimizing total wait time, we want the sum of (wait_time * demand)
+            # across ALL intervals, to capture the true burden on passengers.
+            if self.metric == "total" and self.demand_weighted:
+                # Calculate global volume-weighted sum (sum of passenger-minutes)
+                # interval_waiting_times: [n_intervals, n_zones]
+                # demand_per_zone_interval: [n_zones, n_intervals] -> transpose to match
+
+                # Careful with shapes:
+                # interval_waiting_times is [n_intervals, n_zones] (lines 160-165)
+                # self.demand_per_zone_interval is [n_zones, n_intervals] (usually)
+
+                # Let's align them:
+                demand_aligned = self.demand_per_zone_interval.T  # [n_intervals, n_zones]
+
+                total_passenger_minutes = np.sum(interval_waiting_times * demand_aligned)
+                return total_passenger_minutes
+
+            # STANDARD CASE: Average Vehicles for Spatial Equity (Atkinson/Variance)
+            # For equity, we want to represent the "average experience" of a zone over the day.
+            # We average the service level (vehicles) first, then calculate the metric.
+            # This is the "Aggregate-then-Metric" approach requested for the baseline.
             vehicles_per_zone = vehicles_data["average"]
             interval_length = self._get_interval_length_minutes()
             aggregated_waiting_times = np.array(
