@@ -129,45 +129,109 @@ class SolutionConverter:
             # Extract templates for each interval
             route_templates = {}
 
+            # Get available direction_ids for this route
+            directions = [0]
+            direction_source = "default"
+
+            if "direction_id" in route_trips.columns:
+                unique_dirs = route_trips["direction_id"].unique()
+                # Handle case where direction_id might be NaN (common in some feeds)
+                if len(unique_dirs) > 0 and not (isinstance(unique_dirs, np.ndarray) and np.isnan(unique_dirs).all()):
+                    directions = [d for d in unique_dirs if not pd.isna(d)]
+                    direction_source = "direction_id"
+
+            # Fallback: Try using trip_headsign if direction_id is missing/empty
+            if direction_source == "default" and "trip_headsign" in route_trips.columns:
+                unique_headsigns = route_trips["trip_headsign"].unique()
+                if len(unique_headsigns) > 1:
+                    # Map headsigns to pseudo-directions 0, 1, 2...
+                    headsign_map = {h: i for i, h in enumerate(unique_headsigns)}
+                    # Temporarily add direction_id column based on headsign
+                    route_trips = route_trips.copy()
+                    route_trips["direction_id"] = route_trips["trip_headsign"].map(headsign_map)
+                    directions = list(headsign_map.values())
+                    direction_source = "trip_headsign"
+                    logger.info(f"Route {route_id}: Inferred {len(directions)} directions from headsigns")
+
+            # Final check to ensure we have at least one direction
+            if not directions:
+                directions = [0]
+
             for interval_idx, (interval_label, (start_hour, end_hour)) in enumerate(
                 zip(self.interval_labels, self.interval_hours, strict=False)
             ):
-                # Find trips that start within this time interval
-                interval_trips = self._get_trips_in_interval(route_stop_times, route_trips, start_hour, end_hour)
+                interval_templates = {}
 
-                if not interval_trips.empty:
-                    # Extract template for this specific interval
-                    template = self._extract_interval_template(interval_trips, interval_label)
-                    route_templates[interval_label] = template
-                    logger.debug("   ✅ %s: %.1fmin template", interval_label, template["duration_minutes"])
-                else:
-                    # No trips in this interval - use fallback
-                    fallback_template = self._get_fallback_template(route_trips, route_stop_times)
-                    route_templates[interval_label] = fallback_template
-                    logger.warning(
-                        "   ⚠️  Route %s, %s: No trips found in this interval, using fallback template from another period (trip_id=%s, %.1fmin)",
-                        route_id,
-                        interval_label,
-                        fallback_template["trip_id"],
-                        fallback_template["duration_minutes"],
-                    )
+                for direction_id in directions:
+                    if pd.isna(direction_id):
+                        direction_id = 0  # Default to 0
+
+                    # Find trips that start within this time interval AND match direction
+                    try:
+                        dir_trips = route_trips[route_trips["direction_id"] == direction_id]
+                    except KeyError:
+                        # If direction_id column doesn't exist or other error, use all
+                        dir_trips = route_trips
+
+                    if dir_trips.empty:
+                        continue
+
+                    interval_trips = self._get_trips_in_interval(route_stop_times, dir_trips, start_hour, end_hour)
+
+                    if not interval_trips.empty:
+                        # Extract template for this specific interval and direction
+                        template = self._extract_interval_template(interval_trips, interval_label)
+                        # Store direction info in template
+                        template["direction_id"] = int(direction_id)
+                        interval_templates[int(direction_id)] = template
+                        logger.debug(
+                            "   ✅ %s (Dir %s): %.1fmin template",
+                            interval_label,
+                            direction_id,
+                            template["duration_minutes"],
+                        )
+                    else:
+                        # No trips in this interval - use fallback from this direction
+                        try:
+                            fallback_template = self._get_fallback_template(dir_trips, route_stop_times)
+                            fallback_template["direction_id"] = int(direction_id)
+                            interval_templates[int(direction_id)] = fallback_template
+                            logger.warning(
+                                "   ⚠️  Route %s, %s (Dir %s): No trips found, using fallback",
+                                route_id,
+                                interval_label,
+                                direction_id,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "   ❌ Route %s (Dir %s): Could not extract fallback", route_id, direction_id
+                            )
+
+                if interval_templates:
+                    route_templates[interval_label] = interval_templates
+
+            # Validate extraction
+            if not route_templates:
+                logger.warning("Failed to extract any templates for route %s", route_id)
+                continue
 
             template_trips[route_id] = route_templates
 
-        # Clean stop times data for all templates by filling NaNs with forward and backward fill
+        # Clean stop times data for all templates
         logger.info("Cleaning stop times data for all templates...")
         for route_id, route_templates in template_trips.items():
-            for interval_label, template in route_templates.items():
-                # Clean the stop times data using the new cleaning method
-                original_count = len(template["stop_times"])
-                template["stop_times"] = self._clean_stop_times(template["stop_times"])
+            for interval_label, dir_templates in route_templates.items():
+                for direction_id, template in dir_templates.items():
+                    original_count = len(template["stop_times"])
+                    template["stop_times"] = self._clean_stop_times(template["stop_times"])
                 cleaned_count = len(template["stop_times"])
 
                 if cleaned_count != original_count:
                     logger.debug(
-                        "Cleaned stop times for %s %s: %d -> %d stops",
+                        "Cleaned stop times for %s %s (Dir %s): %d -> %d stops",
                         route_id,
                         interval_label,
+                        direction_id,
                         original_count,
                         cleaned_count,
                     )
@@ -201,51 +265,87 @@ class SolutionConverter:
                 logger.warning("No template found for route %s, skipping", route_id)
                 continue
 
-            route_templates = templates[route_id]  # Now contains templates per interval
+            route_templates = templates.get(route_id, {})
 
             for interval_idx, (interval_label, headway) in enumerate(route_headways.items()):
-                if headway is None:  # No service in this interval
+                if headway is None:
                     continue
-
-                # Get interval-specific template
-                if interval_label in route_templates:
-                    template = route_templates[interval_label]
-                    logger.debug(
-                        "🚌 Using %s template for route %s: %.1fmin",
-                        interval_label,
-                        route_id,
-                        template["duration_minutes"],
-                    )
-                else:
-                    # Fallback to first available template
-                    template = list(route_templates.values())[0]
-                    logger.warning(
-                        "No template for route %s in interval %s, using fallback from another interval",
-                        route_id,
-                        interval_label,
-                    )
-
-                template_stop_times = template["stop_times"]
-                trip_duration_minutes = template["duration_minutes"]
 
                 # Get interval time bounds
                 start_hour, end_hour = intervals["hours"][interval_idx]
 
-                # Generate trips for this interval with the specific template
-                interval_trips, interval_stop_times = self._generate_interval_trips(
-                    route_id=route_id,
-                    template_stop_times=template_stop_times,
-                    start_hour=start_hour,
-                    end_hour=end_hour,
-                    headway_minutes=headway,
-                    trip_duration_minutes=trip_duration_minutes,
-                    trip_counter_start=trip_counter,
-                    service_id=service_id,
-                )
+                # Get templates for this interval (by direction)
+                interval_templates = route_templates.get(interval_label, {})
 
-                new_trips.extend(interval_trips)
-                new_stop_times.extend(interval_stop_times)
-                trip_counter += len(interval_trips)
+                # If no templates specifically for this interval, try to find ANY templates for this route
+                # This acts as a fallback if specific interval data is missing
+                if not interval_templates:
+                    # Collect all available templates across all intervals
+                    all_avail_templates = []
+                    for t in route_templates.values():
+                        all_avail_templates.extend(t.values())
+
+                    if not all_avail_templates:
+                        logger.warning("No templates found for route %s in any interval", route_id)
+                        continue
+
+                    # Group by direction to pick best fallback per direction
+                    # (This is a simplification - could be improved)
+                    unique_directions = {t.get("direction_id", 0) for t in all_avail_templates}
+                    interval_templates = {}
+                    for d in unique_directions:
+                        # Find first template with this direction
+                        for t in all_avail_templates:
+                            if t.get("direction_id", 0) == d:
+                                interval_templates[d] = t
+                                break
+
+                    logger.warning(
+                        "Used fallback templates for route %s interval %s (Dirs: %s)",
+                        route_id,
+                        interval_label,
+                        list(interval_templates.keys()),
+                    )
+
+                # Iterate through DIRECTION TEMPLATES
+                for direction_id, template in interval_templates.items():
+                    template_stop_times = template["stop_times"]
+                    trip_duration_minutes = template["duration_minutes"]
+
+                    # Extract metadata from template if available
+                    route_info = template.get("route_info", {})
+                    template_headsign = route_info.get("trip_headsign", None)
+                    template_shape_id = route_info.get("shape_id", None)
+
+                    # Generate trips for this interval/direction
+                    interval_trips, interval_stop_times = self._generate_interval_trips(
+                        route_id=route_id,
+                        template_stop_times=template_stop_times,
+                        start_hour=start_hour,
+                        end_hour=end_hour,
+                        headway_minutes=headway,
+                        trip_duration_minutes=trip_duration_minutes,
+                        trip_counter_start=trip_counter,
+                        service_id=service_id,
+                        direction_id=int(direction_id),  # EXPLICITLY pass direction_id
+                        trip_headsign=template_headsign,  # Pass template metadata
+                        shape_id=template_shape_id,  # Pass template metadata
+                    )
+
+                    # Update trip IDs to include direction info to avoid collisions
+                    # (Though _generate_interval_trips uses sequential IDs so it might be fine,
+                    # but adding direction to GTFS is good practice)
+                    for trip in interval_trips:
+                        trip["direction_id"] = int(direction_id)
+                        # Ensure trip_id is unique if counter was shared?
+                        # Actually trip_counter increments after loop, so we should increment it here
+                        # OR just let the list append.
+
+                    new_trips.extend(interval_trips)
+                    new_stop_times.extend(interval_stop_times)
+
+                    # Increment counter by number of generated trips
+                    trip_counter += len(interval_trips)
 
         # Convert to DataFrames
         trips_df = pd.DataFrame(new_trips) if new_trips else pd.DataFrame()
@@ -612,26 +712,41 @@ class SolutionConverter:
         trip_duration_minutes: float,
         trip_counter_start: int,
         service_id: str = "optimized_service",
+        direction_id: int = 0,
+        trip_headsign: str = None,
+        shape_id: str = None,
     ) -> tuple[list, list]:
         """Generate trips and stop times for a single route-interval combination."""
 
         trips = []
         stop_times = []
 
-        # Get original trip info for shape_id and other metadata
+        # Get original trip info for shape_id and other metadata (as fallback)
         original_gtfs = self.opt_data["reconstruction"]["gtfs_feed"]
         original_route_trips = original_gtfs.trips[original_gtfs.trips.route_id == route_id]
 
-        # Use first trip as template for shape_id and other fields
+        # Use first trip as template for fallback metadata
+        fallback_shape_id = ""
+        fallback_headsign = f"Route {route_id}"
+
         if not original_route_trips.empty:
             template_trip = original_route_trips.iloc[0]
-            shape_id = template_trip.get("shape_id", "")
-            direction_id = template_trip.get("direction_id", 0)
-            trip_headsign = template_trip.get("trip_headsign", f"Route {route_id}")
-        else:
-            shape_id = ""
-            direction_id = 0
-            trip_headsign = f"Route {route_id}"
+            fallback_shape_id = template_trip.get("shape_id", "")
+            # Need to handle potential NaN for headsign
+            th = template_trip.get("trip_headsign", f"Route {route_id}")
+            if pd.isna(th):
+                th = f"Route {route_id}"
+            fallback_headsign = th
+
+        # Use provided metadata or fallback
+        final_shape_id = shape_id if shape_id is not None else fallback_shape_id
+        final_headsign = trip_headsign if trip_headsign is not None else fallback_headsign
+
+        # Handle NaN headsign if it came from template
+        if pd.isna(final_headsign):
+            final_headsign = fallback_headsign
+
+        final_direction_id = direction_id  # Use passed direction_id (def 0)
 
         # Calculate trip start times
         interval_start_seconds = start_hour * 3600
@@ -644,20 +759,23 @@ class SolutionConverter:
 
         # Generate trips every headway minutes
         current_start = interval_start_seconds
+
+        # Use trip_counter_start if provided to continue numbering,
+        # BUT for per-direction uniqueness in the ID string itself, we should include direction
         trip_idx = 0
 
         while current_start <= latest_start:
-            # Create trip ID
-            trip_id = f"opt_trip_{route_id}_{start_hour:02d}_{trip_idx:03d}"
+            # Create trip ID - Include direction_id to ensure uniqueness
+            trip_id = f"opt_trip_{route_id}_{start_hour:02d}_{final_direction_id}_{trip_idx:03d}"
 
             # Create trip record
             trip_record = {
                 "trip_id": trip_id,
                 "route_id": route_id,
                 "service_id": service_id,  # Simplified service ID
-                "trip_headsign": trip_headsign,
-                "direction_id": direction_id,
-                "shape_id": shape_id,
+                "trip_headsign": final_headsign,
+                "direction_id": final_direction_id,
+                "shape_id": final_shape_id,
             }
             trips.append(trip_record)
 
@@ -816,6 +934,11 @@ class SolutionConverter:
         """
         start_seconds = start_hour * 3600
         end_seconds = end_hour * 3600
+
+        # Filter stop times to only include trips from the provided route_trips (which may be filtered by direction)
+        if not route_trips.empty:
+            relevant_trip_ids = route_trips["trip_id"].unique()
+            route_stop_times = route_stop_times[route_stop_times["trip_id"].isin(relevant_trip_ids)]
 
         # Get first stop time for each trip (trip start time)
         trip_start_times = route_stop_times.groupby("trip_id")["departure_seconds"].min()
