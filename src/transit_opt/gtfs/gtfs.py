@@ -142,16 +142,54 @@ class SolutionConverter:
 
             # Fallback: Try using trip_headsign if direction_id is missing/empty
             if direction_source == "default" and "trip_headsign" in route_trips.columns:
-                unique_headsigns = route_trips["trip_headsign"].unique()
+                unique_headsigns = route_trips["trip_headsign"].value_counts()
+
+                # Check if we have multiple headsigns
                 if len(unique_headsigns) > 1:
-                    # Map headsigns to pseudo-directions 0, 1, 2...
-                    headsign_map = {h: i for i, h in enumerate(unique_headsigns)}
-                    # Temporarily add direction_id column based on headsign
-                    route_trips = route_trips.copy()
+                    # Calculate dominance
+                    total_trips_count = len(route_trips)
+                    top_2_count = unique_headsigns.iloc[:2].sum()
+                    coverage = top_2_count / total_trips_count if total_trips_count > 0 else 0
+
+                    splitting_factor = 1.0  # Default
+
+                    if coverage > 0.9:
+                        # Strategy A: Filter to top 2 dominant headsigns (noise reduction)
+                        top_headsigns = unique_headsigns.iloc[:2].index.tolist()
+                        headsign_map = {h: i for i, h in enumerate(top_headsigns)}
+
+                        # Filter route_trips to only include top 2
+                        route_trips = route_trips[route_trips["trip_headsign"].isin(top_headsigns)].copy()
+
+                        logger.info(
+                            f"Route {route_id}: Filtered to top {len(top_headsigns)} dominant headsigns (coverage {coverage:.1%})"
+                        )
+                    else:
+                        # Strategy C: Keep all headsigns but split frequency (messy route)
+                        # We map ALL headsigns to pseudo-directions
+                        all_headsigns = unique_headsigns.index.tolist()
+                        headsign_map = {h: i for i, h in enumerate(all_headsigns)}
+
+                        # Calculate splitting factor based on number of active branches
+                        splitting_factor = float(len(all_headsigns))
+
+                        logger.info(
+                            f"Route {route_id}: Messy route ({len(all_headsigns)} headsigns, coverage {coverage:.1%}). Splitting factor: {splitting_factor}"
+                        )
+
+                    # Apply mapping
+                    if "direction_id" not in route_trips.columns:
+                        route_trips = route_trips.copy()
+
                     route_trips["direction_id"] = route_trips["trip_headsign"].map(headsign_map)
                     directions = list(headsign_map.values())
                     direction_source = "trip_headsign"
-                    logger.info(f"Route {route_id}: Inferred {len(directions)} directions from headsigns")
+
+                    # Store splitting factor temporarily on the object or pass it down?
+                    # Better to store it in the templates later
+                else:
+                    # Only 1 headsign, treat as direction 0
+                    pass
 
             # Final check to ensure we have at least one direction
             if not directions:
@@ -183,6 +221,16 @@ class SolutionConverter:
                         template = self._extract_interval_template(interval_trips, interval_label)
                         # Store direction info in template
                         template["direction_id"] = int(direction_id)
+
+                        # Store splitting factor for later headway calculation
+                        # If route is messy (many headsigns treated as directions), we split frequency
+                        # Splitting Factor = N_directions (so headway becomes N times larger)
+                        current_splitting_factor = 1.0
+                        if direction_source == "trip_headsign" and len(directions) > 2:
+                            current_splitting_factor = float(len(directions))
+
+                        template["splitting_factor"] = current_splitting_factor
+
                         interval_templates[int(direction_id)] = template
                         logger.debug(
                             "   ✅ %s (Dir %s): %.1fmin template",
@@ -194,6 +242,13 @@ class SolutionConverter:
                         # No trips in this interval - use fallback from this direction
                         try:
                             fallback_template = self._get_fallback_template(dir_trips, route_stop_times)
+
+                            # Store splitting factor
+                            current_splitting_factor = 1.0
+                            if direction_source == "trip_headsign" and len(directions) > 2:
+                                current_splitting_factor = float(len(directions))
+                            fallback_template["splitting_factor"] = current_splitting_factor
+
                             fallback_template["direction_id"] = int(direction_id)
                             interval_templates[int(direction_id)] = fallback_template
                             logger.warning(
@@ -281,31 +336,20 @@ class SolutionConverter:
                 # This acts as a fallback if specific interval data is missing
                 if not interval_templates:
                     # Collect all available templates across all intervals
-                    all_avail_templates = []
-                    for t in route_templates.values():
-                        all_avail_templates.extend(t.values())
+                    all_avail_templates_dict = {}  # direction_id -> template
 
-                    if not all_avail_templates:
+                    # Scan all intervals to find at least one template per direction
+                    for t_dict in route_templates.values():
+                        for dir_id, t in t_dict.items():
+                            if dir_id not in all_avail_templates_dict:
+                                all_avail_templates_dict[dir_id] = t
+
+                    if not all_avail_templates_dict:
                         logger.warning("No templates found for route %s in any interval", route_id)
                         continue
 
-                    # Group by direction to pick best fallback per direction
-                    # (This is a simplification - could be improved)
-                    unique_directions = {t.get("direction_id", 0) for t in all_avail_templates}
-                    interval_templates = {}
-                    for d in unique_directions:
-                        # Find first template with this direction
-                        for t in all_avail_templates:
-                            if t.get("direction_id", 0) == d:
-                                interval_templates[d] = t
-                                break
-
-                    logger.warning(
-                        "Used fallback templates for route %s interval %s (Dirs: %s)",
-                        route_id,
-                        interval_label,
-                        list(interval_templates.keys()),
-                    )
+                    # Use these fallback templates
+                    interval_templates = all_avail_templates_dict
 
                 # Iterate through DIRECTION TEMPLATES
                 for direction_id, template in interval_templates.items():
@@ -317,13 +361,22 @@ class SolutionConverter:
                     template_headsign = route_info.get("trip_headsign", None)
                     template_shape_id = route_info.get("shape_id", None)
 
+                    # Apply Splitting Factor
+                    splitting_factor = template.get("splitting_factor", 1.0)
+                    effective_headway = headway * splitting_factor  # Use user-supplied headway
+
+                    if splitting_factor > 1.0:
+                        logger.debug(
+                            f"Applying splitting factor {splitting_factor} to Route {route_id} Interval {interval_label} (Headway {headway} -> {effective_headway})"
+                        )
+
                     # Generate trips for this interval/direction
                     interval_trips, interval_stop_times = self._generate_interval_trips(
                         route_id=route_id,
                         template_stop_times=template_stop_times,
                         start_hour=start_hour,
                         end_hour=end_hour,
-                        headway_minutes=headway,
+                        headway_minutes=effective_headway,
                         trip_duration_minutes=trip_duration_minutes,
                         trip_counter_start=trip_counter,
                         service_id=service_id,
