@@ -1,7 +1,7 @@
 input:
   gtfs_path: # The initial gtfs feed that you start the optimisation with
       - data/external/study_area_gtfs_bus.zip
-  allowed_headways: [10, 15, 30, 60, 120] # in minutes
+  allowed_headways: [5, 10, 15, 30, 60] # in minutes (per route: trip = route headway * 2)
   # We split the day into equal intervals. How long is each interval?
   interval_hours: 4
   # The PT and zoning layer are clipped to this boundary

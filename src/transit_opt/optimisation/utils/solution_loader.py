@@ -280,8 +280,7 @@ class SolutionLoader:
                 drt_paths = [str(p) for p in sorted(sol_dir.glob(drt_glob))]
 
             if gtfs_paths:
-                from transit_opt.preprocessing.prepare_gtfs import \
-                    GTFSDataPreparator
+                from transit_opt.preprocessing.prepare_gtfs import GTFSDataPreparator
 
                 # Calculate interval_hours from n_intervals (the correct way)
                 n_intervals = optimization_data.get("n_intervals")
@@ -290,7 +289,7 @@ class SolutionLoader:
                 interval_hours = 24 // n_intervals
 
                 # Get allowed headways without no-service marker
-                allowed_headways_raw = optimization_data.get("allowed_headways", [10, 15, 30, 60, 120, 9999])
+                allowed_headways_raw = optimization_data.get("allowed_headways", [5, 10, 15, 30, 60, 9999])
                 allowed_headways = [h for h in allowed_headways_raw if h < 9000]
 
                 # Get DRT config if enabled
@@ -337,9 +336,8 @@ class SolutionLoader:
                 except Exception as e:
                     logger.error(f"❌ ERROR in extract_multiple_gtfs_solutions: {type(e).__name__}: {e}")
                     import traceback
+
                     traceback.print_exc()
                     raise
 
         raise ValueError("Unsupported base_solutions descriptor. Use 'from_data', a list, or dict with gtfs_paths.")
-
-

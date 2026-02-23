@@ -39,7 +39,7 @@ class GTFSDataPreparator:
         ...     interval_hours=3,  # 8 periods per day
         ...     max_round_trip_minutes=180 # filter out long routes (possibly regional)
         ... )
-        >>> allowed_headways = [10, 15, 30, 60, 120]  # minutes
+        >>> allowed_headways = [5, 10, 15, 30, 60]  # minutes
         >>> opt_data = preparator.extract_optimization_data(allowed_headways)
 
     Args:
@@ -298,7 +298,7 @@ class GTFSDataPreparator:
                 - filter_stats: Statistics about the filtering process (e.g., number of routes retained).
 
         Example:
-            >>> allowed_headways = [10, 15, 30, 60, 120]
+            >>> allowed_headways = [5, 10, 15, 30, 60]
             >>> opt_data = preparator.extract_optimization_data(allowed_headways)
             >>> print(opt_data['decision_matrix_shape'])  # (n_routes, n_intervals)
             >>> print(opt_data['n_choices'])  # 6 (5 headways + no-service)
@@ -861,8 +861,7 @@ class GTFSDataPreparator:
             constraints or bounds - those are handled by optimization problem classes that
             use this baseline data to set their own constraint levels.
         """
-        from ..optimisation.utils.fleet_calculations import \
-            calculate_fleet_requirements
+        from ..optimisation.utils.fleet_calculations import calculate_fleet_requirements
 
         logger.debug("Analyzing current GTFS fleet requirements by interval")
         logger.debug(f"Processing {len(route_data)} routes across {self.n_intervals} intervals")
@@ -1486,10 +1485,10 @@ class GTFSDataPreparator:
             # Use the provided target route IDs (from filtered optimization_data)
             current_route_ids = list(target_route_ids)
             logger.info(f"   Using {len(current_route_ids)} target route IDs from optimization_data")
-        elif hasattr(self, 'routes_df') and self.routes_df is not None:
-            current_route_ids = list(self.routes_df['route_id'])
+        elif hasattr(self, "routes_df") and self.routes_df is not None:
+            current_route_ids = list(self.routes_df["route_id"])
         else:
-            current_route_ids = list(self.feed.routes['route_id'])
+            current_route_ids = list(self.feed.routes["route_id"])
 
         n_routes = len(current_route_ids)
         n_intervals = self.n_intervals
@@ -1502,11 +1501,11 @@ class GTFSDataPreparator:
         logger.info(f"   No-service index: {no_service_idx}")
 
         for i, path in enumerate(gtfs_paths):
-            logger.info(f"   [{i+1}/{len(gtfs_paths)}] Loading: {path}")
+            logger.info(f"   [{i + 1}/{len(gtfs_paths)}] Loading: {path}")
 
             try:
                 seed_feed = gk.read_feed(path, dist_units="km")
-                seed_route_ids = set(seed_feed.routes['route_id'].values)
+                seed_route_ids = set(seed_feed.routes["route_id"].values)
 
                 logger.info(f"      Seed has {len(seed_route_ids)} routes")
 
@@ -1524,7 +1523,7 @@ class GTFSDataPreparator:
                     matched_routes += 1
 
                     # Get trips for this route from seed feed
-                    seed_trips = seed_feed.trips[seed_feed.trips['route_id'] == route_id]
+                    seed_trips = seed_feed.trips[seed_feed.trips["route_id"] == route_id]
 
                     if len(seed_trips) == 0:
                         continue
@@ -1537,9 +1536,11 @@ class GTFSDataPreparator:
                         if interval_idx >= n_intervals:
                             break
 
-                        if (np.isnan(headway_val) or
-                            np.isinf(headway_val) or
-                            headway_val >= self.no_service_threshold_minutes):
+                        if (
+                            np.isnan(headway_val)
+                            or np.isinf(headway_val)
+                            or headway_val >= self.no_service_threshold_minutes
+                        ):
                             pt_matrix[route_idx, interval_idx] = no_service_idx
                         else:
                             # Find closest allowed headway
@@ -1549,34 +1550,32 @@ class GTFSDataPreparator:
                 logger.info(f"      ✅ Matched {matched_routes}/{n_routes} routes from seed")
 
                 # Handle DRT component
-                if drt_config and drt_config.get('enabled'):
+                if drt_config and drt_config.get("enabled"):
                     drt_matrix = None
                     if drt_solution_paths and i < len(drt_solution_paths):
                         try:
                             drt_opt_data = {
-                                'drt_config': drt_config,
-                                'n_intervals': n_intervals,
+                                "drt_config": drt_config,
+                                "n_intervals": n_intervals,
                             }
-                            drt_matrix = self._load_drt_solution_from_file(
-                                drt_solution_paths[i],
-                                drt_opt_data
-                            )
+                            drt_matrix = self._load_drt_solution_from_file(drt_solution_paths[i], drt_opt_data)
                             logger.info(f"      ✅ Loaded DRT solution")
                         except Exception as e:
                             logger.warning(f"      ⚠️ Failed to load DRT: {e}")
 
                     if drt_matrix is None:
-                        n_drt_zones = len(drt_config.get('zones', []))
+                        n_drt_zones = len(drt_config.get("zones", []))
                         drt_matrix = np.zeros((n_drt_zones, n_intervals), dtype=int)
                         logger.warning(f"      ⚠️ Using empty DRT solution")
 
-                    solutions.append({'pt': pt_matrix, 'drt': drt_matrix})
+                    solutions.append({"pt": pt_matrix, "drt": drt_matrix})
                 else:
-                    solutions.append({'pt': pt_matrix, 'drt': None})
+                    solutions.append({"pt": pt_matrix, "drt": None})
 
             except Exception as e:
                 logger.error(f"      ❌ Failed to load seed: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         logger.info(f"📦 Loaded {len(solutions)} seed solution(s)")
@@ -1717,4 +1716,4 @@ class GTFSDataPreparator:
         logger.info(f"✅ Loaded DRT solution from: {drt_solution_path}")
 
         return drt_matrix
-
+        return drt_matrix

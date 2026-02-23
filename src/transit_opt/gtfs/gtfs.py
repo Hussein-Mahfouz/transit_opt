@@ -161,6 +161,13 @@ class SolutionConverter:
                         # Filter route_trips to only include top 2
                         route_trips = route_trips[route_trips["trip_headsign"].isin(top_headsigns)].copy()
 
+                        # Update splitting factor for multi-direction routes
+                        if len(top_headsigns) > 1:
+                            splitting_factor = float(len(top_headsigns))
+                            logger.info(
+                                f"Route {route_id}: Detected {len(top_headsigns)} dominant directions. Splitting factor: {splitting_factor}"
+                            )
+
                         logger.info(
                             f"Route {route_id}: Filtered to top {len(top_headsigns)} dominant headsigns (coverage {coverage:.1%})"
                         )
@@ -226,8 +233,23 @@ class SolutionConverter:
                         # If route is messy (many headsigns treated as directions), we split frequency
                         # Splitting Factor = N_directions (so headway becomes N times larger)
                         current_splitting_factor = 1.0
-                        if direction_source == "trip_headsign" and len(directions) > 2:
-                            current_splitting_factor = float(len(directions))
+                        if len(directions) > 1:
+                            if direction_source == "trip_headsign":
+                                # For inferred directions, always split if >1 (either 2 dominant or N messy)
+                                current_splitting_factor = float(len(directions))
+                            elif direction_source == "direction_id":
+                                # For valid GTFS directions, also split because optimization aggregates headway across all directions
+                                # If we don't split, we double the service (once for dir 0, once for dir 1)
+                                current_splitting_factor = float(len(directions))
+
+                        logger.debug(
+                            "   Splitting factor for Route %s (Dir %s): %.1f (Source: %s, Directions: %d)",
+                            route_id,
+                            direction_id,
+                            current_splitting_factor,
+                            direction_source,
+                            len(directions),
+                        )
 
                         template["splitting_factor"] = current_splitting_factor
 
@@ -245,8 +267,9 @@ class SolutionConverter:
 
                             # Store splitting factor
                             current_splitting_factor = 1.0
-                            if direction_source == "trip_headsign" and len(directions) > 2:
+                            if len(directions) > 1:
                                 current_splitting_factor = float(len(directions))
+
                             fallback_template["splitting_factor"] = current_splitting_factor
 
                             fallback_template["direction_id"] = int(direction_id)
