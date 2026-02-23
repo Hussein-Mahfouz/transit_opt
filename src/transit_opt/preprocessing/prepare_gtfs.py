@@ -638,10 +638,31 @@ class GTFSDataPreparator:
 
             if trip_durations:
                 median_one_way = np.median(trip_durations)
-                round_trip = median_one_way * 2.0 * self.turnaround_buffer
+
+                # Determine route topology (Linear vs Loop) for fleet estimation.
+                # Linear routes (A->B) usually require a return trip (B->A), so we multiply duration by 2.
+                # Loop routes (A->A) are continuous, so the duration is the full round trip (multiply by 1).
+
+                # We infer this from the number of directions/headsigns.
+                # If strictly 1 direction/headsign, assume Loop.
+                # If >= 2 (even if 8 messy headsigns), assume Linear/Return logic (safer default).
+                if "direction_id" in route_trips.columns and route_trips["direction_id"].nunique() > 0:
+                    n_directions = route_trips["direction_id"].nunique()
+                    # If direction_id is present but only has 1 unique value (e.g. all 0), it acts like a loop
+                elif "trip_headsign" in route_trips.columns:
+                    n_directions = route_trips["trip_headsign"].nunique()
+                else:
+                    n_directions = 2  # Fallback to standard 2-way assumption if no info
+
+                # If we have exactly 1 direction, we treat it as a loop (1x).
+                # All other cases (2, 8, etc.) we treat as needing return trips (2x).
+                multiplier = 1.0 if n_directions == 1 else 2.0
+
+                round_trip = median_one_way * multiplier * self.turnaround_buffer
                 logger.debug(
-                    f"Route {trip_id}: Calculated round-trip {round_trip:.1f}min "
+                    f"Route {route_id}: Calculated round-trip {round_trip:.1f}min "
                     f"(median one-way: {median_one_way:.1f}min, {len(trip_durations)} trips, "
+                    f"directions: {n_directions}, multiplier: {multiplier}, "
                     f"buffer: {self.turnaround_buffer})"
                 )
                 return round_trip
@@ -1715,5 +1736,7 @@ class GTFSDataPreparator:
 
         logger.info(f"✅ Loaded DRT solution from: {drt_solution_path}")
 
+        return drt_matrix
+        return drt_matrix
         return drt_matrix
         return drt_matrix
