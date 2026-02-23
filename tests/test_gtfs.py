@@ -1,6 +1,8 @@
-import pandas as pd
-import numpy as np
 from unittest.mock import MagicMock
+
+import numpy as np
+import pandas as pd
+
 """
 Tests for GTFS Solution Converter functionality.
 
@@ -823,6 +825,7 @@ class TestDirectionLogic:
         for d in unique_dirs:
             assert isinstance(d, (int, np.integer))
 
+
 class TestHybridStrategy:
     """Tests for the Hybrid Strategy (Dominant Filtering + Frequency Splitting)."""
 
@@ -834,44 +837,60 @@ class TestHybridStrategy:
         converter.gtfs_feed = MagicMock()
         converter.gtfs_feed.trips = pd.DataFrame()
         converter.gtfs_feed.stop_times = pd.DataFrame()
-        
+
         # Override route_ids to focus on our test route
         converter.route_ids = ["test_route"]
         return converter
 
     def test_dominant_filtering(self, mock_converter):
         """
-        Test Strategy A: If top 2 headsigns cover > 90% of trips, 
+        Test Strategy A: If top 2 headsigns cover > 90% of trips,
         filter to only those 2 and do NOT split frequency.
         """
         route_id = "test_route"
-        
+
         # Setup Data: 100 trips total
         # 60 'A', 35 'B' -> 95/100 coverage (95%)
         # 5 'C' -> Noise
         trips_data = {
             "route_id": [route_id] * 100,
             "trip_id": [f"t_{i}" for i in range(100)],
-            "trip_headsign": ["A"]*60 + ["B"]*35 + ["C"]*5,
+            "trip_headsign": ["A"] * 60 + ["B"] * 35 + ["C"] * 5,
             # No direction_id to force inference
         }
         mock_converter.gtfs_feed.trips = pd.DataFrame(trips_data)
-        
+
         # Create Dummy Stop Times (minimal valid data)
         # All trips at 10:00 AM (36000 seconds)
         stops = []
         for i, t_id in enumerate(trips_data["trip_id"]):
-             stops.append({"trip_id": t_id, "stop_id": "s1", "stop_sequence": 1, "arrival_seconds": 36000, "departure_seconds": 36000})
-             stops.append({"trip_id": t_id, "stop_id": "s2", "stop_sequence": 2, "arrival_seconds": 37000, "departure_seconds": 37000})
+            stops.append(
+                {
+                    "trip_id": t_id,
+                    "stop_id": "s1",
+                    "stop_sequence": 1,
+                    "arrival_seconds": 36000,
+                    "departure_seconds": 36000,
+                }
+            )
+            stops.append(
+                {
+                    "trip_id": t_id,
+                    "stop_id": "s2",
+                    "stop_sequence": 2,
+                    "arrival_seconds": 37000,
+                    "departure_seconds": 37000,
+                }
+            )
         mock_converter.gtfs_feed.stop_times = pd.DataFrame(stops)
 
         # Run Extraction
         templates = mock_converter.extract_route_templates()
-        
+
         # Assertions
         assert route_id in templates
         route_templates = templates[route_id]
-        
+
         # Find interval covering 10:00 AM
         valid_interval = None
         for i, label in enumerate(mock_converter.interval_labels):
@@ -879,17 +898,19 @@ class TestHybridStrategy:
             if start <= 10 < end:
                 valid_interval = label
                 break
-        
+
         assert valid_interval in route_templates, "Should have extracted templates for 10:00 AM interval"
         interval_temps = route_templates[valid_interval]
-        
+
         # Should have filtered out 'C', leaving only 2 directions (A and B)
         assert len(interval_temps) == 2, f"Expected 2 dominant directions, found {len(interval_temps)}"
-        
-        # Check splitting factor is 1.0 (default)
+
+        # Check splitting factor is 2.0 (since we have 2 directions)
+        # The new logic dictates that we always split frequency by N directions
+        # to ensure aggregate service matches the optimized headway.
         for t in interval_temps.values():
-            sf = t.get("splitting_factor", 1.0) 
-            assert sf == 1.0, f"Splitting factor should be 1.0 for dominant routes, got {sf}"
+            sf = t.get("splitting_factor", 1.0)
+            assert sf == 2.0, f"Splitting factor should be 2.0 for dominant routes (2 directions), got {sf}"
 
     def test_frequency_splitting(self, mock_converter):
         """
@@ -897,34 +918,50 @@ class TestHybridStrategy:
         keep ALL headsigns and Set splitting_factor = N_headsigns.
         """
         route_id = "test_route"
-        
+
         # Setup Data: 100 trips total
         # 4 Headsigns, 25 each -> Top 2 = 50% coverage (< 90%)
         headsigns = ["A", "B", "C", "D"]
         trip_ids = [f"t_{i}" for i in range(100)]
         trip_headsigns = np.repeat(headsigns, 25)
-        
+
         trips_data = {
             "route_id": [route_id] * 100,
             "trip_id": trip_ids,
             "trip_headsign": trip_headsigns,
         }
         mock_converter.gtfs_feed.trips = pd.DataFrame(trips_data)
-        
+
         # Create Dummy Stop Times
         stops = []
         for i, t_id in enumerate(trip_ids):
-             stops.append({"trip_id": t_id, "stop_id": "s1", "stop_sequence": 1, "arrival_seconds": 36000, "departure_seconds": 36000})
-             stops.append({"trip_id": t_id, "stop_id": "s2", "stop_sequence": 2, "arrival_seconds": 37000, "departure_seconds": 37000})
+            stops.append(
+                {
+                    "trip_id": t_id,
+                    "stop_id": "s1",
+                    "stop_sequence": 1,
+                    "arrival_seconds": 36000,
+                    "departure_seconds": 36000,
+                }
+            )
+            stops.append(
+                {
+                    "trip_id": t_id,
+                    "stop_id": "s2",
+                    "stop_sequence": 2,
+                    "arrival_seconds": 37000,
+                    "departure_seconds": 37000,
+                }
+            )
         mock_converter.gtfs_feed.stop_times = pd.DataFrame(stops)
-        
+
         # Run Extraction
         templates = mock_converter.extract_route_templates()
-        
+
         # Assertions
         assert route_id in templates
         route_templates = templates[route_id]
-        
+
         # Find interval covering 10:00 AM
         valid_interval = None
         for i, label in enumerate(mock_converter.interval_labels):
@@ -932,14 +969,18 @@ class TestHybridStrategy:
             if start <= 10 < end:
                 valid_interval = label
                 break
-        
+
         assert valid_interval in route_templates, "Should have extracted templates for 10:00 AM interval"
         interval_temps = route_templates[valid_interval]
-        
+
         # Should have kept all 4 directions (A, B, C, D)
         assert len(interval_temps) == 4, f"Expected 4 directions for messy route, found {len(interval_temps)}"
-        
+
         # Check splitting factor is 4.0
         for t in interval_temps.values():
+            sf = t.get("splitting_factor", 1.0)
+            assert sf == 4.0, f"Splitting factor should be 4.0, got {sf}"
+            sf = t.get("splitting_factor", 1.0)
+            assert sf == 4.0, f"Splitting factor should be 4.0, got {sf}"
             sf = t.get("splitting_factor", 1.0)
             assert sf == 4.0, f"Splitting factor should be 4.0, got {sf}"
