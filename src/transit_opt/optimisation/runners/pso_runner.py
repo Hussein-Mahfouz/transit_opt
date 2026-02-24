@@ -743,7 +743,11 @@ class BestFeasibleSolutionsTracker:
             if not feasibles[i]:
                 continue
             # Check for valid solution based on type
-            if not np.isfinite(objectives[i]) or solution_matrices[i] is None:
+            try:
+                obj_val = float(objectives[i])
+                if not np.isfinite(obj_val) or solution_matrices[i] is None:
+                    continue
+            except (TypeError, ValueError):
                 continue
 
             # Handle both dict (DRT-enabled) and array (PT-only) solution formats
@@ -1985,7 +1989,9 @@ class PSORunner:
 
         # === OBJECTIVE VALUE EXTRACTION ===
         # Handle various pymoo objective result formats safely
-        if hasattr(pymoo_result.F, "item"):
+        if pymoo_result.F is None:
+            best_objective = float("nan")
+        elif hasattr(pymoo_result.F, "item"):
             best_objective = float(pymoo_result.F.item())
         elif hasattr(pymoo_result.F, "__len__") and len(pymoo_result.F) > 0:
             best_objective = float(pymoo_result.F[0])

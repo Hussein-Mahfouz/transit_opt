@@ -747,6 +747,10 @@ class TransitOptimizationProblem(Problem):
             x_flat = full_x
 
         # ===== STEP 1: DETECT AND FIX BAD VALUES FROM PSO =====
+        if x_flat is None:
+            logger.warning("Values provided to decode_solution are None. Returning None.")
+            return None
+
         if np.any(~np.isfinite(x_flat)):
             bad_indices = np.where(~np.isfinite(x_flat))[0]
             bad_values = x_flat[bad_indices]
@@ -1177,4 +1181,5 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
