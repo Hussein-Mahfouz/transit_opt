@@ -1754,11 +1754,15 @@ class PSORunner:
                 penalty_config = {"enabled": False}
 
             # === PROBLEM ASSEMBLY ===
+            # Extract parameters for masked optimization
+            fixed_intervals = problem_config.get("fixed_intervals")
+
             self.problem = TransitOptimizationProblem(
                 self.optimization_data,  # Problem data
                 objective,  # Objective function instance
                 constraints,  # List of constraint handler instances
                 penalty_config=penalty_config,
+                fixed_intervals=fixed_intervals,  # Masked optimization support
             )
 
             # Print problem construction summary

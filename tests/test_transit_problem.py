@@ -34,6 +34,7 @@ import pytest
 from pymoo.core.problem import Problem
 
 from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+from transit_opt.optimisation.objectives.waiting_time import WaitingTimeObjective
 from transit_opt.optimisation.problems.base import FleetTotalConstraintHandler
 from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
@@ -106,36 +107,21 @@ class TestTransitProblemCreation:
         )
 
         # CRITICAL: Validate pymoo interface compliance
-        assert isinstance(
-            problem, Problem
-        ), "Must inherit from pymoo Problem for algorithm compatibility"
-        assert (
-            problem.n_obj == 1
-        ), "Single-objective problem for spatial equity optimization"
-        assert (
-            problem.n_constr == 0
-        ), "No constraints specified - unconstrained optimization"
+        assert isinstance(problem, Problem), "Must inherit from pymoo Problem for algorithm compatibility"
+        assert problem.n_obj == 1, "Single-objective problem for spatial equity optimization"
+        assert problem.n_constr == 0, "No constraints specified - unconstrained optimization"
 
         # CRITICAL: Validate problem dimensions match GTFS data structure
-        expected_vars = (
-            sample_optimization_data["n_routes"]
-            * sample_optimization_data["n_intervals"]
-        )
-        assert (
-            problem.n_var == expected_vars
-        ), f"Decision variables must match route×interval matrix: {expected_vars}"
+        expected_vars = sample_optimization_data["n_routes"] * sample_optimization_data["n_intervals"]
+        assert problem.n_var == expected_vars, f"Decision variables must match route×interval matrix: {expected_vars}"
 
         # CRITICAL: Validate variable bounds for discrete optimization
         assert np.all(problem.xl == 0), "Lower bounds: index 0 (first headway choice)"
         expected_upper = sample_optimization_data["n_choices"] - 1
-        assert np.all(
-            problem.xu == expected_upper
-        ), f"Upper bounds: index {expected_upper} (last valid choice)"
+        assert np.all(problem.xu == expected_upper), f"Upper bounds: index {expected_upper} (last valid choice)"
 
         # CRITICAL: Validate variable type for discrete headway choices
-        assert (
-            problem.vtype == int
-        ), "Integer variables required for discrete headway indices"
+        assert problem.vtype == int, "Integer variables required for discrete headway indices"
 
         print("   ✅ Unconstrained problem created successfully:")
         print(f"      Decision variables: {problem.n_var} (routes × intervals)")
@@ -174,9 +160,7 @@ class TestTransitProblemCreation:
         print("\n🏗️  TESTING PROBLEM CREATION (WITH CONSTRAINTS):")
 
         # Create spatial equity objective
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
         # Create realistic fleet budget constraint
         fleet_constraint = FleetTotalConstraintHandler(
@@ -196,20 +180,12 @@ class TestTransitProblemCreation:
         )
 
         # CRITICAL: Validate constraint integration
-        assert (
-            problem.n_constr == 1
-        ), "FleetTotalConstraintHandler produces exactly 1 constraint"
-        assert (
-            len(problem.constraints) == 1
-        ), "Should store exactly 1 constraint handler"
+        assert problem.n_constr == 1, "FleetTotalConstraintHandler produces exactly 1 constraint"
+        assert len(problem.constraints) == 1, "Should store exactly 1 constraint handler"
 
         # CRITICAL: Validate component storage for evaluation pipeline
-        assert (
-            problem.objective is objective
-        ), "Must store objective reference for evaluation"
-        assert (
-            problem.constraints[0] is fleet_constraint
-        ), "Must store constraint reference for evaluation"
+        assert problem.objective is objective, "Must store objective reference for evaluation"
+        assert problem.constraints[0] is fleet_constraint, "Must store constraint reference for evaluation"
 
         print("   ✅ Constrained problem created successfully:")
         print(f"      Objective: {type(objective).__name__} (spatial equity)")
@@ -247,24 +223,20 @@ class TestTransitProblemCreation:
         """
         print("\n🔍 TESTING PROBLEM DIMENSIONS:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # CRITICAL: Validate all dimensional parameters match exactly
-        assert (
-            problem.n_routes == sample_optimization_data["n_routes"]
-        ), "Route count mismatch breaks fleet calculations"
-        assert (
-            problem.n_intervals == sample_optimization_data["n_intervals"]
-        ), "Interval count mismatch breaks temporal analysis"
-        assert (
-            problem.n_choices == sample_optimization_data["n_choices"]
-        ), "Choice count mismatch breaks solution decoding"
+        assert problem.n_routes == sample_optimization_data["n_routes"], (
+            "Route count mismatch breaks fleet calculations"
+        )
+        assert problem.n_intervals == sample_optimization_data["n_intervals"], (
+            "Interval count mismatch breaks temporal analysis"
+        )
+        assert problem.n_choices == sample_optimization_data["n_choices"], (
+            "Choice count mismatch breaks solution decoding"
+        )
 
         # CRITICAL: Validate decision matrix shape consistency
         expected_shape = sample_optimization_data["decision_matrix_shape"]
@@ -276,9 +248,7 @@ class TestTransitProblemCreation:
         print("   ✅ All dimensions match GTFS optimization data:")
         print(f"      Routes: {problem.n_routes} (transit routes in system)")
         print(f"      Time intervals: {problem.n_intervals} (24h divided into periods)")
-        print(
-            f"      Headway choices: {problem.n_choices} (discrete options + no-service)"
-        )
+        print(f"      Headway choices: {problem.n_choices} (discrete options + no-service)")
         print(f"      Decision matrix shape: {expected_shape}")
         print(f"      Total decision variables: {problem.n_var}")
 
@@ -345,13 +315,9 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING SOLUTION ENCODING/DECODING ROUNDTRIP:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Test all sample solution scenarios for comprehensive validation
         for solution_name, solution_matrix in sample_solutions.items():
@@ -362,20 +328,14 @@ class TestSolutionEncoding:
             # STEP 1: Encode matrix to flat format (domain → pymoo)
             encoded = problem.encode_solution(solution_matrix)
             expected_length = problem.n_routes * problem.n_intervals
-            assert (
-                len(encoded) == expected_length
-            ), f"Encoded length must be {expected_length} for pymoo compatibility"
+            assert len(encoded) == expected_length, f"Encoded length must be {expected_length} for pymoo compatibility"
 
             # STEP 2: Decode flat vector back to matrix (pymoo → domain)
             decoded = problem.decode_solution(encoded)
-            assert (
-                decoded.shape == solution_matrix.shape
-            ), "Shape must be preserved through conversion"
+            assert decoded.shape == solution_matrix.shape, "Shape must be preserved through conversion"
 
             # CRITICAL: Validate perfect data preservation
-            assert np.array_equal(
-                decoded, solution_matrix
-            ), "All values must be identical after round-trip"
+            assert np.array_equal(decoded, solution_matrix), "All values must be identical after round-trip"
 
             print(f"      ✅ Roundtrip successful (encoded length: {len(encoded)})")
 
@@ -410,31 +370,21 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING DECODING WITH FLAT VECTORS:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Create simple test pattern: uniform high service
         n_vars = problem.n_var
-        flat_vector = np.zeros(
-            n_vars, dtype=int
-        )  # All zeros = index 0 = 5-min headways
+        flat_vector = np.zeros(n_vars, dtype=int)  # All zeros = index 0 = 5-min headways
 
         # Decode and validate
         decoded = problem.decode_solution(flat_vector)
         expected_shape = (problem.n_routes, problem.n_intervals)
 
         # CRITICAL: Validate decoding produces correct structure and values
-        assert (
-            decoded.shape == expected_shape
-        ), f"Decoded shape must be {expected_shape}"
-        assert np.all(
-            decoded == 0
-        ), "All decoded values should be 0 (matching input pattern)"
+        assert decoded.shape == expected_shape, f"Decoded shape must be {expected_shape}"
+        assert np.all(decoded == 0), "All decoded values should be 0 (matching input pattern)"
 
         print("   ✅ Manual flat vector decoding successful:")
         print(f"      Input: {len(flat_vector)} zeros (high service pattern)")
@@ -471,34 +421,24 @@ class TestSolutionEncoding:
         """
         print("\n🔄 TESTING INITIAL SOLUTION COMPATIBILITY:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Extract current service levels from GTFS analysis
         initial_solution = sample_optimization_data["initial_solution"]
         print(f"   Initial solution shape: {initial_solution.shape}")
-        print(
-            f"   Initial solution range: {np.min(initial_solution)}-{np.max(initial_solution)}"
-        )
+        print(f"   Initial solution range: {np.min(initial_solution)}-{np.max(initial_solution)}")
         print(f"   Unique headway indices: {np.unique(initial_solution)}")
 
         # CRITICAL: Test round-trip conversion with real GTFS data
         encoded = problem.encode_solution(initial_solution)
         decoded = problem.decode_solution(encoded)
-        assert np.array_equal(
-            decoded, initial_solution
-        ), "GTFS initial solution must survive round-trip conversion"
+        assert np.array_equal(decoded, initial_solution), "GTFS initial solution must survive round-trip conversion"
 
         # CRITICAL: Validate bounds compliance for optimization algorithms
         assert np.all(initial_solution >= 0), "All headway indices must be non-negative"
-        assert np.all(
-            initial_solution < problem.n_choices
-        ), "All indices must be within valid choice range"
+        assert np.all(initial_solution < problem.n_choices), "All indices must be within valid choice range"
 
         print("   ✅ GTFS initial solution fully compatible with problem:")
         print("      Represents current service levels from real transit data")
@@ -538,9 +478,7 @@ class TestSingleSolutionEvaluation:
     - Multiple solution types (high/medium/low/no service scenarios)
     """
 
-    def test_evaluate_single_solution_objective_only(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_evaluate_single_solution_objective_only(self, sample_optimization_data, sample_solutions):
         """
         Test single solution evaluation when problem has only objective function.
 
@@ -573,13 +511,9 @@ class TestSingleSolutionEvaluation:
         print("\n🔍 TESTING SINGLE SOLUTION EVALUATION (OBJECTIVE ONLY):")
 
         # Create unconstrained spatial equity problem
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Test with high service solution (most resource-intensive scenario)
         solution = sample_solutions["high_service"]  # 5-minute headways everywhere
@@ -597,35 +531,21 @@ class TestSingleSolutionEvaluation:
             assert field in results, f"Missing required field: {field}"
 
         # CRITICAL: Validate objective function output
-        assert isinstance(
-            results["objective"], (int, float)
-        ), "Objective must be numeric for optimization"
-        assert not np.isnan(
-            results["objective"]
-        ), "NaN objective indicates evaluation error"
-        assert np.isfinite(
-            results["objective"]
-        ), "Infinite objective breaks optimization algorithms"
+        assert isinstance(results["objective"], (int, float)), "Objective must be numeric for optimization"
+        assert not np.isnan(results["objective"]), "NaN objective indicates evaluation error"
+        assert np.isfinite(results["objective"]), "Infinite objective breaks optimization algorithms"
 
         # CRITICAL: Validate unconstrained problem behavior
-        assert (
-            results["feasible"] is True
-        ), "Unconstrained problems should always be feasible"
+        assert results["feasible"] is True, "Unconstrained problems should always be feasible"
         assert len(results["constraints"]) == 0, "Should have no constraint violations"
-        assert (
-            len(results["constraint_details"]) == 0
-        ), "Should have no constraint details"
+        assert len(results["constraint_details"]) == 0, "Should have no constraint details"
 
         print("   ✅ Objective-only evaluation successful:")
         print(f"      Objective (spatial variance): {results['objective']:.4f}")
         print(f"      Feasible: {results['feasible']}")
-        print(
-            "      Interpretation: Lower variance = more equitable service distribution"
-        )
+        print("      Interpretation: Lower variance = more equitable service distribution")
 
-    def test_evaluate_single_solution_with_constraints(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_evaluate_single_solution_with_constraints(self, sample_optimization_data, sample_solutions):
         """
         Test single solution evaluation with both objective and constraints.
 
@@ -660,9 +580,7 @@ class TestSingleSolutionEvaluation:
         """
         print("\n🔍 TESTING SINGLE SOLUTION EVALUATION (WITH CONSTRAINTS):")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
         # Create lenient constraint to test evaluation mechanics without violations
         fleet_constraint = FleetTotalConstraintHandler(
@@ -685,24 +603,14 @@ class TestSingleSolutionEvaluation:
         results = problem.evaluate_single_solution(solution)
 
         # CRITICAL: Validate constraint evaluation integration
-        assert (
-            len(results["constraints"]) == 1
-        ), "Should have exactly 1 constraint violation value"
-        assert (
-            len(results["constraint_details"]) == 1
-        ), "Should have exactly 1 constraint detail record"
+        assert len(results["constraints"]) == 1, "Should have exactly 1 constraint violation value"
+        assert len(results["constraint_details"]) == 1, "Should have exactly 1 constraint detail record"
 
         # CRITICAL: Validate constraint detail structure
         constraint_detail = results["constraint_details"][0]
-        assert (
-            constraint_detail["handler_type"] == "FleetTotalConstraintHandler"
-        ), "Should identify constraint type"
-        assert (
-            constraint_detail["n_constraints"] == 1
-        ), "FleetTotal produces exactly 1 constraint"
-        assert isinstance(
-            constraint_detail["satisfied"], bool
-        ), "Satisfaction status must be boolean"
+        assert constraint_detail["handler_type"] == "FleetTotalConstraintHandler", "Should identify constraint type"
+        assert constraint_detail["n_constraints"] == 1, "FleetTotal produces exactly 1 constraint"
+        assert isinstance(constraint_detail["satisfied"], bool), "Satisfaction status must be boolean"
 
         violation_value = results["constraints"][0]
         is_satisfied = constraint_detail["satisfied"]
@@ -714,9 +622,7 @@ class TestSingleSolutionEvaluation:
         print(f"      Overall feasible: {results['feasible']}")
         print("      Interpretation: violation ≤ 0 means constraint satisfied")
 
-    def test_evaluate_multiple_solutions(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_evaluate_multiple_solutions(self, sample_optimization_data, sample_solutions):
         """
         Test evaluation across different solution types to validate consistency.
 
@@ -752,13 +658,9 @@ class TestSingleSolutionEvaluation:
         """
         print("\n🔍 TESTING MULTIPLE SOLUTION EVALUATION:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         objective_values = {}
 
@@ -779,21 +681,15 @@ class TestSingleSolutionEvaluation:
             print(f"      Service level: {headway_desc[solution_name]}")
 
         # CRITICAL: Validate mathematical properties across all solutions
-        assert all(
-            np.isfinite(val) for val in objective_values.values()
-        ), "All objectives must be finite"
-        assert all(
-            val >= 0 for val in objective_values.values()
-        ), "Variance objectives must be non-negative"
+        assert all(np.isfinite(val) for val in objective_values.values()), "All objectives must be finite"
+        assert all(val >= 0 for val in objective_values.values()), "Variance objectives must be non-negative"
 
         # Special case validation: no service should have zero variance
         if "no_service" in objective_values:
             no_service_obj = objective_values["no_service"]
             print(f"   Special case - no_service objective: {no_service_obj:.6f}")
             # Note: May be 0.0 (perfect equity) or small positive (numerical precision)
-            assert (
-                no_service_obj < 0.001
-            ), "No service should have near-zero variance (all zones equal)"
+            assert no_service_obj < 0.001, "No service should have near-zero variance (all zones equal)"
 
         print("   ✅ All solution scenarios evaluated successfully")
         print("   ✅ Evaluation pipeline robust across diverse service levels")
@@ -833,9 +729,7 @@ class TestPopulationEvaluation:
     - Integration with real solution data
     """
 
-    def test_population_evaluation_objective_only(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_population_evaluation_objective_only(self, sample_optimization_data, sample_solutions):
         """
         Test population evaluation with only objective function (unconstrained).
 
@@ -871,13 +765,9 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING POPULATION EVALUATION (OBJECTIVE ONLY):")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Create population from known sample solutions for deterministic testing
         population = []
@@ -904,35 +794,23 @@ class TestPopulationEvaluation:
             len(population),
             1,
         ), f"Objective array must have shape ({len(population)}, 1)"
-        assert (
-            "G" not in out or out["G"] is None
-        ), "Unconstrained problems should not return constraint array"
+        assert "G" not in out or out["G"] is None, "Unconstrained problems should not return constraint array"
 
         # CRITICAL: Validate objective value validity
         objectives = out["F"][:, 0]
-        assert len(objectives) == len(
-            population
-        ), "Must have one objective per solution"
-        assert all(
-            np.isfinite(obj) for obj in objectives
-        ), "All objectives must be finite for optimization"
-        assert all(
-            obj >= 0 for obj in objectives
-        ), "Variance objectives must be non-negative"
+        assert len(objectives) == len(population), "Must have one objective per solution"
+        assert all(np.isfinite(obj) for obj in objectives), "All objectives must be finite for optimization"
+        assert all(obj >= 0 for obj in objectives), "Variance objectives must be non-negative"
 
         print("   ✅ Population evaluation successful:")
         print(f"      Population processed: {len(population)} solutions")
-        print(
-            f"      Objective range: {np.min(objectives):.4f} - {np.max(objectives):.4f}"
-        )
+        print(f"      Objective range: {np.min(objectives):.4f} - {np.max(objectives):.4f}")
 
         # Log individual results for debugging and validation
         for i, (name, obj) in enumerate(zip(solution_names, objectives, strict=False)):
             print(f"      {name}: {obj:.4f}")
 
-    def test_population_evaluation_with_constraints(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_population_evaluation_with_constraints(self, sample_optimization_data, sample_solutions):
         """
         Test population evaluation with both objectives and constraints.
 
@@ -973,9 +851,7 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING POPULATION EVALUATION (WITH CONSTRAINTS):")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
         # Create realistic fleet constraint with moderate tolerance
         fleet_constraint = FleetTotalConstraintHandler(
@@ -1027,9 +903,7 @@ class TestPopulationEvaluation:
         violations = out["G"][:, 0]
 
         assert len(violations) == len(population), "One violation per solution required"
-        assert all(
-            np.isfinite(viol) for viol in violations
-        ), "All violations must be finite"
+        assert all(np.isfinite(viol) for viol in violations), "All violations must be finite"
 
         # Analyze feasibility distribution
         feasible_count = np.sum(violations <= 0)
@@ -1039,14 +913,10 @@ class TestPopulationEvaluation:
         print(f"      Total solutions: {len(population)}")
         print(f"      Feasible solutions: {feasible_count}")
         print(f"      Infeasible solutions: {infeasible_count}")
-        print(
-            f"      Violation range: {np.min(violations):.3f} - {np.max(violations):.3f}"
-        )
+        print(f"      Violation range: {np.min(violations):.3f} - {np.max(violations):.3f}")
 
         # Log individual constraint analysis
-        for name, obj, viol in zip(
-            solution_names, objectives, violations, strict=False
-        ):
+        for name, obj, viol in zip(solution_names, objectives, violations, strict=False):
             status = "✅ Feasible" if viol <= 0 else "❌ Infeasible"
             print(f"      {name}: obj={obj:.4f}, violation={viol:.3f} {status}")
 
@@ -1085,18 +955,12 @@ class TestPopulationEvaluation:
         """
         print("\n👥 TESTING EMPTY POPULATION HANDLING:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Create empty population matrix (edge case)
-        X = np.empty(
-            (0, problem.n_var), dtype=int
-        )  # 0 solutions, correct variable count
+        X = np.empty((0, problem.n_var), dtype=int)  # 0 solutions, correct variable count
         out = {}
 
         print(f"   Empty population shape: {X.shape}")
@@ -1120,9 +984,7 @@ class TestPopulationEvaluation:
             print("   ✅ System remains stable for edge case inputs")
         else:
             # Empty populations causing exceptions is acceptable if handled consistently
-            print(
-                "   ℹ️  Empty population handling: Exception thrown (may be acceptable)"
-            )
+            print("   ℹ️  Empty population handling: Exception thrown (may be acceptable)")
 
 
 # ================================================================================================
@@ -1203,9 +1065,7 @@ class TestRealDataIntegration:
         print("\n🎯 TESTING INTEGRATION WITH PRECALCULATED DATA:")
 
         # Create realistic constrained optimization problem
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
         fleet_constraint = FleetTotalConstraintHandler(
             {
@@ -1246,9 +1106,9 @@ class TestRealDataIntegration:
 
         # CRITICAL: Validate integration accuracy (same calculation methods)
         tolerance = 0.01  # Allow small numerical differences
-        assert (
-            abs(actual_violation - expected_violation) < tolerance
-        ), f"Integration error: expected {expected_violation:.3f}, got {actual_violation:.3f}"
+        assert abs(actual_violation - expected_violation) < tolerance, (
+            f"Integration error: expected {expected_violation:.3f}, got {actual_violation:.3f}"
+        )
 
         # Additional validation: check violation sign interpretation
         if actual_violation <= 0:
@@ -1297,9 +1157,7 @@ class TestRealDataIntegration:
         """
         print("\n🔍 TESTING PROBLEM INFO METHOD:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
         fleet_constraint = FleetTotalConstraintHandler(
             {"baseline": "current_peak", "tolerance": 0.15, "measure": "peak"},
@@ -1327,22 +1185,16 @@ class TestRealDataIntegration:
             assert section in info, f"Missing info section: {section}"
 
         # CRITICAL: Validate specific information accuracy
-        assert (
-            info["problem_type"] == "TransitOptimizationProblem"
-        ), "Should identify problem class"
-        assert (
-            info["dimensions"]["n_routes"] == sample_optimization_data["n_routes"]
-        ), "Route count should match"
-        assert (
-            info["dimensions"]["n_intervals"] == sample_optimization_data["n_intervals"]
-        ), "Interval count should match"
-        assert (
-            info["objective"]["type"] == "StopCoverageObjective"
-        ), "Should identify objective type"
+        assert info["problem_type"] == "TransitOptimizationProblem", "Should identify problem class"
+        assert info["dimensions"]["n_routes"] == sample_optimization_data["n_routes"], "Route count should match"
+        assert info["dimensions"]["n_intervals"] == sample_optimization_data["n_intervals"], (
+            "Interval count should match"
+        )
+        assert info["objective"]["type"] == "StopCoverageObjective", "Should identify objective type"
         assert len(info["constraints"]) == 1, "Should report 1 constraint handler"
-        assert (
-            info["constraints"][0]["handler_type"] == "FleetTotalConstraintHandler"
-        ), "Should identify constraint type"
+        assert info["constraints"][0]["handler_type"] == "FleetTotalConstraintHandler", (
+            "Should identify constraint type"
+        )
 
         # Log information for debugging and validation
         print("   ✅ Problem info structure validated:")
@@ -1355,7 +1207,7 @@ class TestRealDataIntegration:
         print(f"      Constraints: {len(info['constraints'])} handler(s)")
 
         for i, constraint_info in enumerate(info["constraints"]):
-            print(f"        {i+1}. {constraint_info['handler_type']}")
+            print(f"        {i + 1}. {constraint_info['handler_type']}")
 
         print("   ✅ Problem introspection and debugging support functional")
 
@@ -1428,21 +1280,15 @@ class TestErrorHandling:
         """
         print("\n⚠️  TESTING INVALID SOLUTION MATRIX SIZE:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
         # Create invalid solution: wrong number of routes
         wrong_shape = (problem.n_routes + 1, problem.n_intervals)  # Extra route
         invalid_solution = np.zeros(wrong_shape, dtype=int)
 
-        print(
-            f"   Expected solution shape: ({problem.n_routes}, {problem.n_intervals})"
-        )
+        print(f"   Expected solution shape: ({problem.n_routes}, {problem.n_intervals})")
         print(f"   Invalid solution shape: {wrong_shape}")
 
         # CRITICAL: Test graceful error handling
@@ -1451,9 +1297,7 @@ class TestErrorHandling:
 
             # If no exception raised, check for error indicators
             if np.isinf(results["objective"]) or results["objective"] is None:
-                print(
-                    "   ✅ Invalid solution handled gracefully (returned error value)"
-                )
+                print("   ✅ Invalid solution handled gracefully (returned error value)")
                 error_handled = True
             else:
                 print("   ❌ Invalid solution not detected (unexpected success)")
@@ -1467,9 +1311,7 @@ class TestErrorHandling:
         # Either approach (exception or error value) is acceptable
         assert error_handled, "System must detect and handle invalid solution sizes"
 
-    def test_solution_bounds_validation(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_solution_bounds_validation(self, sample_optimization_data, sample_solutions):
         """
         Test that all sample solutions respect variable bounds constraints.
 
@@ -1504,15 +1346,11 @@ class TestErrorHandling:
         """
         print("\n🔍 TESTING SOLUTION BOUNDS VALIDATION:")
 
-        objective = StopCoverageObjective(
-            optimization_data=sample_optimization_data, spatial_resolution_km=2.0
-        )
+        objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
 
-        problem = TransitOptimizationProblem(
-            optimization_data=sample_optimization_data, objective=objective
-        )
+        problem = TransitOptimizationProblem(optimization_data=sample_optimization_data, objective=objective)
 
-        print(f"   Valid bounds: [0, {problem.n_choices-1}]")
+        print(f"   Valid bounds: [0, {problem.n_choices - 1}]")
         print(f"   Headway choices: {sample_optimization_data['allowed_headways']}")
 
         # CRITICAL: Validate bounds compliance for all sample solutions
@@ -1539,18 +1377,150 @@ class TestErrorHandling:
                 if not lower_bound_ok:
                     print(f"      ❌ Lower bound violation: found {min_val} < 0")
                 if not upper_bound_ok:
-                    print(
-                        f"      ❌ Upper bound violation: found {max_val} >= {problem.n_choices}"
-                    )
+                    print(f"      ❌ Upper bound violation: found {max_val} >= {problem.n_choices}")
 
         # CRITICAL: All test solutions must be valid
-        assert (
-            all_bounds_valid
-        ), "All sample solutions must respect bounds for valid testing"
+        assert all_bounds_valid, "All sample solutions must respect bounds for valid testing"
 
         print("   ✅ All sample solutions respect variable bounds")
         print("   ✅ Test data integrity validated")
         print("   ✅ Bounds checking system functional")
+
+
+# ================================================================================================
+# MASKED OPTIMIZATION TESTS
+# ================================================================================================
+
+
+class TestTransitProblemMasking:
+    """
+    Test masked optimization functionality (Variable Masking).
+
+    PURPOSE:
+    This suite verifies the "Variable Masking" feature, which allows fixing specific
+    time intervals (e.g., night shifts) while optimizing others. This is crucial for:
+    1. Reducing the search space (speeding up optimization).
+    2. Respecting operational constraints (e.g., fixed schedules during peak hours).
+    3. Iteratively optimizing different parts of the day.
+
+    HOW IT WORKS:
+    - User provides `fixed_intervals` (list of indices) and `initial_solution`.
+    - `TransitOptimizationProblem` only creates variables for `active_intervals`.
+    - During decoding, the optimizer's solution (subset) is merged with the
+      `initial_solution` (fixed values) to form the full solution matrix.
+    """
+
+    def test_masked_optimization_init(self, sample_optimization_data):
+        """
+        Test that problem initialization correctly reduces the number of variables.
+
+        LOGIC:
+        1. Define a problem with N routes and M intervals.
+        2. Fix specific intervals (e.g., 0 and 1).
+        3. Expect the number of decision variables (`n_var`) to decrease.
+           Old n_var = N * M
+           New n_var = N * (M - len(fixed_intervals))
+        4. Verify that `active_intervals` are correctly identified.
+        """
+        print("\n🔒 TESTING MASKED OPTIMIZATION INIT:")
+
+        # Disable DRT for this test to isolate masking logic
+        sample_optimization_data["drt_enabled"] = False
+
+        # Setup: Create a dummy initial solution required for masking
+        # This represents the 'baseline' schedule that fixed intervals will retain
+        n_routes = sample_optimization_data["n_routes"]
+        n_intervals = sample_optimization_data["n_intervals"]
+        sample_optimization_data["initial_solution"] = np.zeros((n_routes, n_intervals), dtype=int)
+
+        # Scenario: Fix the first two intervals (e.g., Morning Rush)
+        fixed_intervals = [0, 1]
+        active_intervals = [i for i in range(n_intervals) if i not in fixed_intervals]
+
+        # Initialize problem with WaitingTimeObjective
+        # Note: We use WaitingTimeObjective here as requested, though objective choice
+        # doesn't impact the variable masking logic itself.
+        objective = WaitingTimeObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
+
+        problem = TransitOptimizationProblem(
+            optimization_data=sample_optimization_data,
+            objective=objective,
+            constraints=[],
+            fixed_intervals=fixed_intervals,
+        )
+
+        # Verification 1: Variable Count
+        # Total variables should be routes * active_intervals
+        expected_n_var = n_routes * len(active_intervals)
+        assert problem.n_var == expected_n_var, f"Variables should be reduced to {expected_n_var}"
+
+        # Verification 2: Active Intervals tracking
+        # The problem class must store which intervals are being optimized
+        assert problem.active_intervals == active_intervals
+
+        print(f"   ✅ Masked problem initialized correctly (n_var={problem.n_var})")
+
+    def test_masked_optimization_decoding(self, sample_optimization_data):
+        """
+        Test that masked solutions are correctly reconstructed (Decoded).
+
+        LOGIC:
+        1. Use an initial solution with specific "fixed" values (e.g., Index = 2).
+        2. Optimize *active* intervals (e.g., Index = 1).
+        3. Decode the partial solution from the optimizer.
+        4. Verify:
+           - Fixed intervals contain the original values (2).
+           - Active intervals contain the new optimized values (1).
+           - No "shifting" occurs (i.e., optimized values land in the correct columns).
+        """
+        print("\n🔒 TESTING MASKED OPTIMIZATION DECODING:")
+
+        # Disable DRT to simplify test
+        sample_optimization_data["drt_enabled"] = False
+
+        # Setup data
+        n_routes = sample_optimization_data["n_routes"]
+        n_intervals = sample_optimization_data["n_intervals"]
+        initial_solution = np.zeros((n_routes, n_intervals), dtype=int)
+
+        # Set a marker value in the fixed interval to verify it persists
+        # Route 0, Interval 0 (Fixed) = 2
+        initial_solution[0, 0] = 2
+        sample_optimization_data["initial_solution"] = initial_solution
+
+        # Scenario: Fix Interval 0, Optimize all others
+        fixed_intervals = [0]
+        # active_intervals will be [1, 2, ..., N-1]
+
+        # Initialize problem
+        problem = TransitOptimizationProblem(
+            optimization_data=sample_optimization_data,
+            objective=WaitingTimeObjective(sample_optimization_data, spatial_resolution_km=2.0),
+            constraints=[],
+            fixed_intervals=fixed_intervals,
+        )
+
+        # Create a "fake" solution vector from the optimizer
+        # Let's say the optimizer chose index 1 for all active variables
+        x_flat = np.ones(problem.n_var, dtype=int)
+
+        # Decode: This merges x_flat (active) with initial_solution (fixed)
+        decoded = problem._decode_solution(x_flat)
+
+        # Verification 1: Fixed Values Persist
+        # The value at [0,0] should still be 2 (from initial_solution), NOT 1 (from optimizer)
+        assert decoded[0, 0] == 2, "Fixed interval should retain initial value (2)"
+
+        # Verification 2: Active Values Applied Correctly
+        # All columns except 0 should constitute the active region
+        # We manually mask out the fixed column to check the rest
+        mask = np.ones_like(decoded, dtype=bool)
+        mask[:, fixed_intervals] = False
+
+        # All values in the active region should be 1 (from x_flat)
+        assert np.all(decoded[mask] == 1), "Active intervals should take optimized values (1)"
+
+        print("   ✅ Masked solution decoded correctly: Fixed values retained, active values applied.")
 
 
 if __name__ == "__main__":
