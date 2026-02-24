@@ -16,15 +16,25 @@ input:
     zones:
       - zone_id: drt_ne
         service_area_path: data/external/drt/drt_ne.shp # Service area shapefile for this DRT zone
-        allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Fleet size options for this zone
+        allowed_fleet_sizes: [0, 25, 50, 75, 100]  # Fleet size options for this zone
         zone_name: "Leeds NE DRT" # name is used in the saved .json file
         drt_speed_kmh: 20.0  # Zone-specific speed (Will use default_drt_speed_kmh if zone-specific speed is not provided)
       - zone_id: drt_nw
         service_area_path: data/external/drt/drt_nw.shp
-        allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Different fleet options
+        allowed_fleet_sizes: [0, 25, 50, 75, 100]  # Different fleet options
         zone_name: "Leeds NW DRT"
 
-problem:
+problem:  # Masking: Optimise only specific time intervals to save time or fix manually adjusted schedules
+  # Array of interval indices (0-based) to NOT optimise.
+  # Indices range from 0 to (24 / interval_hours) - 1.
+  # E.g. with interval_hours=4 (6 intervals/day):
+  #   - 0: 00:00-04:00 (Late Night)
+  #   - 1: 04:00-08:00 (Early Morning)
+  #   - 2: 08:00-12:00 (AM Peak)
+  #   etc.
+  # Example: [2, 3] fixes the 08:00-16:00 block to its initial values.
+  fixed_intervals: [0]
+
   objective:
     type: WaitingTimeObjective # StopCoverageObjective, WaitingTimeObjective
     spatial_resolution_km: 2.0 # The size of each zone in the grid
@@ -98,13 +108,14 @@ problem:
       #    - 'current_peak': Use current peak fleet for all intervals
       #    - 'manual': Use manually specified values
       baseline: current_by_interval
-      baseline_values: []  # Only used if baseline: manual. List of baseline fleet values per interval. Same length as intervals
+      # baseline_values: [100, 1262, 1592, 1629, 1580, 811]
       # tolerance: increase allowed per interval
       tolerance: 0.35 # If 0.1, then 10% increase allowed per interval
       # min_fraction: Allowed reduction below baseline per interval
       min_fraction: 0.8  # If 0.7, then maintain at least 70% of current service per interval
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
+
   penalty_weights:
     fleet_total: 1000           # FleetTotalConstraintHandler
     minimum_fleet: 1000         # MinimumFleetConstraintHandler
