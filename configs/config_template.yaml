@@ -113,6 +113,8 @@ problem:  # Masking: Optimise only specific time intervals to save time or fix m
       tolerance: 0.35 # If 0.1, then 10% increase allowed per interval
       # min_fraction: Allowed reduction below baseline per interval
       min_fraction: 0.8  # If 0.7, then maintain at least 70% of current service per interval
+      # fleet: Which fleet to constrain. 'pt' (default) or 'pt_drt'
+      fleet: pt_drt
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
 

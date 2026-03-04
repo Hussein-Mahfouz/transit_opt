@@ -547,14 +547,15 @@ class TransitOptimizationProblem(Problem):
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
                         constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
-                        # Apply smart constraint handling here (FleetTotal works on full solution,
-                        # others on PT only)
-                        if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                            # FleetTotalConstraintHandler can handle full PT+DRT solution
-                            violations = constraint.evaluate(solution_matrix)
-                        elif self.drt_enabled:
-                            # Other constraints only handle PT part when DRT enabled
-                            violations = constraint.evaluate(solution_matrix["pt"])
+
+                        # Determine correct input for constraints
+                        if self.drt_enabled:
+                            # FleetTotal and FleetPerInterval can handle full PT+DRT solution now
+                            if isinstance(constraint, (FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler)):
+                                violations = constraint.evaluate(solution_matrix)
+                            else:
+                                # Older/Other constraints only know about PT part
+                                violations = constraint.evaluate(solution_matrix["pt"])
                         else:
                             # PT-only case: pass solution directly
                             violations = constraint.evaluate(solution_matrix)
@@ -1181,5 +1182,6 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
         return True  # All constraints satisfied
