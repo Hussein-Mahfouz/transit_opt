@@ -79,12 +79,8 @@ class TestConstraintHandlers:
 
         # Check constraints section exists
         print("\n   🔧 Checking constraints section:")
-        assert (
-            "constraints" in sample_optimization_data
-        ), "Missing 'constraints' section"
-        assert (
-            "fleet_analysis" in sample_optimization_data["constraints"]
-        ), "Missing 'fleet_analysis' section"
+        assert "constraints" in sample_optimization_data, "Missing 'constraints' section"
+        assert "fleet_analysis" in sample_optimization_data["constraints"], "Missing 'fleet_analysis' section"
 
         fleet_analysis = sample_optimization_data["constraints"]["fleet_analysis"]
         print("      ✓ constraints.fleet_analysis found")
@@ -106,29 +102,20 @@ class TestConstraintHandlers:
         print("\n📊 DATA SUMMARY:")
         print(f"   Routes: {sample_optimization_data['n_routes']}")
         print(
-            f"   Time intervals: {sample_optimization_data['n_intervals']} (intervals of {24//sample_optimization_data['n_intervals']}h each)"
+            f"   Time intervals: {sample_optimization_data['n_intervals']} (intervals of {24 // sample_optimization_data['n_intervals']}h each)"
         )
         print(f"   Allowed headways: {sample_optimization_data['allowed_headways']}")
-        print(
-            f"   Current peak fleet: {fleet_analysis['total_current_fleet_peak']} vehicles"
-        )
+        print(f"   Current peak fleet: {fleet_analysis['total_current_fleet_peak']} vehicles")
         print(f"   Fleet by interval: {fleet_analysis['current_fleet_by_interval']}")
-        print(
-            f"   Operational buffer: {fleet_analysis['operational_buffer']} (15% extra time)"
-        )
+        print(f"   Operational buffer: {fleet_analysis['operational_buffer']} (15% extra time)")
 
         # Validate data makes sense
         assert sample_optimization_data["n_routes"] > 0, "Should have at least 1 route"
-        assert (
-            sample_optimization_data["n_intervals"] > 0
-        ), "Should have at least 1 interval"
-        assert (
-            fleet_analysis["total_current_fleet_peak"] >= 0
-        ), "Peak fleet should be non-negative"
-        assert (
-            len(fleet_analysis["current_fleet_by_interval"])
-            == sample_optimization_data["n_intervals"]
-        ), "Fleet by interval length should match n_intervals"
+        assert sample_optimization_data["n_intervals"] > 0, "Should have at least 1 interval"
+        assert fleet_analysis["total_current_fleet_peak"] >= 0, "Peak fleet should be non-negative"
+        assert len(fleet_analysis["current_fleet_by_interval"]) == sample_optimization_data["n_intervals"], (
+            "Fleet by interval length should match n_intervals"
+        )
 
         print("✅ All data structure validations passed!")
 
@@ -185,15 +172,9 @@ class TestFleetTotalConstraintHandler:
         print(f"   🔧 Stored config: {handler.config}")
 
         # Assertions
-        assert (
-            handler.n_constraints == 1
-        ), "FleetTotalConstraintHandler should always generate 1 constraint"
-        assert (
-            handler.config["baseline"] == "current_peak"
-        ), "Baseline should be stored correctly"
-        assert (
-            handler.config["tolerance"] == 0.15
-        ), "Tolerance should be stored correctly"
+        assert handler.n_constraints == 1, "FleetTotalConstraintHandler should always generate 1 constraint"
+        assert handler.config["baseline"] == "current_peak", "Baseline should be stored correctly"
+        assert handler.config["tolerance"] == 0.15, "Tolerance should be stored correctly"
         assert handler.config["measure"] == "peak", "Measure should be stored correctly"
 
         print("✅ Basic constraint creation test passed!")
@@ -230,9 +211,7 @@ class TestFleetTotalConstraintHandler:
         # Test 3: Manual baseline without value
         print("   Testing manual baseline without value...")
         config = {"baseline": "manual"}
-        with pytest.raises(
-            ValueError, match="Manual baseline requires 'baseline_value'"
-        ):
+        with pytest.raises(ValueError, match="Manual baseline requires 'baseline_value'"):
             FleetTotalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects manual baseline without value")
 
@@ -295,9 +274,7 @@ class TestFleetTotalConstraintHandler:
             expected_violation = solution_peak - expected_limit
 
             print(f"        Solution peak fleet: {solution_peak:.1f} vehicles")
-            print(
-                f"        Expected violation: {solution_peak:.1f} - {expected_limit:.1f} = {expected_violation:.1f}"
-            )
+            print(f"        Expected violation: {solution_peak:.1f} - {expected_limit:.1f} = {expected_violation:.1f}")
 
             # Call constraint handler
             actual_violations = handler.evaluate(sample_solutions[solution_name])
@@ -307,19 +284,15 @@ class TestFleetTotalConstraintHandler:
             print(f"        Match? {abs(actual_violation - expected_violation) < 0.1}")
 
             # Assert they match within tolerance
-            assert (
-                abs(actual_violation - expected_violation) < 0.1
-            ), f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            assert abs(actual_violation - expected_violation) < 0.1, (
+                f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            )
 
             # Interpret result
             if actual_violation > 0:
-                print(
-                    f"        ❌ CONSTRAINT VIOLATED (uses {actual_violation:.1f} vehicles over limit)"
-                )
+                print(f"        ❌ CONSTRAINT VIOLATED (uses {actual_violation:.1f} vehicles over limit)")
             else:
-                print(
-                    f"        ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} vehicles under limit)"
-                )
+                print(f"        ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} vehicles under limit)")
 
         print("\n✅ Peak measure constraint test passed!")
 
@@ -376,12 +349,9 @@ class TestFleetTotalConstraintHandler:
         if actual_violation > 0:
             print(f"      ❌ CONSTRAINT VIOLATED ({actual_violation:.1f} over limit)")
         else:
-            print(
-                f"      ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} under limit)"
-            )
+            print(f"      ✅ CONSTRAINT SATISFIED ({abs(actual_violation):.1f} under limit)")
 
         print("✅ Average measure constraint test passed!")
-
 
     def test_fleet_total_constraint_with_drt_integration(self):
         """Test FleetTotalConstraintHandler with PT+DRT combined fleet calculation."""
@@ -398,43 +368,39 @@ class TestFleetTotalConstraintHandler:
 
         # DRT configuration
         drt_config = {
-            'enabled': True,
-            'target_crs': 'EPSG:3857',
-            'default_drt_speed_kmh': 25.0,
-            'zones': [
+            "enabled": True,
+            "target_crs": "EPSG:3857",
+            "default_drt_speed_kmh": 25.0,
+            "zones": [
                 {
-                    'zone_id': 'drt_duke_1',
-                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_1.shp"),
-                    'allowed_fleet_sizes': [0, 10, 20, 30],
-                    'zone_name': 'Duke Area 1',
-                    'drt_speed_kmh': 20.0
+                    "zone_id": "drt_duke_1",
+                    "service_area_path": str(test_data_dir / "drt" / "drt_duke_1.shp"),
+                    "allowed_fleet_sizes": [0, 10, 20, 30],
+                    "zone_name": "Duke Area 1",
+                    "drt_speed_kmh": 20.0,
                 },
                 {
-                    'zone_id': 'drt_duke_2',
-                    'service_area_path': str(test_data_dir / "drt" / "drt_duke_2.shp"),
-                    'allowed_fleet_sizes': [0, 5, 15, 25],
-                    'zone_name': 'Duke Area 2'
-                }
-            ]
+                    "zone_id": "drt_duke_2",
+                    "service_area_path": str(test_data_dir / "drt" / "drt_duke_2.shp"),
+                    "allowed_fleet_sizes": [0, 5, 15, 25],
+                    "zone_name": "Duke Area 2",
+                },
+            ],
         }
 
         # Extract PT+DRT optimization data
         opt_data = preparator.extract_optimization_data_with_drt(allowed_headways, drt_config)
 
         # Verify DRT is enabled
-        assert opt_data['drt_enabled'] is True
-        assert opt_data['n_drt_zones'] == 2
+        assert opt_data["drt_enabled"] is True
+        assert opt_data["n_drt_zones"] == 2
 
         # Create constraint handler
-        constraint_config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.30,
-            'measure': 'peak'
-        }
+        constraint_config = {"baseline": "current_peak", "tolerance": 0.30, "measure": "peak"}
         constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
 
         # ===== FIX: Use initial solution from opt_data (matches dimensions) =====
-        initial_solution = opt_data['initial_solution']
+        initial_solution = opt_data["initial_solution"]
 
         # For PT+DRT, initial_solution is already a flat array that needs decoding
         # Create a proper PT+DRT solution dict using the problem encoder
@@ -442,23 +408,16 @@ class TestFleetTotalConstraintHandler:
         from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create a minimal problem to access encoding/decoding
-        dummy_objective = StopCoverageObjective(
-            optimization_data=opt_data,
-            spatial_resolution_km=2.0
-        )
-        problem = TransitOptimizationProblem(
-            optimization_data=opt_data,
-            objective=dummy_objective,
-            constraints=[]
-        )
+        dummy_objective = StopCoverageObjective(optimization_data=opt_data, spatial_resolution_km=2.0)
+        problem = TransitOptimizationProblem(optimization_data=opt_data, objective=dummy_objective, constraints=[])
 
         # Decode the initial solution to get proper PT+DRT dict format
         solution_dict = problem.decode_solution(initial_solution)
 
         print("\n🚌 Testing PT+DRT solution structure...")
         assert isinstance(solution_dict, dict)
-        assert 'pt' in solution_dict
-        assert 'drt' in solution_dict
+        assert "pt" in solution_dict
+        assert "drt" in solution_dict
 
         # Test constraint evaluation with proper dict format
         violations = constraint.evaluate(solution_dict)
@@ -467,16 +426,16 @@ class TestFleetTotalConstraintHandler:
         print(f"✅ Combined PT+DRT constraint violation: {violations[0]:.3f}")
 
         # ===== Verify PT and DRT components are both considered =====
-        pt_fleet = constraint._calculate_fleet_from_solution(solution_dict['pt'])
-        drt_fleet = constraint._calculate_drt_fleet_from_solution(solution_dict['drt'])
+        pt_fleet = constraint._calculate_fleet_from_solution(solution_dict["pt"])
+        drt_fleet = constraint._calculate_drt_fleet_from_solution(solution_dict["drt"])
 
         print(f"   PT fleet by interval: {pt_fleet}")
         print(f"   DRT fleet by interval: {drt_fleet}")
 
         # Combined fleet should be sum of both
         combined_fleet = pt_fleet + drt_fleet
-        baseline_pt_peak = opt_data['constraints']['fleet_analysis']['total_current_fleet_peak']
-        fleet_limit = baseline_pt_peak * (1 + constraint_config['tolerance'])
+        baseline_pt_peak = opt_data["constraints"]["fleet_analysis"]["total_current_fleet_peak"]
+        fleet_limit = baseline_pt_peak * (1 + constraint_config["tolerance"])
 
         print(f"   PT baseline peak: {baseline_pt_peak}")
         print(f"   Fleet limit (with tolerance): {fleet_limit}")
@@ -487,7 +446,6 @@ class TestFleetTotalConstraintHandler:
         assert abs(violations[0] - expected_violation) < 1e-6
 
         print("✅ PT+DRT constraint integration test passed!")
-
 
     def test_fleet_total_constraint_drt_disabled_compatibility(self):
         """Test that FleetTotalConstraintHandler works correctly when DRT is disabled."""
@@ -506,18 +464,14 @@ class TestFleetTotalConstraintHandler:
         opt_data = preparator.extract_optimization_data(allowed_headways)
 
         # Verify DRT is disabled
-        assert opt_data.get('drt_enabled', False) is False
+        assert opt_data.get("drt_enabled", False) is False
 
         # Create constraint handler
-        constraint_config = {
-            'baseline': 'current_peak',
-            'tolerance': 0.20,
-            'measure': 'peak'
-        }
+        constraint_config = {"baseline": "current_peak", "tolerance": 0.20, "measure": "peak"}
         constraint = FleetTotalConstraintHandler(constraint_config, opt_data)
 
         # ===== FIX: Use initial solution from opt_data (matches dimensions) =====
-        pt_solution = opt_data['initial_solution']
+        pt_solution = opt_data["initial_solution"]
 
         print(f"\n🚌 Testing PT-only solution...")
         print(f"   Solution shape: {pt_solution.shape}")
@@ -530,7 +484,7 @@ class TestFleetTotalConstraintHandler:
         print(f"✅ Matrix format violation: {violations_matrix[0]:.3f}")
 
         # Test 2: Dict format with 'pt' key (should also work)
-        solution_dict = {'pt': pt_solution}
+        solution_dict = {"pt": pt_solution}
         violations_dict = constraint.evaluate(solution_dict)
         assert len(violations_dict) == 1
 
@@ -592,12 +546,10 @@ class TestFleetPerIntervalConstraintHandler:
         print(f"   📊 Number of constraints: {handler.n_constraints}")
 
         # Assertions
-        assert (
-            handler.n_constraints == n_intervals
-        ), f"Should generate {n_intervals} constraints, got {handler.n_constraints}"
-        assert (
-            handler.config["tolerance"] == 0.15
-        ), "Tolerance should be stored correctly"
+        assert handler.n_constraints == n_intervals, (
+            f"Should generate {n_intervals} constraints, got {handler.n_constraints}"
+        )
+        assert handler.config["tolerance"] == 0.15, "Tolerance should be stored correctly"
 
         print("✅ Basic per-interval constraint creation test passed!")
 
@@ -612,17 +564,19 @@ class TestFleetPerIntervalConstraintHandler:
         # Missing both tolerance and min_fraction
         print("   Testing missing both tolerance and min_fraction...")
         config = {"baseline": "current_by_interval"}  # Neither tolerance nor min_fraction
-        with pytest.raises(ValueError,
-                           match="FleetPerIntervalConstraintHandler must specify either 'tolerance' "
-                "or 'min_fraction' or both"):
+        with pytest.raises(
+            ValueError,
+            match="FleetPerIntervalConstraintHandler must specify either 'tolerance' or 'min_fraction' or both",
+        ):
             FleetPerIntervalConstraintHandler(config, sample_optimization_data)
         print("   ✓ Correctly rejects missing both parameters")
 
         # Test missing baseline
         print("   Testing missing baseline...")
-        with pytest.raises(ValueError,
-                           match="FleetPerIntervalConstraintHandler must specify either 'tolerance' "
-                "or 'min_fraction' or both"):
+        with pytest.raises(
+            ValueError,
+            match="FleetPerIntervalConstraintHandler must specify either 'tolerance' or 'min_fraction' or both",
+        ):
             FleetPerIntervalConstraintHandler({}, sample_optimization_data)
         print("   ✓ Correctly rejects missing baseline")
 
@@ -726,13 +680,11 @@ class TestFleetPerIntervalConstraintHandler:
                 violations_match += 1
 
             # Individual assertion
-            assert (
-                abs(actual - expected) < 0.1
-            ), f"Interval {i} violation mismatch: expected {expected:.1f}, got {actual:.1f}"
+            assert abs(actual - expected) < 0.1, (
+                f"Interval {i} violation mismatch: expected {expected:.1f}, got {actual:.1f}"
+            )
 
-        print(
-            f"\n   📊 SUMMARY: {violations_match}/{len(expected_violations)} intervals matched exactly"
-        )
+        print(f"\n   📊 SUMMARY: {violations_match}/{len(expected_violations)} intervals matched exactly")
         print("✅ Per-interval constraint test passed!")
 
     def test_floor_only_constraint(self, sample_optimization_data, sample_solutions):
@@ -741,7 +693,7 @@ class TestFleetPerIntervalConstraintHandler:
 
         config = {
             "baseline": "current_by_interval",
-            "min_fraction": 0.7  # Only floor constraint, no ceiling
+            "min_fraction": 0.7,  # Only floor constraint, no ceiling
         }
 
         handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
@@ -768,8 +720,8 @@ class TestFleetPerIntervalConstraintHandler:
 
         config = {
             "baseline": "current_by_interval",
-            "tolerance": 0.25,      # Ceiling constraint
-            "min_fraction": 0.6     # Floor constraint
+            "tolerance": 0.25,  # Ceiling constraint
+            "min_fraction": 0.6,  # Floor constraint
         }
 
         handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
@@ -789,6 +741,149 @@ class TestFleetPerIntervalConstraintHandler:
 
         assert len(violations) == expected_constraints
         print("✅ Combined ceiling + floor constraint test passed!")
+
+    # ================================================================================================
+    # PT+DRT EXTENDED TESTS
+    # ================================================================================================
+
+    def test_fleet_mode_validation(self, sample_optimization_data):
+        """Test that invalid fleet modes are rejected."""
+        config = {"baseline": "current_by_interval", "tolerance": 0.1, "fleet": "invalid_mode"}
+        with pytest.raises(ValueError, match="fleet must be 'pt' or 'pt_drt'"):
+            FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+
+    def test_evaluate_pt_only_mode(self):
+        """Test that default 'pt' mode ignores DRT component even if present."""
+        # Setup pure mock data, independent of fixture
+        mock_data = {
+            "drt_enabled": True,
+            "n_routes": 2,
+            "n_intervals": 3,
+            "allowed_headways": [10, 20, 30],  # Minutes
+            "no_service_index": 3,
+            "routes": {
+                "round_trip_times": np.array([60.0, 120.0]),  # Floats for safety
+                "route_ids": ["r1", "r2"],
+            },
+            "constraints": {
+                "fleet_analysis": {
+                    "operational_buffer": 1.0,
+                    "no_service_threshold_minutes": 999.0,
+                    "current_fleet_by_interval": [12, 15, 12],
+                    "total_current_fleet_peak": 20,
+                }
+            },
+            "drt_config": {},  # Empty but present
+        }
+
+        # PT Solution: [12, 15, 12] vehicles
+        # Row 0 (RTT 60): [0, 1, 0] -> Headways [10, 20, 10] -> Fleet [6, 3, 6]
+        # Row 1 (RTT 120): [1, 0, 1] -> Headways [20, 10, 20] -> Fleet [6, 12, 6]
+        # Sum: [12, 15, 12]
+        pt_matrix = np.array([[0, 1, 0], [1, 0, 1]])  # indices
+
+        # DRT Solution: Random but non-zero
+        drt_matrix = np.ones((2, 3)) * 10
+
+        combined_solution = {"pt": pt_matrix, "drt": drt_matrix}
+
+        config = {
+            "baseline": "manual",
+            "baseline_values": [12, 15, 12],  # Exactly matches PT usage
+            "tolerance": 0.0,
+            "fleet": "pt",  # Should ignore DRT
+        }
+        handler = FleetPerIntervalConstraintHandler(config, mock_data)
+
+        # Violations should be 0 because PT usage matches baseline exactly
+        violations = handler.evaluate(combined_solution)
+
+        assert np.allclose(violations, 0)
+        assert len(violations) == 3
+
+    def test_evaluate_pt_drt_mode(self):
+        """Test that 'pt_drt' mode sums both components."""
+        # Construct specific mock data
+        mock_data = {
+            "drt_enabled": True,
+            "n_routes": 2,
+            "n_intervals": 3,
+            "allowed_headways": [10, 20, 30],
+            "no_service_index": 3,
+            "routes": {"round_trip_times": np.array([60.0, 120.0]), "route_ids": ["r1", "r2"]},
+            "constraints": {
+                "fleet_analysis": {
+                    "operational_buffer": 1.0,
+                    "no_service_threshold_minutes": 999.0,
+                    "current_fleet_by_interval": [10, 20, 10],
+                    "total_current_fleet_peak": 20,
+                }
+            },
+            "drt_config": {
+                "zones": [
+                    {"allowed_fleet_sizes": [0, 5, 10]},  # Zone 1 options
+                    {"allowed_fleet_sizes": [0, 2, 4]},  # Zone 2 options
+                ]
+            },
+        }
+
+        # PT Solution Setup
+        # Row 0 (RTT 60): [0, 1, 0] -> Headways [10, 20, 10] -> Fleet [6, 3, 6]
+        # Row 1 (RTT 120): [1, 0, 1] -> Headways [20, 10, 20] -> Fleet [6, 12, 6]
+        pt_matrix = np.array([[0, 1, 0], [1, 0, 1]])  # PT Total: [12, 15, 12]
+
+        # DRT Solution Setup
+        # Zone 1 (Idx [1,0,2]): 5, 0, 10 vehicles
+        # Zone 2 (Idx [2,1,0]): 4, 2, 0 vehicles
+        drt_matrix = np.array([[1, 0, 2], [2, 1, 0]])  # DRT Total: [9, 2, 10]
+
+        # Combined Total: [12+9, 15+2, 12+10] = [21, 17, 22]
+
+        combined_solution = {"pt": pt_matrix, "drt": drt_matrix}
+
+        config = {
+            "baseline": "manual",
+            "baseline_values": [21, 17, 22],  # Matches PT+DRT sum exactly
+            "tolerance": 0.0,
+            "fleet": "pt_drt",
+        }
+
+        handler = FleetPerIntervalConstraintHandler(config, mock_data)
+        violations = handler.evaluate(combined_solution)
+
+        assert np.allclose(violations, 0)
+
+    def test_pt_drt_missing_drt_key(self):
+        """Test handling when fleet='pt_drt' but solution dict missing 'drt' key."""
+        # Setup minimal mocking
+        mock_data = {
+            "drt_enabled": True,
+            "n_routes": 1,
+            "n_intervals": 1,
+            "allowed_headways": [10],
+            "no_service_index": 1,
+            "routes": {"round_trip_times": np.array([60.0]), "route_ids": ["r1"]},
+            "constraints": {
+                "fleet_analysis": {
+                    "operational_buffer": 1.0,
+                    "no_service_threshold_minutes": 999.0,
+                    "current_fleet_by_interval": [10],
+                    "total_current_fleet_peak": 10,
+                }
+            },
+            "drt_config": {},
+        }
+
+        config = {"baseline": "current_by_interval", "tolerance": 0.1, "fleet": "pt_drt"}
+        handler = FleetPerIntervalConstraintHandler(config, mock_data)
+
+        # Pass dict without 'drt' key
+        # We supply a specialized Solution object often, but here just checking the dict handling
+        pt_shape = (1, 1)
+        fake_pt = np.zeros(pt_shape, dtype=int)
+
+        with pytest.raises(ValueError, match="fleet='pt_drt' but solution dict missing 'drt' key"):
+            handler.evaluate({"pt": fake_pt})
 
 
 # ================================================================================================
@@ -843,12 +938,8 @@ class TestMinimumFleetConstraintHandler:
         print(f"   🔧 Min fleet fraction: {handler.config['min_fleet_fraction']}")
 
         # Assertions
-        assert (
-            handler.n_constraints == 1
-        ), "System-level minimum should generate 1 constraint"
-        assert (
-            handler.config["min_fleet_fraction"] == 0.8
-        ), "Min fleet fraction should be stored"
+        assert handler.n_constraints == 1, "System-level minimum should generate 1 constraint"
+        assert handler.config["min_fleet_fraction"] == 0.8, "Min fleet fraction should be stored"
 
         print("✅ Basic system minimum constraint creation test passed!")
 
@@ -879,9 +970,7 @@ class TestMinimumFleetConstraintHandler:
         print(f"   📊 Number of constraints: {handler.n_constraints}")
 
         # Assertions
-        assert (
-            handler.n_constraints == n_intervals
-        ), f"Interval-level should generate {n_intervals} constraints"
+        assert handler.n_constraints == n_intervals, f"Interval-level should generate {n_intervals} constraints"
 
         print("✅ Basic interval minimum constraint creation test passed!")
 
@@ -990,19 +1079,15 @@ class TestMinimumFleetConstraintHandler:
             print(f"        Match? {abs(actual_violation - expected_violation) < 0.1}")
 
             # Assert they match
-            assert (
-                abs(actual_violation - expected_violation) < 0.1
-            ), f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            assert abs(actual_violation - expected_violation) < 0.1, (
+                f"Expected violation {expected_violation:.1f}, got {actual_violation:.1f} for {solution_name}"
+            )
 
             # Interpret result
             if actual_violation > 0:
-                print(
-                    f"        ❌ MINIMUM VIOLATED (need {actual_violation:.1f} more vehicles)"
-                )
+                print(f"        ❌ MINIMUM VIOLATED (need {actual_violation:.1f} more vehicles)")
             else:
-                print(
-                    f"        ✅ MINIMUM SATISFIED ({abs(actual_violation):.1f} vehicles above minimum)"
-                )
+                print(f"        ✅ MINIMUM SATISFIED ({abs(actual_violation):.1f} vehicles above minimum)")
 
         print("\n✅ System minimum constraint test passed!")
 
@@ -1022,9 +1107,7 @@ class TestConstraintIntegration:
     - Ensures constraint handlers don't interfere with each other
     """
 
-    def test_multiple_constraint_combination(
-        self, sample_optimization_data, sample_solutions
-    ):
+    def test_multiple_constraint_combination(self, sample_optimization_data, sample_solutions):
         """
         Test combining different constraint types in a realistic scenario.
 
@@ -1060,9 +1143,7 @@ class TestConstraintIntegration:
             {"baseline": "current_by_interval", "tolerance": 0.50},  # Very lenient
             sample_optimization_data,
         )
-        print(
-            f"      ✓ FleetPerInterval: {fleet_intervals.n_constraints} constraints (50% tolerance)"
-        )
+        print(f"      ✓ FleetPerInterval: {fleet_intervals.n_constraints} constraints (50% tolerance)")
 
         minimum_fleet = MinimumFleetConstraintHandler(
             {
@@ -1085,9 +1166,9 @@ class TestConstraintIntegration:
         print(f"      Total + PerInterval + Minimum = {total_constraints}")
         print(f"      Expected: 1 + {n_intervals} + 1 = {expected_constraints}")
 
-        assert (
-            total_constraints == expected_constraints
-        ), f"Expected {expected_constraints} total constraints, got {total_constraints}"
+        assert total_constraints == expected_constraints, (
+            f"Expected {expected_constraints} total constraints, got {total_constraints}"
+        )
 
         # Test constraint evaluation
         print("\n   🧪 TESTING CONSTRAINT EVALUATION:")
@@ -1096,9 +1177,7 @@ class TestConstraintIntegration:
             all_violations = []
             for i, constraint in enumerate(constraints):
                 violations = constraint.evaluate(solution)
-                print(
-                    f"      Constraint {i+1}: {len(violations)} violations = {violations}"
-                )
+                print(f"      Constraint {i + 1}: {len(violations)} violations = {violations}")
                 all_violations.extend(violations)
             return np.array(all_violations)
 
@@ -1113,9 +1192,9 @@ class TestConstraintIntegration:
         print(f"      Expected: {total_constraints}")
         print(f"      All violations: {all_violations}")
 
-        assert (
-            len(all_violations) == total_constraints
-        ), f"Expected {total_constraints} violations, got {len(all_violations)}"
+        assert len(all_violations) == total_constraints, (
+            f"Expected {total_constraints} violations, got {len(all_violations)}"
+        )
 
         # Basic sanity checks
         satisfied = np.sum(all_violations <= 0)
@@ -1125,12 +1204,8 @@ class TestConstraintIntegration:
         print(f"      Violated: {violated}/{total_constraints}")
 
         # All violations should be numeric and finite
-        assert all(
-            isinstance(v, (int, float)) for v in all_violations
-        ), "All violations should be numeric"
-        assert all(
-            not np.isnan(v) for v in all_violations
-        ), "No violations should be NaN"
+        assert all(isinstance(v, (int, float)) for v in all_violations), "All violations should be numeric"
+        assert all(not np.isnan(v) for v in all_violations), "No violations should be NaN"
 
         print("✅ Multiple constraint combination test passed!")
 
@@ -1158,13 +1233,9 @@ class TestConstraintIntegration:
         assert "n_constraints" in info, "Should include n_constraints"
         assert "config" in info, "Should include config"
 
-        assert (
-            info["handler_type"] == "FleetTotalConstraintHandler"
-        ), "Should identify handler type"
+        assert info["handler_type"] == "FleetTotalConstraintHandler", "Should identify handler type"
         assert info["n_constraints"] == 1, "Should report correct constraint count"
-        assert (
-            info["config"]["baseline"] == "current_peak"
-        ), "Should include config details"
+        assert info["config"]["baseline"] == "current_peak", "Should include config details"
 
         print("✅ Constraint info methods test passed!")
 
@@ -1206,9 +1277,7 @@ class TestConstraintIntegration:
         print(f"      Violation: {violations[0]:.1f}")
         print("      Expected: <= 0 (satisfied)")
 
-        assert (
-            violations[0] <= 0
-        ), "No service should satisfy upper-bound constraint (0 vehicles < limit)"
+        assert violations[0] <= 0, "No service should satisfy upper-bound constraint (0 vehicles < limit)"
         print("      ✅ Upper-bound constraint satisfied as expected")
 
         # Test 2: Minimum constraint should be violated (0 vehicles < minimum)
@@ -1221,17 +1290,13 @@ class TestConstraintIntegration:
             "baseline": "current_peak",
         }
 
-        min_handler = MinimumFleetConstraintHandler(
-            min_config, sample_optimization_data
-        )
+        min_handler = MinimumFleetConstraintHandler(min_config, sample_optimization_data)
         min_violations = min_handler.evaluate(all_no_service)
 
         print(f"      Violation: {min_violations[0]:.1f}")
         print("      Expected: > 0 (violated)")
 
-        assert (
-            min_violations[0] > 0
-        ), "No service should violate minimum constraint (0 vehicles < minimum)"
+        assert min_violations[0] > 0, "No service should violate minimum constraint (0 vehicles < minimum)"
         print("      ✅ Minimum constraint violated as expected")
 
         print("✅ Constraint edge cases test passed!")
@@ -1264,12 +1329,8 @@ class TestConstraintIntegration:
         print(f"      Evaluation 3: {violations3}")
 
         # Results should be identical
-        assert np.allclose(
-            violations1, violations2
-        ), "Evaluation 1 and 2 should be identical"
-        assert np.allclose(
-            violations2, violations3
-        ), "Evaluation 2 and 3 should be identical"
+        assert np.allclose(violations1, violations2), "Evaluation 1 and 2 should be identical"
+        assert np.allclose(violations2, violations3), "Evaluation 2 and 3 should be identical"
 
         print("      ✅ All evaluations identical")
         print("✅ Constraint consistency test passed!")
