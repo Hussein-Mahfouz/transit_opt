@@ -495,6 +495,74 @@ class TestFleetTotalConstraintHandler:
 
         print("✅ PT-only constraint compatibility verified!")
 
+    def test_drt_cost_factor_fleet_total(self, sample_optimization_data):
+        """
+        Test that drt_cost_factor correctly weighs DRT vehicles against PT vehicles.
+
+        This test verifies the "Service Trading" logic where 1 DRT vehicle might count as
+        fraction of a bus (e.g. 0.5) in terms of budget/capacity.
+
+        Logic Tested:
+        Total Cost = PT_Fleet + (DRT_Fleet * drt_cost_factor)
+
+        Scenario 1:
+        - Baseline Limit: 100
+        - PT Fleet: 50
+        - DRT Fleet: 100
+        - Cost Factor: 0.5
+        - Expected Calculation: 50 + (100 * 0.5) = 100
+        - Violation: 0 (Exact match)
+
+        Scenario 2:
+        - Same inputs, but scale up DRT to 120
+        - Expected Calculation: 50 + (120 * 0.5) = 110
+        - Violation: 10
+        """
+        print("\n🚌 TESTING DRT COST FACTOR (TOTAL FLEET):")
+
+        # Setup: 1 DRT = 0.5 Bus
+        config = {
+            "baseline": "manual",
+            "baseline_value": 100,
+            "tolerance": 0.0,
+            "measure": "peak",
+            "drt_cost_factor": 0.5,
+        }
+
+        # Enable DRT
+        sample_optimization_data["drt_enabled"] = True
+
+        handler = FleetTotalConstraintHandler(config, sample_optimization_data)
+        n_intervals = sample_optimization_data["n_intervals"]
+
+        # Mock calculation methods
+        # PT fleet = 50 (constant across intervals)
+        handler._calculate_fleet_from_solution = lambda x: np.full(n_intervals, 50)
+        # DRT fleet = 100 (constant)
+        handler._calculate_drt_fleet_from_solution = lambda x: np.full(n_intervals, 100)
+
+        # Dummy solution
+        solution = {"pt": np.array([]), "drt": np.array([])}
+
+        # Evaluate
+        # Total fleet = PT + (DRT * 0.5) = 50 + (100 * 0.5) = 100
+        # Limit = 100
+        # Violation = 0
+        violations = handler.evaluate(solution)
+
+        print(f"   Scenario 1 (Limit=100, PT=50, DRT=100, Factor=0.5) -> Violation: {violations[0]}")
+        assert abs(violations[0]) < 1e-6, f"Expected 0 violation, got {violations[0]}"
+
+        # Scenario 2: Increase DRT to 120 -> effective cost 60 -> total 110 -> violation 10
+        handler._calculate_drt_fleet_from_solution = lambda x: np.full(n_intervals, 120)
+
+        violations = handler.evaluate(solution)
+        # 50 + (120 * 0.5) = 110. Limit 100. Violation 10.
+        print(f"   Scenario 2 (DRT=120) -> Violation: {violations[0]}")
+        assert abs(violations[0] - 10.0) < 1e-6, f"Expected 10.0 violation, got {violations[0]}"
+
+        print("✅ DRT cost factor logic verified for Total Constraint!")
+
 
 # ================================================================================================
 # FLEET PER-INTERVAL CONSTRAINT HANDLER TESTS
@@ -884,6 +952,67 @@ class TestFleetPerIntervalConstraintHandler:
 
         with pytest.raises(ValueError, match="fleet='pt_drt' but solution dict missing 'drt' key"):
             handler.evaluate({"pt": fake_pt})
+
+    def test_drt_cost_factor_fleet_interval(self, sample_optimization_data):
+        """
+        Test that drt_cost_factor scales DRT fleet contribution per interval separately.
+
+        This validates the formula for each time interval window 'i':
+        Violation[i] = (PT_Fleet[i] + DRT_Fleet[i] * Factor) - Limit[i]
+
+        Scenario:
+        - Limit = 100 per interval
+        - PT Fleet = 50 per interval
+        - DRT Fleet = 100 per interval
+        - DRT Cost Factor = 0.5
+        - Expected Cost: 50 + (100 * 0.5) = 100
+        - Expected Violation: 0
+        """
+        print("\n🚌 TESTING DRT COST FACTOR (PER-INTERVAL):")
+
+        # Determine number of intervals from sample data
+        n_intervals = sample_optimization_data["decision_matrix_shape"][1]
+
+        # Setup: 1 DRT = 0.5 Bus
+        config = {
+            "baseline": "manual",
+            "baseline_values": [100] * n_intervals,  # limit 100 each
+            "tolerance": 0.0,
+            "fleet": "pt_drt",
+            "drt_cost_factor": 0.5,
+        }
+
+        # Enable DRT
+        sample_optimization_data["drt_enabled"] = True
+
+        handler = FleetPerIntervalConstraintHandler(config, sample_optimization_data)
+
+        # Mock calculation methods
+        # PT fleet = 50 per interval
+        handler._calculate_fleet_from_solution = lambda x: np.full(n_intervals, 50)
+        # DRT fleet = 100 per interval
+        handler._calculate_drt_fleet_from_solution = lambda x: np.full(n_intervals, 100)
+
+        # Dummy solution
+        solution = {"pt": np.array([]), "drt": np.array([])}
+
+        # Evaluate
+        # Per interval fleet = 50 + (100 * 0.5) = 100
+        # Limit = 100 -> Violation = 0
+        violations = handler.evaluate(solution)
+
+        print(f"   Scenario 1 (Limit=100, PT=50, DRT=100, Factor=0.5) -> Violations: {violations}")
+        assert np.all(np.abs(violations) < 1e-6), f"Expected 0 violations, got {violations}"
+
+        # Scenario 2: Increase DRT by 20% to 120 -> effective cost 60 -> total 110 -> violation 10
+        handler._calculate_drt_fleet_from_solution = lambda x: np.full(n_intervals, 120)
+
+        violations = handler.evaluate(solution)
+
+        print(f"   Scenario 2 (DRT=120) -> Violations: {violations}")
+        assert np.all(np.abs(violations - 10.0) < 1e-6), f"Expected 10.0 violation, got {violations}"
+
+        print("✅ DRT cost factor logic verified for Interval Constraint!")
 
 
 # ================================================================================================

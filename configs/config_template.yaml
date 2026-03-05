@@ -25,6 +25,10 @@ input:
         zone_name: "Leeds NW DRT"
 
 problem:  # Masking: Optimise only specific time intervals to save time or fix manually adjusted schedules
+  # Global parameter for Fleet Constraints
+  # DRT Cost Factor: How much 1 DRT vehicle counts towards the fleet limit (1.0 = equal to bus, 0.5 = half cost)
+  drt_cost_factor: 1.0
+
   # Array of interval indices (0-based) to NOT optimise.
   # Indices range from 0 to (24 / interval_hours) - 1.
   # E.g. with interval_hours=4 (6 intervals/day):

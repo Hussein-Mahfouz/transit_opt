@@ -1709,12 +1709,22 @@ class PSORunner:
             constraints = []
             constraint_configs = problem_config.get("constraints", [])
 
+            # Extract global DRT cost factor from problem config
+            global_drt_cost_factor = problem_config.get("drt_cost_factor", 1.0)
+            if global_drt_cost_factor != 1.0:
+                logger.info("   💡 Using global DRT cost factor: %.2f", global_drt_cost_factor)
+
             logger.info("   📋 Creating %d constraint handler(s)...", len(constraint_configs))
 
             for i, constraint_config in enumerate(constraint_configs):
                 constraint_type = constraint_config.get("type")
                 # Extract constraint-specific parameters (exclude 'type' field)
                 constraint_kwargs = {k: v for k, v in constraint_config.items() if k != "type"}
+
+                # Inject global DRT cost factor if not overridden locally
+                if "drt_cost_factor" not in constraint_kwargs:
+                    constraint_kwargs["drt_cost_factor"] = global_drt_cost_factor
+
                 logger.info("      Creating constraint %d: %s", i + 1, constraint_type)
 
                 # Create appropriate constraint handler based on type
