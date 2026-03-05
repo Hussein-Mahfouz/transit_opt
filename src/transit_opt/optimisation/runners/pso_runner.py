@@ -561,8 +561,11 @@ class PSORuntimeCallback(Callback):
                                 # ===== Handle constraint-specific input format =====
                                 constraint_name = type(constraint).__name__
 
-                                if constraint_name == "FleetTotalConstraintHandler":
-                                    # FleetTotalConstraintHandler handles PT+DRT dict correctly
+                                if constraint_name in [
+                                    "FleetTotalConstraintHandler",
+                                    "FleetPerIntervalConstraintHandler",
+                                ]:
+                                    # FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler handles PT+DRT dict correctly
                                     # Pass full solution (dict or array)
                                     constraint_viols = constraint.evaluate(solution_matrix)
                                 else:
@@ -672,7 +675,23 @@ class PenaltySchedulingCallback(Callback):
                         is_feasible = True
 
                         for constraint in algorithm.problem.constraints:
-                            violations = constraint.evaluate(solution_matrix)
+                            # ===== Handle constraint-specific input format =====
+                            constraint_name = type(constraint).__name__
+
+                            if constraint_name in ["FleetTotalConstraintHandler", "FleetPerIntervalConstraintHandler"]:
+                                # FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler handles PT+DRT dict correctly
+                                # Pass full solution (dict or array)
+                                violations = constraint.evaluate(solution_matrix)
+                            else:
+                                # Other constraints (FleetPerInterval, MinimumFleet) are PT-only
+                                # Extract PT portion if solution is dict
+                                if isinstance(solution_matrix, dict):
+                                    pt_solution = solution_matrix["pt"]
+                                    violations = constraint.evaluate(pt_solution)
+                                else:
+                                    # PT-only problem: solution_matrix is already PT array
+                                    violations = constraint.evaluate(solution_matrix)
+
                             if np.any(violations > 1e-6):  # Same tolerance as hard constraints
                                 is_feasible = False
                                 break

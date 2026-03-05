@@ -1030,11 +1030,16 @@ class TransitOptimizationProblem(Problem):
 
             for i, constraint in enumerate(self.constraints):
                 try:
-                    # For now, constraints only handle PT part TODO: extend for DRT
+                    # Determine correct input for constraints
                     if self.drt_enabled:
-                        violations = constraint.evaluate(solution_matrix["pt"])
+                        if isinstance(constraint, (FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler)):
+                            violations = constraint.evaluate(solution_matrix)
+                        else:
+                            # Older/Other constraints only know about PT part
+                            violations = constraint.evaluate(solution_matrix["pt"])
                     else:
                         violations = constraint.evaluate(solution_matrix)
+
                     constraint_info = constraint.get_constraint_info()
 
                     constraint_violations.extend(violations)
@@ -1175,6 +1180,7 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
         return True  # All constraints satisfied
         return True  # All constraints satisfied
