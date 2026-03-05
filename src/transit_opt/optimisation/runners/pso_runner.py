@@ -1736,8 +1736,7 @@ class PSORunner:
                     logger.info("         ✓ FleetTotal: %d constraint(s)", constraint.n_constraints)
 
                 elif constraint_type == "FleetPerIntervalConstraintHandler":
-                    from ..problems.base import \
-                        FleetPerIntervalConstraintHandler
+                    from ..problems.base import FleetPerIntervalConstraintHandler
 
                     constraint = FleetPerIntervalConstraintHandler(constraint_kwargs, self.optimization_data)
                     constraints.append(constraint)
@@ -2274,5 +2273,4 @@ class PSORunner:
             "generations_std": float(np.std(generations)),
             "success_rate": 1.0,
             "feasibility_rate": feasible_count / len(run_summaries),
-        }
         }
