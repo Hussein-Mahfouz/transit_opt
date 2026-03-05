@@ -481,37 +481,22 @@ class TransitOptimizationProblem(Problem):
                     # Print interval-specific breakdown for hard constraints
                     if interval_feasibility_hard:
                         logger.info("      Per-interval feasibility breakdown:")
-                        # Group by type (ceiling/floor) and interval for cleaner display
-                        ceiling_data = {}
-                        floor_data = {}
 
-                        for interval_name, satisfied_count in interval_feasibility_hard.items():
-                            if "Ceiling" in interval_name:
-                                interval_num = int(interval_name.split("_")[-1])
-                                ceiling_data[interval_num] = satisfied_count
-                            elif "Floor" in interval_name:
-                                interval_num = int(interval_name.split("_")[-1])
-                                floor_data[interval_num] = satisfied_count
+                        # Sort keys to ensure consistent output order
+                        sorted_keys = sorted(interval_feasibility_hard.keys())
 
-                        # Print ceiling constraints
-                        if ceiling_data:
-                            logger.info("        Ceiling constraints (tolerance):")
-                            for interval_idx in sorted(ceiling_data.keys()):
-                                satisfied_count = ceiling_data[interval_idx]
+                        for key in sorted_keys:
+                            satisfied_count = interval_feasibility_hard[key]
+
+                            # Try to extract interval index to get label
+                            try:
+                                parts = key.split("_")
+                                interval_idx = int(parts[-1])
                                 interval_label = self._get_interval_label(interval_idx)
-                                logger.info(
-                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                                )
-
-                        # Print floor constraints
-                        if floor_data:
-                            logger.info("        Floor constraints (min_fraction):")
-                            for interval_idx in sorted(floor_data.keys()):
-                                satisfied_count = floor_data[interval_idx]
-                                interval_label = self._get_interval_label(interval_idx)
-                                logger.info(
-                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                                )
+                                logger.info(f"        {key} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                            except (ValueError, IndexError):
+                                # Fallback if format is unexpected or parsing fails
+                                logger.info(f"        {key}: {satisfied_count}/{pop_size} solutions")
 
             # ===== PENALTY METHOD LOGGING =====
             elif self.use_penalty_method and self.constraints:
@@ -523,7 +508,9 @@ class TransitOptimizationProblem(Problem):
                 interval_feasibility = {}
 
                 for constraint_idx, constraint in enumerate(self.constraints):
-                    constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                    # Use unique name for each instance
+                    base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                    constraint_name = f"{base_name}_{constraint_idx}"
                     constraint_feasibility[constraint_name] = 0
 
                     # For FleetPerInterval, track each interval separately
@@ -534,10 +521,10 @@ class TransitOptimizationProblem(Problem):
                         # Track each interval for both types
                         for interval_idx in range(self.n_intervals):
                             if has_ceiling:
-                                interval_name = f"{constraint_name}_Ceiling_Interval_{interval_idx}"
+                                interval_name = f"{constraint_name}_Ceiling_{interval_idx}"
                                 interval_feasibility[interval_name] = 0
                             if has_floor:
-                                interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
+                                interval_name = f"{constraint_name}_Floor_{interval_idx}"
                                 interval_feasibility[interval_name] = 0
 
                 for i in range(pop_size):
@@ -546,16 +533,24 @@ class TransitOptimizationProblem(Problem):
 
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
-                        constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                        # Use unique name for each instance
+                        base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                        constraint_name = f"{base_name}_{constraint_idx}"
+
+                        if constraint_name not in constraint_feasibility:
+                            constraint_feasibility[constraint_name] = 0
 
                         # Determine correct input for constraints
-                        if self.drt_enabled:
+                        if hasattr(self, "drt_enabled") and self.drt_enabled:
                             # FleetTotal and FleetPerInterval can handle full PT+DRT solution now
                             if isinstance(constraint, (FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler)):
                                 violations = constraint.evaluate(solution_matrix)
                             else:
                                 # Older/Other constraints only know about PT part
-                                violations = constraint.evaluate(solution_matrix["pt"])
+                                pt_part = (
+                                    solution_matrix["pt"] if isinstance(solution_matrix, dict) else solution_matrix
+                                )
+                                violations = constraint.evaluate(pt_part)
                         else:
                             # PT-only case: pass solution directly
                             violations = constraint.evaluate(solution_matrix)
@@ -569,26 +564,37 @@ class TransitOptimizationProblem(Problem):
 
                         # For FleetPerInterval, track individual interval feasibility
                         if isinstance(constraint, FleetPerIntervalConstraintHandler):
+                            # The violation array depends on what constraints are configured
                             has_ceiling = constraint.config.get("tolerance") is not None
                             has_floor = constraint.config.get("min_fraction") is not None
                             n_intervals = self.n_intervals
 
-                            # Track ceiling constraints (first n_intervals violations)
+                            # violations array structure: [ceiling_violations..., floor_violations...]
+
+                            offset = 0
+                            # Track ceiling constraints (first n_intervals violations if ceiling active)
                             if has_ceiling:
                                 for interval_idx in range(n_intervals):
-                                    violation = violations[interval_idx]
-                                    interval_name = f"{constraint_name}_Ceiling_Interval_{interval_idx}"
-                                    if violation <= 1e-6:
-                                        interval_feasibility[interval_name] += 1
+                                    # Ensure we don't go out of bounds
+                                    if offset + interval_idx < len(violations):
+                                        violation = violations[offset + interval_idx]
+                                        interval_key = f"{constraint_name}_Ceiling_{interval_idx}"
+                                        if interval_key not in interval_feasibility:
+                                            interval_feasibility[interval_key] = 0
+                                        if violation <= 1e-6:
+                                            interval_feasibility[interval_key] += 1
+                                offset += n_intervals
 
-                            # Track floor constraints (last n_intervals violations)
+                            # Track floor constraints (next n_intervals violations if floor active)
                             if has_floor:
-                                floor_offset = n_intervals if has_ceiling else 0
                                 for interval_idx in range(n_intervals):
-                                    violation = violations[floor_offset + interval_idx]
-                                    interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
-                                    if violation <= 1e-6:
-                                        interval_feasibility[interval_name] += 1
+                                    if offset + interval_idx < len(violations):
+                                        violation = violations[offset + interval_idx]
+                                        interval_key = f"{constraint_name}_Floor_{interval_idx}"
+                                        if interval_key not in interval_feasibility:
+                                            interval_feasibility[interval_key] = 0
+                                        if violation <= 1e-6:
+                                            interval_feasibility[interval_key] += 1
 
                     if is_feasible:
                         feasible_count += 1
@@ -604,37 +610,23 @@ class TransitOptimizationProblem(Problem):
                 # Print interval-specific breakdown for FleetPerInterval
                 if interval_feasibility:
                     logger.info("      Per-interval feasibility breakdown:")
-                    # Group by type and interval
-                    ceiling_data = {}
-                    floor_data = {}
 
-                    for interval_name, satisfied_count in interval_feasibility.items():
-                        if "Ceiling" in interval_name:
-                            interval_num = int(interval_name.split("_")[-1])
-                            ceiling_data[interval_num] = satisfied_count
-                        elif "Floor" in interval_name:
-                            interval_num = int(interval_name.split("_")[-1])
-                            floor_data[interval_num] = satisfied_count
+                    # Sort keys to ensure consistent output order
+                    sorted_keys = sorted(interval_feasibility.keys())
 
-                    # Print ceiling constraints
-                    if ceiling_data:
-                        logger.info("        Ceiling constraints (tolerance):")
-                        for interval_idx in sorted(ceiling_data.keys()):
-                            satisfied_count = ceiling_data[interval_idx]
+                    for key in sorted_keys:
+                        satisfied_count = interval_feasibility[key]
+
+                        # Try to extract interval index to get label
+                        # Expected format: Name_Index_Type_IntervalIndex (e.g. FleetPerInterval_0_Ceiling_1)
+                        try:
+                            parts = key.split("_")
+                            interval_idx = int(parts[-1])
                             interval_label = self._get_interval_label(interval_idx)
-                            logger.info(
-                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                            )
-
-                    # Print floor constraints
-                    if floor_data:
-                        logger.info("        Floor constraints (min_fraction):")
-                        for interval_idx in sorted(floor_data.keys()):
-                            satisfied_count = floor_data[interval_idx]
-                            interval_label = self._get_interval_label(interval_idx)
-                            logger.info(
-                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                            )
+                            logger.info(f"        {key} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                        except (ValueError, IndexError):
+                            # Fallback if format is unexpected or parsing fails
+                            logger.info(f"        {key}: {satisfied_count}/{pop_size} solutions")
 
     def _get_constraint_penalty_weight(self, constraint_name: str) -> float:
         """Get penalty weight for specific constraint type."""
@@ -1136,7 +1128,8 @@ class TransitOptimizationProblem(Problem):
         """Get readable name for constraint by index."""
         if constraint_idx < len(self.constraints):
             constraint = self.constraints[constraint_idx]
-            return constraint.__class__.__name__.replace("ConstraintHandler", "")
+            base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+            return f"{base_name}_{constraint_idx}"
         return f"Constraint_{constraint_idx}"
 
     def _get_interval_label(self, interval_idx: int) -> str:
@@ -1182,4 +1175,6 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
