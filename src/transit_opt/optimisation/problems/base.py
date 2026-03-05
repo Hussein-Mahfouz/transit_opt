@@ -229,10 +229,13 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             - 'peak': Constrain peak interval fleet
             - 'average': Constrain average across intervals
             - 'total': Constrain sum across all intervals (default)
+        drt_cost_factor (float, optional): Equivalence factor for DRT vehicles.
+            Default is 1.0 (1 DRT = 1 Bus).
+            If 0.5, then 1 DRT = 0.5 Bus (allows 2 DRT for every 1 Bus removed).
 
     DRT Integration:
         When DRT is enabled (opt_data['drt_enabled'] = True):
-        - Automatically includes DRT fleet in total calculations
+        - Automatically includes DRT fleet (scaled by cost factor) in total calculations
         - Baseline includes initial DRT fleet allocation
         - All measures (peak/average/total) include both PT and DRT
         - Solution format expects dict with 'pt' and 'drt' keys
@@ -366,8 +369,11 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             # Calculate DRT fleet requirements
             drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix["drt"])
 
+            # Apply DRT cost factor
+            drt_factor = self.config.get("drt_cost_factor", 1.0)
+
             # Combine PT and DRT fleet
-            total_fleet_per_interval = pt_fleet_per_interval + drt_fleet_per_interval
+            total_fleet_per_interval = pt_fleet_per_interval + (drt_fleet_per_interval * drt_factor)
 
         else:
             # Handle PT-only case (existing logic)
@@ -630,8 +636,11 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
                 # But BaseConstraintHandler._calculate_drt_fleet_from_solution handles checks.
                 pass
 
+        # Apply DRT factor
+        drt_factor = self.config.get("drt_cost_factor", 1.0)
+
         # Combine fleet
-        fleet_per_interval = pt_fleet_per_interval + drt_fleet_per_interval
+        fleet_per_interval = pt_fleet_per_interval + (drt_fleet_per_interval * drt_factor)
 
         violations = []
 
