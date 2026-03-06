@@ -210,10 +210,8 @@ class TestPopulationBuilder:
 
     def test_build_population_basic(self, sample_optimization_data):
         """Test basic population building workflow."""
-        from transit_opt.optimisation.objectives.service_coverage import \
-            StopCoverageObjective
-        from transit_opt.optimisation.problems.transit_problem import \
-            TransitOptimizationProblem
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create mock problem
         objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
@@ -239,10 +237,8 @@ class TestPopulationBuilder:
 
     def test_build_population_with_solution_list(self, sample_optimization_data):
         """Test population building with provided list of base solutions."""
-        from transit_opt.optimisation.objectives.service_coverage import \
-            StopCoverageObjective
-        from transit_opt.optimisation.problems.transit_problem import \
-            TransitOptimizationProblem
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create problem
         objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
@@ -371,10 +367,8 @@ class TestPopulationBuilder:
 
     def test_build_population_with_service_reductions(self, sample_optimization_data):
         """Test generating solutions with reduced service (higher indices)."""
-        from transit_opt.optimisation.objectives.service_coverage import \
-            StopCoverageObjective
-        from transit_opt.optimisation.problems.transit_problem import \
-            TransitOptimizationProblem
+        from transit_opt.optimisation.objectives.service_coverage import StopCoverageObjective
+        from transit_opt.optimisation.problems.transit_problem import TransitOptimizationProblem
 
         # Create problem
         objective = StopCoverageObjective(optimization_data=sample_optimization_data, spatial_resolution_km=2.0)
@@ -425,10 +419,8 @@ class TestPopulationBuilder:
 
     def test_build_population_with_service_reductions_drt(self):
         """Test service reduction is valid when DRT is present (skips DRT vars)."""
-        from transit_opt.optimisation.utils.population_builder import \
-            PopulationBuilder
-        from transit_opt.optimisation.utils.solution_loader import \
-            SolutionLoader
+        from transit_opt.optimisation.utils.population_builder import PopulationBuilder
+        from transit_opt.optimisation.utils.solution_loader import SolutionLoader
 
         # Create mock problem with PT+DRT
         class MockPTDRTProblem:
@@ -438,14 +430,14 @@ class TestPopulationBuilder:
                 self.n_routes = 2
                 self.n_intervals = 3
                 # active_intervals same as n_intervals for simplicity
-                self.active_intervals = [0, 1, 2] # 3 intervals
+                self.active_intervals = [0, 1, 2]  # 3 intervals
                 # So PT vars = 2 * 3 = 6. DRT must be rest.
 
                 self.xl = np.zeros(10)
-                self.xu = np.full(10, 5) # Bounds
+                self.xu = np.full(10, 5)  # Bounds
 
             def encode_solution(self, solution_dict):
-                return solution_dict # Dummy
+                return solution_dict  # Dummy
 
         problem = MockPTDRTProblem()
 
@@ -457,10 +449,7 @@ class TestPopulationBuilder:
 
         # Set reduction sigma high to ensure movement
         reductions = builder._generate_service_reductions(
-            base_solutions=base_solutions,
-            n_reductions=5,
-            problem=problem,
-            sigma=5.0
+            base_solutions=base_solutions, n_reductions=5, problem=problem, sigma=5.0
         )
 
         print("\n   🧪 Testing DRT exclusion from service reductions")
@@ -474,17 +463,9 @@ class TestPopulationBuilder:
             assert np.all(pt_part >= 1)
             # With high sigma, check it moved
             if np.sum(pt_part) == np.sum(base_sol[:n_pt]):
-                 print(f"      ⚠️ Warning: Solution {i} PT part didn't move (unlikely but possible)")
+                print(f"      ⚠️ Warning: Solution {i} PT part didn't move (unlikely but possible)")
 
             # DRT part MUST be exactly base (1)
-            assert np.array_equal(drt_part, base_sol[n_pt:])
-            print(f"      ✅ Solution {i}: PT sum {np.sum(pt_part)} (Base 6), DRT sum {np.sum(drt_part)} (Base 4)")
-
-        print("   ✅ Verified: DRT variables were untouched.")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
             assert np.array_equal(drt_part, base_sol[n_pt:])
             print(f"      ✅ Solution {i}: PT sum {np.sum(pt_part)} (Base 6), DRT sum {np.sum(drt_part)} (Base 4)")
 
