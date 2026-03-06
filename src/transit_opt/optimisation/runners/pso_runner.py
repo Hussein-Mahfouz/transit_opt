@@ -1881,12 +1881,15 @@ class PSORunner:
                 base_solutions=sampling_config.base_solutions,
                 frac_gaussian_pert=sampling_config.frac_gaussian_pert,
                 gaussian_sigma=sampling_config.gaussian_sigma,
+                frac_reductions=sampling_config.frac_reductions,
+                reduction_sigma=sampling_config.reduction_sigma,
                 random_seed=sampling_config.random_seed,
             )
 
             algorithm.initialization.sampling = initial_population
             logger.info("✅ Custom population set: shape %s", initial_population.shape)
             logger.info("   📊 Gaussian fraction: %.1f%%", sampling_config.frac_gaussian_pert * 100)
+            logger.info("   📊 Reduction fraction: %.1f%%", sampling_config.frac_reductions * 100)
             logger.info("   📊 LHS fraction: %.1f%% (calculated)", sampling_config.frac_lhs * 100)
 
         return algorithm
