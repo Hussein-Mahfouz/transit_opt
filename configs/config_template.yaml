@@ -166,6 +166,25 @@ optimization:
     # Our initial population = pop_size. If sampling, we use base_solutions, and fill the rest (pop_size  base_solutions)
     frac_gaussian_pert: 0.1 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
     gaussian_sigma: 1.5 # If sigma = 1.5, then 66% of values will be within 1.5 of original value. IMPORTANT: we use index values, so a change of 1 means jumping to the next headway / DRT fleet size
+
+    # Optional: Seed population with biased "Service Reduction" solutions
+    # This specifically targets the PT (Public Transport) part of the solution by shifting
+    # headway choices towards higher indices (reduced frequency).
+    #
+    # USE CASE:
+    #   When fleet constraints are very tight (e.g. strict budget), the optimizer might struggle
+    #   to find ANY feasible solution if the starting point is "current service".
+    #   This strategy injects "under-service" solutions to ensure the population includes
+    #   feasible candidates that can be improved, rather than just infeasible ones.
+    #
+    # REQUIREMENTS:
+    #   - 'allowed_headways' must be sorted in increasing order (e.g. [10, 15, 30]).
+    #   - Higher index = Lower frequency = Lower fleet requirement.
+    #
+    # NOTE: This only affects PT variables; DRT variables remain unchanged from the base solution.
+    frac_reductions: 0.0 # Fraction of population to fill with reduced service solutions
+    reduction_sigma: 1.0 # Strength of reduction (index shift). Larger sigma = harsher cuts.
+
     #random_seed: 50 # Do not specify if using optimize_multi_swarm() i.e. if optimization["run"]["multi_swarm"]: true
 
   run:
