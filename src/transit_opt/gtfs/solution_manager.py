@@ -252,16 +252,7 @@ class SolutionExportManager:
             # Store the rank from extraction
             solution_metadata["rank"] = rank
 
-            # Export the solution
-            result = self.export_single_solution(
-                solution=solution_data["solution"],
-                solution_id=solution_id,
-                output_dir=base_output_dir,
-                metadata=solution_metadata,
-            )
-
-            results.append(result)
-
+            # Always perform summary / stats extraction FIRST, gtfs exporting later
             # Prepare row for CSV summary
             summary_rows.append(
                 {
@@ -289,12 +280,33 @@ class SolutionExportManager:
                 fleet_rows = self._calculate_solution_fleet_rows(solution_id=solution_id, solution_data=solution_data)
                 fleet_stats_rows.extend(fleet_rows)
 
-        # write csv summary of results
+        # write csv summary of results FIRST
         self._export_solution_summary_csv(summary_rows, base_output_dir, solution_prefix)
 
-        # write fleet stats csv
+        # write fleet stats csv FIRST
         if fleet_stats_rows:
             self._export_fleet_stats_csv(fleet_stats_rows, base_output_dir, solution_prefix)
+
+        # NOW perform the heavy GTFS / JSON exporting
+        for i, solution_data in enumerate(solutions):
+            rank = solution_data.get("rank", i)
+            solution_id = f"{solution_prefix}_{rank:02d}"
+
+            # Create minimal per-solution metadata
+            solution_metadata = {}
+            if "objective" in solution_data:
+                solution_metadata["objective_value"] = solution_data["objective"]
+            solution_metadata["rank"] = rank
+
+            # Export the solution heavy files (zip/json)
+            result = self.export_single_solution(
+                solution=solution_data["solution"],
+                solution_id=solution_id,
+                output_dir=base_output_dir,
+                metadata=solution_metadata,
+            )
+
+            results.append(result)
 
         return results
 
