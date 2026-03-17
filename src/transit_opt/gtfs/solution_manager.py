@@ -90,6 +90,10 @@ class SolutionExportManager:
 
         rows = []
         n_intervals = len(sol_fleet["fleet_per_interval"])
+
+        # Get interval labels if they exist, otherwise fallback to computing from interval_hours
+        intervals_data = self.optimization_data.get("intervals", {})
+        interval_labels = intervals_data.get("labels", [])
         interval_hours = self.optimization_data.get("interval_hours", 4)
 
         # Determine total intervals from data to ensure loop consistency
@@ -128,13 +132,17 @@ class SolutionExportManager:
             total_diff = total_sol - total_base
             total_pct = (total_diff / total_base * 100) if total_base > 0 else 0.0
 
-            start_h = i * interval_hours
-            end_h = (i + 1) * interval_hours
+            if i < len(interval_labels):
+                interval_label = interval_labels[i]
+            else:
+                start_h = i * interval_hours
+                end_h = (i + 1) * interval_hours
+                interval_label = f"{start_h:02d}-{end_h:02d}"
 
             rows.append(
                 {
                     "solution": solution_id,
-                    "interval_label": f"{start_h:02d}-{end_h:02d}",
+                    "interval_label": interval_label,
                     "bus_fleet_base": base_bus,
                     "bus_fleet_solution": sol_bus,
                     "drt_fleet_solution": sol_drt,
@@ -506,5 +514,7 @@ class SolutionExportManager:
                 writer.writeheader()
                 writer.writerows(rows)
             logger.info("✅ Fleet stats CSV written: %s", csv_path)
+        except Exception as e:
+            logger.error(f"❌ Failed to write fleet stats CSV: {e}")
         except Exception as e:
             logger.error(f"❌ Failed to write fleet stats CSV: {e}")
