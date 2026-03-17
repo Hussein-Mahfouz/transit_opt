@@ -1737,6 +1737,3 @@ class GTFSDataPreparator:
         logger.info(f"✅ Loaded DRT solution from: {drt_solution_path}")
 
         return drt_matrix
-        return drt_matrix
-        return drt_matrix
-        return drt_matrix
