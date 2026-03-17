@@ -732,6 +732,14 @@ class TransitOptimizationProblem(Problem):
                         full_idx = pt_offset + (z * self.n_intervals + i_idx)
 
                         if i_idx in self.active_intervals:
+                            if current_x_idx >= len(x_flat):
+                                logger.error(
+                                    f"During DRT decoding, ran out of variables in x_flat "
+                                    f"(len={len(x_flat)}). Expected more active variables."
+                                )
+                                logger.error(f"Current z={z}, i={i_idx}")
+                                raise IndexError(f"Decoding out of bounds: {current_x_idx} >= {len(x_flat)}")
+
                             # This variable is active
                             full_x[full_idx] = x_flat[current_x_idx]
                             current_x_idx += 1
@@ -1180,4 +1188,5 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
