@@ -508,7 +508,3 @@ class SolutionExportManager:
             logger.info("✅ Fleet stats CSV written: %s", csv_path)
         except Exception as e:
             logger.error(f"❌ Failed to write fleet stats CSV: {e}")
-        except Exception as e:
-            logger.error(f"❌ Failed to write fleet stats CSV: {e}")
-        except Exception as e:
-            logger.error(f"❌ Failed to write fleet stats CSV: {e}")
