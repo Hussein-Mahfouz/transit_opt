@@ -200,4 +200,3 @@ if __name__ == "__main__":
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing iteration directory")
     args = p.parse_args()
     main(args.config, iteration=args.iteration, overwrite=args.overwrite)
-    main(args.config, iteration=args.iteration, overwrite=args.overwrite)
