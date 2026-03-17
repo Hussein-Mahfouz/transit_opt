@@ -756,6 +756,8 @@ class OptimizationConfigManager:
             base_solutions=sampling_config.get("base_solutions", []),
             frac_gaussian_pert=sampling_config.get("frac_gaussian_pert", 0.3),
             gaussian_sigma=sampling_config.get("gaussian_sigma", 1.0),
+            frac_reductions=sampling_config.get("frac_reductions", 0.0),
+            reduction_sigma=sampling_config.get("reduction_sigma", 1.0),
             random_seed=sampling_config.get("random_seed", None),
         )
 
