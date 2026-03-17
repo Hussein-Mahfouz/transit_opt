@@ -136,7 +136,7 @@ class SolutionConverter:
             if "direction_id" in route_trips.columns:
                 unique_dirs = route_trips["direction_id"].unique()
                 # Handle case where direction_id might be NaN (common in some feeds)
-                if len(unique_dirs) > 0 and not (isinstance(unique_dirs, np.ndarray) and np.isnan(unique_dirs).all()):
+                if len(unique_dirs) > 0 and not pd.isna(unique_dirs).all():
                     directions = [d for d in unique_dirs if not pd.isna(d)]
                     direction_source = "direction_id"
 
