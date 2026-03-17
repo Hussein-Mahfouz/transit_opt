@@ -302,17 +302,17 @@ class SolutionConverter:
                 for direction_id, template in dir_templates.items():
                     original_count = len(template["stop_times"])
                     template["stop_times"] = self._clean_stop_times(template["stop_times"])
-                cleaned_count = len(template["stop_times"])
+                    cleaned_count = len(template["stop_times"])
 
-                if cleaned_count != original_count:
-                    logger.debug(
-                        "Cleaned stop times for %s %s (Dir %s): %d -> %d stops",
-                        route_id,
-                        interval_label,
-                        direction_id,
-                        original_count,
-                        cleaned_count,
-                    )
+                    if cleaned_count != original_count:
+                        logger.debug(
+                            "Cleaned stop times for %s %s (Dir %s): %d -> %d stops",
+                            route_id,
+                            interval_label,
+                            direction_id,
+                            original_count,
+                            cleaned_count,
+                        )
 
         logger.info("Extracted time-varying templates for %d routes", len(template_trips))
         return template_trips
