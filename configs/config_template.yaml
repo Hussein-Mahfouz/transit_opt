@@ -164,7 +164,7 @@ optimization:
     #        - "output/combined_solution_01_drt.json"
     #        - "output/combined_solution_02_drt.json"
     # Our initial population = pop_size. If sampling, we use base_solutions, and fill the rest (pop_size  base_solutions)
-    frac_gaussian_pert: 0.1 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
+    frac_gaussian_pert: 0.3 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
     gaussian_sigma: 1.5 # If sigma = 1.5, then 66% of values will be within 1.5 of original value. IMPORTANT: we use index values, so a change of 1 means jumping to the next headway / DRT fleet size
 
     # Optional: Seed population with biased "Service Reduction" solutions

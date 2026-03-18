@@ -359,8 +359,11 @@ class TransitOptimizationProblem(Problem):
 
                 for j, constraint in enumerate(self.constraints):
                     # Smart constraint handling based on type and DRT status (same as hard constraints)
-                    if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                        # FleetTotalConstraintHandler can handle full PT+DRT solution
+                    if (
+                        isinstance(constraint, FleetTotalConstraintHandler | FleetPerIntervalConstraintHandler)
+                        and self.drt_enabled
+                    ):
+                        # Handlers that can evaluate full PT+DRT solutions
                         violations = constraint.evaluate(solution)
                     elif self.drt_enabled:
                         # Other constraints only handle PT part when DRT enabled
@@ -389,8 +392,11 @@ class TransitOptimizationProblem(Problem):
                     for constraint in self.constraints:
                         try:
                             # Smart constraint handling based on type and DRT status
-                            if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                                # FleetTotalConstraintHandler can handle full PT+DRT solution
+                            if (
+                                isinstance(constraint, FleetTotalConstraintHandler | FleetPerIntervalConstraintHandler)
+                                and self.drt_enabled
+                            ):
+                                # Handlers that can evaluate full PT+DRT solutions
                                 violations = constraint.evaluate(solution)
                             elif self.drt_enabled:
                                 # Other constraints only handle PT part when DRT enabled
@@ -1188,5 +1194,6 @@ class TransitOptimizationProblem(Problem):
                 # If constraint evaluation fails, consider infeasible
                 return False
 
+        return True  # All constraints satisfied
         return True  # All constraints satisfied
         return True  # All constraints satisfied

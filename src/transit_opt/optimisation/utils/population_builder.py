@@ -226,6 +226,9 @@ class PopulationBuilder:
 
                 # Zero noise for DRT variables (keep DRT as is)
                 noise_drt = np.zeros(n_drt_vars)
+                # # DRT logic: higher index = MORE vehicles. We want to ADD vehicles, so we add positive noise here too.
+                # # If we wanted to REDUCE DRT vehicles, we would subtract noise, but to favor DRT inclusion, we increase.
+                # noise_drt = np.abs(np.random.normal(0, sigma, size=n_drt_vars))
 
                 # Combine noise
                 noise = np.concatenate([noise_pt, noise_drt])
