@@ -417,13 +417,20 @@ class SolutionConverter:
                     splitting_factor = base_template.get("splitting_factor", 1.0)
                     effective_headway = headway * splitting_factor
 
+                    # Adjust explicit headway based on symmetrical direction division.
+                    # Because `interval_templates.items()` iterates through ALL directional branch routes, 
+                    # applying a single aggregate headway to every single direction duplicates service by D.
+                    # A 5-minute aggregate headway across 2 directions necessitates a 10-minute directional headway.
+                    num_dirs_in_interval = len(interval_templates.keys())
+                    directional_headway = effective_headway * num_dirs_in_interval
+
                     # Calculate start offset to interleave departures
-                    # If headway = 15, and 2 directions, Dir 0 starts at 0, Dir 1 starts at 15
-                    start_offset = dir_index * headway
+                    # If directional_headway = 10, Dir 0 starts at 0, Dir 1 starts at 5
+                    start_offset = dir_index * effective_headway
 
                     if splitting_factor > 1.0:
                         logger.debug(
-                            f"Applying splitting factor {splitting_factor} to Route {route_id} Interval {interval_label} (Headway {headway} -> {effective_headway})"
+                            f"Applying splitting factor {splitting_factor} to Route {route_id}"
                         )
 
                     # Generate trips for this interval/direction using ALL templates (round-robin)
@@ -432,7 +439,7 @@ class SolutionConverter:
                         templates_list=templates_list,
                         start_hour=start_hour,
                         end_hour=end_hour,
-                        headway_minutes=effective_headway,
+                        headway_minutes=directional_headway,
                         trip_counter_start=trip_counter,
                         service_id=service_id,
                         direction_id=int(direction_id),  # EXPLICITLY pass direction_id
@@ -857,12 +864,12 @@ class SolutionConverter:
             trip_duration_seconds = template["duration_minutes"] * 60
 
             # Check if this specific trip completes before the interval ends
-            if (current_start + trip_duration_seconds) > interval_end_seconds:
-                # Instead of completely breaking, you could adjust logic here.
-                # However, usually we don't start a trip if it can't finish in the interval
-                # OR we let it finish. Often in schedule generation, you DO let the trip finish.
-                # Let's break as per previous logic.
-                break
+            # We NO LONGER break here. prepare_gtfs.py encodes the volume of trips *departing* 
+            # within this interval boundary. If we stop generating them early because their 
+            # arrival time spills over the boundary, we will drastically under-assign service
+            # (especially for long route durations). We must let the trip finish.
+            # if (current_start + trip_duration_seconds) > interval_end_seconds:
+            #     break
 
             # Extract specific metadata for THIS template
             route_info = template.get("route_info", {})
