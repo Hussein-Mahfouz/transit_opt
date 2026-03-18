@@ -370,6 +370,7 @@ class GTFSDataPreparator:
                 "ids": route_ids,
                 "round_trip_times": round_trip_times,
                 "current_headways": current_headways,
+                "n_directions": np.array([r["n_directions"] for r in route_data]),
             },
             "constraints": {
                 "fleet_analysis": fleet_analysis,
@@ -453,8 +454,8 @@ class GTFSDataPreparator:
                 failed_count += 1
                 continue
 
-            # Calculate round-trip time
-            round_trip_time = self._calculate_round_trip_time(route_id, route_trips)
+            # Calculate round-trip time and number of directions
+            round_trip_time, n_directions = self._calculate_round_trip_time(route_id, route_trips)
 
             # Track default usage
             if round_trip_time == self.default_round_trip_time:
@@ -481,6 +482,7 @@ class GTFSDataPreparator:
                     "route_id": route_id,
                     "headways_by_interval": headways_by_interval,
                     "round_trip_time": round_trip_time,
+                    "n_directions": n_directions,
                 }
             )
 
@@ -585,7 +587,7 @@ class GTFSDataPreparator:
             logger.debug(f"Route {route_id}: Exception in headway calculation: {e}")
             return headways
 
-    def _calculate_round_trip_time(self, route_id: str, route_trips: pd.DataFrame) -> float:
+    def _calculate_round_trip_time(self, route_id: str, route_trips: pd.DataFrame) -> tuple[float, int]:
         """
         Calculate round-trip time with turnaround buffer for fleet sizing.
 
@@ -665,17 +667,17 @@ class GTFSDataPreparator:
                     f"directions: {n_directions}, multiplier: {multiplier}, "
                     f"buffer: {self.turnaround_buffer})"
                 )
-                return round_trip
+                return round_trip, n_directions
             else:
                 logger.debug(f"Route {route_id}: No valid durations, using default {self.default_round_trip_time}min")
-                return self.default_round_trip_time
+                return self.default_round_trip_time, 2
 
         except Exception as e:
             logger.debug(
                 f"Route {route_id}: Exception calculating round-trip time: {e}, "
                 f"using default {self.default_round_trip_time}min"
             )
-            return self.default_round_trip_time
+            return self.default_round_trip_time, 2
 
     def _create_initial_solution(self, current_headways: np.ndarray, headway_to_index: dict[float, int]) -> np.ndarray:
         """
@@ -899,6 +901,7 @@ class GTFSDataPreparator:
         # Extract data for calculation
         round_trip_times = np.array([r["round_trip_time"] for r in route_data])
         raw_headways_matrix = np.array([r["headways_by_interval"] for r in route_data])
+        n_directions = np.array([r["n_directions"] for r in route_data])
 
         # CALCULATION 1: Raw GTFS headways (original baseline)
         logger.debug("Calculating fleet with raw GTFS headways...")
@@ -908,6 +911,7 @@ class GTFSDataPreparator:
             round_trip_times=round_trip_times,
             operational_buffer=operational_buffer,
             no_service_threshold=self.no_service_threshold_minutes,
+            n_directions=n_directions,
         )
 
         # CALCULATION 2: Discretized headways (constraint-consistent baseline)
@@ -932,6 +936,7 @@ class GTFSDataPreparator:
             round_trip_times=round_trip_times,
             operational_buffer=operational_buffer,
             no_service_threshold=self.no_service_threshold_minutes,
+            n_directions=n_directions,
         )
 
         # Extract results (use discretized for optimization, keep raw for reporting)

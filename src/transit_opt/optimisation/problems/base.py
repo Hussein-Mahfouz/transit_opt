@@ -146,6 +146,7 @@ class BaseConstraintHandler(ABC):
             no_service_threshold=no_service_threshold,
             allowed_headways=self.allowed_headways,
             no_service_index=self.no_service_index,
+            n_directions=self.opt_data.get("routes", {}).get("n_directions", None),
         )
 
         return fleet_results["fleet_per_interval"]
