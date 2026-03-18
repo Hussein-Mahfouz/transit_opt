@@ -797,8 +797,12 @@ class TestWaitingTimeDemandWeighting:
         print(f"   Sum vs Average ratio: {results['sum'] / results['average']:.2f}x")
         print(f"   Peak vs Average ratio: {results['peak'] / results['average']:.2f}x")
 
-        # Sum should be larger than average (sum of intervals vs mean)
-        assert results["sum"] > results["average"], "Sum should be larger than average"
+        # 'average' aggregation with demand weighting now calculates "Global Volume-Weighted Sum"
+        # (Total Passenger Minutes), which is mathematically identical to 'sum' aggregation.
+        # Previously, 'average' calculated daily mean wait time per zone, which was smaller.
+        assert results["sum"] == pytest.approx(results["average"], rel=1e-5), (
+            "Sum and Average should be equal (both calculate Total Passenger Minutes)"
+        )
 
         print("\n✅ Test passed: All time aggregations work with demand weighting")
 
