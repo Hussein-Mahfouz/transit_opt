@@ -13,8 +13,7 @@ import numpy as np
 from pymoo.core.problem import Problem
 
 from ..objectives.base import BaseObjective
-from .base import (BaseConstraintHandler, FleetPerIntervalConstraintHandler,
-                   FleetTotalConstraintHandler)
+from .base import BaseConstraintHandler, FleetPerIntervalConstraintHandler, FleetTotalConstraintHandler
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +119,7 @@ class TransitOptimizationProblem(Problem):
         objective: BaseObjective,
         constraints: list[BaseConstraintHandler] | None = None,
         penalty_config: dict[str, Any] | None = None,
+        fixed_intervals: list[int] | None = None,
     ):
         logger.info("🏗️  CREATING TRANSIT OPTIMIZATION PROBLEM:")
 
@@ -127,6 +127,26 @@ class TransitOptimizationProblem(Problem):
         self.optimization_data = optimization_data
         self.objective = objective
         self.constraints = constraints or []
+
+        # Handle fixed intervals
+        # Store as sorted list of unique indices
+        self.fixed_intervals = sorted(list(set(fixed_intervals))) if fixed_intervals else []
+        self.n_intervals = optimization_data["n_intervals"]
+
+        # Validate fixed intervals
+        if self.fixed_intervals:
+            invalid = [i for i in self.fixed_intervals if i < 0 or i >= self.n_intervals]
+            if invalid:
+                msg = f"Invalid fixed_intervals: {invalid}. Must be in range [0, {self.n_intervals - 1}]"
+                logger.error(msg)
+                raise ValueError(msg)
+
+            # Determine active intervals (indices that WILL be optimized)
+            self.active_intervals = [i for i in range(self.n_intervals) if i not in self.fixed_intervals]
+            logger.info(f"🔒 Fixed intervals (frozen): {self.fixed_intervals}")
+            logger.info(f"🔓 Active intervals (optimizing): {self.active_intervals}")
+        else:
+            self.active_intervals = list(range(self.n_intervals))
 
         # Extract problem dimensions from optimization data
         self.n_routes = optimization_data["n_routes"]
@@ -139,6 +159,9 @@ class TransitOptimizationProblem(Problem):
         if self.drt_enabled:
             self.n_drt_zones = optimization_data["n_drt_zones"]
             self.var_structure = optimization_data["variable_structure"]
+            # We must set this too for masked variable decoding in combined mode
+            self.var_structure["pt_shape"] = (self.n_routes, self.n_intervals)
+            self.var_structure["drt_shape"] = (self.n_drt_zones, self.n_intervals)
 
             logger.info(
                 f"""📊 Problem dimensions (PT+DRT):
@@ -148,7 +171,18 @@ class TransitOptimizationProblem(Problem):
                 • Headway choices: {self.n_choices}"""
             )
 
-            n_var = optimization_data["total_decision_variables"]
+            if self.fixed_intervals:
+                # Calculate reduced variables for both PT and DRT
+                # Assuming DRT variables are also per-interval (zones * intervals)
+                n_var_pt = self.n_routes * len(self.active_intervals)
+                n_var_drt = self.n_drt_zones * len(self.active_intervals)
+                n_var = n_var_pt + n_var_drt
+
+                logger.info(
+                    f"   🔒 Masking enabled! Optimization variables reduced from {optimization_data['total_decision_variables']} to {n_var}"
+                )
+            else:
+                n_var = optimization_data["total_decision_variables"]
         else:
             self.n_drt_zones = 0
             self.var_structure = None
@@ -161,8 +195,12 @@ class TransitOptimizationProblem(Problem):
             """
             )
 
-            # PT-only logic
-            n_var = self.n_routes * self.n_intervals
+            # PT-only logic: n_routes * active_intervals
+            n_var = self.n_routes * len(self.active_intervals)
+
+            if self.fixed_intervals:
+                total_possible = self.n_routes * self.n_intervals
+                logger.info(f"   🔒 Masking enabled! Optimization variables reduced from {total_possible} to {n_var}")
 
         # Calculate rest of pymoo problem parameters
         n_obj = 1  # Single objective optimization
@@ -180,22 +218,33 @@ class TransitOptimizationProblem(Problem):
         xl = np.zeros(n_var, dtype=int)  # Lower bounds (index 0)
 
         # xu depends on whether DRT is enabled (combined bounds) or PT-only
-        # if DRT is enabled and PT headway choices are not the same length as DRT fleet size
-        # choices, then we need to use the combined variable bounds
-        # e.g.:
-        # allowed_headways = [0, 10, 20, 30]  # 4 choices (0-indexed 0-3)
-        # allowed_fleet_sizes = [0, 5, 10]    # 3 choices (0-indexed 0-2)
-        # combined_variable_bounds = [4, 4, 4, ..., 2, 2, 2]
-        # first n_var_pt are headway choices, last n_var_drt are fleet size choices
-        # note: the reason for the '4' in combined_variable_bounds for headways is that
-        # we have an extra index for no_service
         if self.drt_enabled:
-            # Use combined variable bounds for DRT+PT
-            combined_bounds = optimization_data["combined_variable_bounds"]
-            xu = np.array(combined_bounds, dtype=int) - 1  # Convert choices to max indices
+            if self.fixed_intervals:
+                # Reconstruct bounds for reduced variables
+                # PT part: all same n_choices
+                pt_bounds = [self.n_choices] * (self.n_routes * len(self.active_intervals))
+
+                # DRT part: Extract per-zone bounds from combined_bounds
+                # combined_bounds structure: [pt_vars..., drt_vars...]
+                orig_pt_size = self.var_structure["pt_size"]
+                orig_drt_bounds = optimization_data["combined_variable_bounds"][orig_pt_size:]
+
+                # Reshape original DRT bounds to (n_zones, n_intervals)
+                orig_drt_bounds_matrix = np.array(orig_drt_bounds).reshape(self.n_drt_zones, self.n_intervals)
+
+                # Slice for active intervals
+                active_drt_bounds = orig_drt_bounds_matrix[:, self.active_intervals].flatten()
+
+                combined_bounds = pt_bounds + active_drt_bounds.tolist()
+                xu = np.array(combined_bounds, dtype=int) - 1
+            else:
+                combined_bounds = optimization_data["combined_variable_bounds"]
+                xu = np.array(combined_bounds, dtype=int) - 1
+
             logger.info(f"      Total variables: {n_var}")
-            logger.info(f"      PT variables: {optimization_data['pt_decision_variables']}")
-            logger.info(f"      DRT variables: {optimization_data['drt_decision_variables']}")
+            if not self.fixed_intervals:
+                logger.info(f"      PT variables: {optimization_data['pt_decision_variables']}")
+                logger.info(f"      DRT variables: {optimization_data['drt_decision_variables']}")
         else:
             # Original PT-only bounds
             xu = np.full(n_var, self.n_choices - 1, dtype=int)  # Upper bounds (max index)
@@ -239,6 +288,19 @@ class TransitOptimizationProblem(Problem):
                 )
         else:
             logger.info("   📋 No constraints specified (unconstrained optimization)")
+
+        # Store full initial solution for fixed variable reference (masked optimization)
+        if self.fixed_intervals:
+            if "initial_solution" not in optimization_data:
+                msg = "Masked optimization requires 'initial_solution' in optimization_data"
+                logger.error(msg)
+                raise ValueError(msg)
+
+            # Encode initial solution to flat vector to use as base for reconstruction
+            # CRITICAL: We pass apply_mask=False here because we need the FULL solution template
+            # for decoding, even if we are optimizing a subset of variables.
+            self.initial_solution_flat = self._encode_solution(optimization_data["initial_solution"], apply_mask=False)
+            logger.info("   🔒 Stored initial solution for fixed interval reconstruction")
 
         logger.info("   ✅ Problem setup complete!")
 
@@ -297,8 +359,11 @@ class TransitOptimizationProblem(Problem):
 
                 for j, constraint in enumerate(self.constraints):
                     # Smart constraint handling based on type and DRT status (same as hard constraints)
-                    if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                        # FleetTotalConstraintHandler can handle full PT+DRT solution
+                    if (
+                        isinstance(constraint, FleetTotalConstraintHandler | FleetPerIntervalConstraintHandler)
+                        and self.drt_enabled
+                    ):
+                        # Handlers that can evaluate full PT+DRT solutions
                         violations = constraint.evaluate(solution)
                     elif self.drt_enabled:
                         # Other constraints only handle PT part when DRT enabled
@@ -327,8 +392,11 @@ class TransitOptimizationProblem(Problem):
                     for constraint in self.constraints:
                         try:
                             # Smart constraint handling based on type and DRT status
-                            if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                                # FleetTotalConstraintHandler can handle full PT+DRT solution
+                            if (
+                                isinstance(constraint, FleetTotalConstraintHandler | FleetPerIntervalConstraintHandler)
+                                and self.drt_enabled
+                            ):
+                                # Handlers that can evaluate full PT+DRT solutions
                                 violations = constraint.evaluate(solution)
                             elif self.drt_enabled:
                                 # Other constraints only handle PT part when DRT enabled
@@ -419,37 +487,22 @@ class TransitOptimizationProblem(Problem):
                     # Print interval-specific breakdown for hard constraints
                     if interval_feasibility_hard:
                         logger.info("      Per-interval feasibility breakdown:")
-                        # Group by type (ceiling/floor) and interval for cleaner display
-                        ceiling_data = {}
-                        floor_data = {}
 
-                        for interval_name, satisfied_count in interval_feasibility_hard.items():
-                            if "Ceiling" in interval_name:
-                                interval_num = int(interval_name.split("_")[-1])
-                                ceiling_data[interval_num] = satisfied_count
-                            elif "Floor" in interval_name:
-                                interval_num = int(interval_name.split("_")[-1])
-                                floor_data[interval_num] = satisfied_count
+                        # Sort keys to ensure consistent output order
+                        sorted_keys = sorted(interval_feasibility_hard.keys())
 
-                        # Print ceiling constraints
-                        if ceiling_data:
-                            logger.info("        Ceiling constraints (tolerance):")
-                            for interval_idx in sorted(ceiling_data.keys()):
-                                satisfied_count = ceiling_data[interval_idx]
+                        for key in sorted_keys:
+                            satisfied_count = interval_feasibility_hard[key]
+
+                            # Try to extract interval index to get label
+                            try:
+                                parts = key.split("_")
+                                interval_idx = int(parts[-1])
                                 interval_label = self._get_interval_label(interval_idx)
-                                logger.info(
-                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                                )
-
-                        # Print floor constraints
-                        if floor_data:
-                            logger.info("        Floor constraints (min_fraction):")
-                            for interval_idx in sorted(floor_data.keys()):
-                                satisfied_count = floor_data[interval_idx]
-                                interval_label = self._get_interval_label(interval_idx)
-                                logger.info(
-                                    f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                                )
+                                logger.info(f"        {key} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                            except (ValueError, IndexError):
+                                # Fallback if format is unexpected or parsing fails
+                                logger.info(f"        {key}: {satisfied_count}/{pop_size} solutions")
 
             # ===== PENALTY METHOD LOGGING =====
             elif self.use_penalty_method and self.constraints:
@@ -461,7 +514,9 @@ class TransitOptimizationProblem(Problem):
                 interval_feasibility = {}
 
                 for constraint_idx, constraint in enumerate(self.constraints):
-                    constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                    # Use unique name for each instance
+                    base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                    constraint_name = f"{base_name}_{constraint_idx}"
                     constraint_feasibility[constraint_name] = 0
 
                     # For FleetPerInterval, track each interval separately
@@ -472,10 +527,10 @@ class TransitOptimizationProblem(Problem):
                         # Track each interval for both types
                         for interval_idx in range(self.n_intervals):
                             if has_ceiling:
-                                interval_name = f"{constraint_name}_Ceiling_Interval_{interval_idx}"
+                                interval_name = f"{constraint_name}_Ceiling_{interval_idx}"
                                 interval_feasibility[interval_name] = 0
                             if has_floor:
-                                interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
+                                interval_name = f"{constraint_name}_Floor_{interval_idx}"
                                 interval_feasibility[interval_name] = 0
 
                 for i in range(pop_size):
@@ -484,15 +539,24 @@ class TransitOptimizationProblem(Problem):
 
                     # Check all constraint handlers
                     for constraint_idx, constraint in enumerate(self.constraints):
-                        constraint_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
-                        # Apply smart constraint handling here (FleetTotal works on full solution,
-                        # others on PT only)
-                        if isinstance(constraint, FleetTotalConstraintHandler) and self.drt_enabled:
-                            # FleetTotalConstraintHandler can handle full PT+DRT solution
-                            violations = constraint.evaluate(solution_matrix)
-                        elif self.drt_enabled:
-                            # Other constraints only handle PT part when DRT enabled
-                            violations = constraint.evaluate(solution_matrix["pt"])
+                        # Use unique name for each instance
+                        base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+                        constraint_name = f"{base_name}_{constraint_idx}"
+
+                        if constraint_name not in constraint_feasibility:
+                            constraint_feasibility[constraint_name] = 0
+
+                        # Determine correct input for constraints
+                        if hasattr(self, "drt_enabled") and self.drt_enabled:
+                            # FleetTotal and FleetPerInterval can handle full PT+DRT solution now
+                            if isinstance(constraint, (FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler)):
+                                violations = constraint.evaluate(solution_matrix)
+                            else:
+                                # Older/Other constraints only know about PT part
+                                pt_part = (
+                                    solution_matrix["pt"] if isinstance(solution_matrix, dict) else solution_matrix
+                                )
+                                violations = constraint.evaluate(pt_part)
                         else:
                             # PT-only case: pass solution directly
                             violations = constraint.evaluate(solution_matrix)
@@ -506,26 +570,37 @@ class TransitOptimizationProblem(Problem):
 
                         # For FleetPerInterval, track individual interval feasibility
                         if isinstance(constraint, FleetPerIntervalConstraintHandler):
+                            # The violation array depends on what constraints are configured
                             has_ceiling = constraint.config.get("tolerance") is not None
                             has_floor = constraint.config.get("min_fraction") is not None
                             n_intervals = self.n_intervals
 
-                            # Track ceiling constraints (first n_intervals violations)
+                            # violations array structure: [ceiling_violations..., floor_violations...]
+
+                            offset = 0
+                            # Track ceiling constraints (first n_intervals violations if ceiling active)
                             if has_ceiling:
                                 for interval_idx in range(n_intervals):
-                                    violation = violations[interval_idx]
-                                    interval_name = f"{constraint_name}_Ceiling_Interval_{interval_idx}"
-                                    if violation <= 1e-6:
-                                        interval_feasibility[interval_name] += 1
+                                    # Ensure we don't go out of bounds
+                                    if offset + interval_idx < len(violations):
+                                        violation = violations[offset + interval_idx]
+                                        interval_key = f"{constraint_name}_Ceiling_{interval_idx}"
+                                        if interval_key not in interval_feasibility:
+                                            interval_feasibility[interval_key] = 0
+                                        if violation <= 1e-6:
+                                            interval_feasibility[interval_key] += 1
+                                offset += n_intervals
 
-                            # Track floor constraints (last n_intervals violations)
+                            # Track floor constraints (next n_intervals violations if floor active)
                             if has_floor:
-                                floor_offset = n_intervals if has_ceiling else 0
                                 for interval_idx in range(n_intervals):
-                                    violation = violations[floor_offset + interval_idx]
-                                    interval_name = f"{constraint_name}_Floor_Interval_{interval_idx}"
-                                    if violation <= 1e-6:
-                                        interval_feasibility[interval_name] += 1
+                                    if offset + interval_idx < len(violations):
+                                        violation = violations[offset + interval_idx]
+                                        interval_key = f"{constraint_name}_Floor_{interval_idx}"
+                                        if interval_key not in interval_feasibility:
+                                            interval_feasibility[interval_key] = 0
+                                        if violation <= 1e-6:
+                                            interval_feasibility[interval_key] += 1
 
                     if is_feasible:
                         feasible_count += 1
@@ -541,37 +616,23 @@ class TransitOptimizationProblem(Problem):
                 # Print interval-specific breakdown for FleetPerInterval
                 if interval_feasibility:
                     logger.info("      Per-interval feasibility breakdown:")
-                    # Group by type and interval
-                    ceiling_data = {}
-                    floor_data = {}
 
-                    for interval_name, satisfied_count in interval_feasibility.items():
-                        if "Ceiling" in interval_name:
-                            interval_num = int(interval_name.split("_")[-1])
-                            ceiling_data[interval_num] = satisfied_count
-                        elif "Floor" in interval_name:
-                            interval_num = int(interval_name.split("_")[-1])
-                            floor_data[interval_num] = satisfied_count
+                    # Sort keys to ensure consistent output order
+                    sorted_keys = sorted(interval_feasibility.keys())
 
-                    # Print ceiling constraints
-                    if ceiling_data:
-                        logger.info("        Ceiling constraints (tolerance):")
-                        for interval_idx in sorted(ceiling_data.keys()):
-                            satisfied_count = ceiling_data[interval_idx]
+                    for key in sorted_keys:
+                        satisfied_count = interval_feasibility[key]
+
+                        # Try to extract interval index to get label
+                        # Expected format: Name_Index_Type_IntervalIndex (e.g. FleetPerInterval_0_Ceiling_1)
+                        try:
+                            parts = key.split("_")
+                            interval_idx = int(parts[-1])
                             interval_label = self._get_interval_label(interval_idx)
-                            logger.info(
-                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                            )
-
-                    # Print floor constraints
-                    if floor_data:
-                        logger.info("        Floor constraints (min_fraction):")
-                        for interval_idx in sorted(floor_data.keys()):
-                            satisfied_count = floor_data[interval_idx]
-                            interval_label = self._get_interval_label(interval_idx)
-                            logger.info(
-                                f"          Interval {interval_idx} ({interval_label}): {satisfied_count}/{pop_size} solutions"
-                            )
+                            logger.info(f"        {key} ({interval_label}): {satisfied_count}/{pop_size} solutions")
+                        except (ValueError, IndexError):
+                            # Fallback if format is unexpected or parsing fails
+                            logger.info(f"        {key}: {satisfied_count}/{pop_size} solutions")
 
     def _get_constraint_penalty_weight(self, constraint_name: str) -> float:
         """Get penalty weight for specific constraint type."""
@@ -604,27 +665,99 @@ class TransitOptimizationProblem(Problem):
         Handles NaN/Inf from PSO numerical instability by replacing
         with valid defaults instead of crashing.
 
+        Supports masked optimization (fixed intervals):
+        - If fixed_intervals are set, expands reduced x_flat to full size using initial_solution.
+
         ENCODING DETAILS:
         - Flat vector: [r0i0, r0i1, r0i2, r1i0, r1i1, r1i2, ...]
         - Matrix format: [[r0i0, r0i1, r0i2], [r1i0, r1i1, r1i2], ...]
         - Values: Indices into optimization_data["allowed_headways"]
 
         Args:
-            x_flat: Flat solution vector of length (n_routes × n_intervals)
+            x_flat: Flat solution vector of length (n_routes × n_intervals) or reduced length.
 
         Returns:
             For PT only: Solution matrix of shape (n_routes, n_intervals) with integer indices
             For PT+DRT: Solution matrix of shape: dict with 'pt' and 'drt' keys
-
-        Example:
-            >>> x_flat = np.array([0, 1, 2, 3, 1, 0])  # 2 routes, 3 intervals
-            >>> matrix = problem._decode_solution(x_flat)
-            >>> print(matrix)
-            [[0 1 2]
-             [3 1 0]]
         """
 
+        # ===== STEP 0: HANDLE MASKED VARIABLES (FIXED INTERVALS) =====
+        if hasattr(self, "fixed_intervals") and self.fixed_intervals:
+            # We are in masked mode. x_flat is REDUCED.
+            # We need to reconstruct the full vector using initial_solution values for fixed parts.
+
+            # Create full-size array initialized with the fixed values
+            full_x = self.initial_solution_flat.copy()
+
+            # We need to map the reduced x_flat values into the correct positions in full_x.
+            # The mapping depends on how we reduced it in __init__.
+
+            # Logic mirrors __init__ reduction:
+            # PT: sequential routes, filtered intervals
+            # DRT: sequential zones, filtered intervals
+
+            current_x_idx = 0
+
+            # 1. Fill PT part
+            if self.drt_enabled:
+                n_pt_vars_full = self.var_structure["pt_size"]
+                n_pt_routes = self.n_routes
+            else:
+                n_pt_vars_full = self.n_routes * self.n_intervals
+                n_pt_routes = self.n_routes
+
+            # Iterate through routes (PT)
+            for r in range(n_pt_routes):
+                for i_idx in range(self.n_intervals):
+                    # Calculate index in full vector
+                    full_idx = r * self.n_intervals + i_idx
+
+                    if i_idx in self.active_intervals:
+                        # Safety check
+                        if current_x_idx >= len(x_flat):
+                            logger.error(f"Decoding Error: current_x_idx {current_x_idx} > len(x_flat) {len(x_flat)}")
+                            logger.error(
+                                f"Routes: {n_pt_routes}, Intervals: {self.n_intervals}, Active: {len(self.active_intervals)}"
+                            )
+                            logger.error(f"Current r={r}, i={i_idx}")
+                            raise IndexError(f"Decoding out of bounds: {current_x_idx} >= {len(x_flat)}")
+
+                        # This variable is active, take from optimization vector
+                        full_x[full_idx] = x_flat[current_x_idx]
+                        current_x_idx += 1
+
+            # 2. Fill DRT part (if enabled)
+            if self.drt_enabled:
+                n_drt_zones = self.n_drt_zones
+                pt_offset = self.var_structure["pt_size"]
+
+                for z in range(n_drt_zones):
+                    for i_idx in range(self.n_intervals):
+                        # Calculate index in full vector
+                        # zones are appended after all PT vars
+                        full_idx = pt_offset + (z * self.n_intervals + i_idx)
+
+                        if i_idx in self.active_intervals:
+                            if current_x_idx >= len(x_flat):
+                                logger.error(
+                                    f"During DRT decoding, ran out of variables in x_flat "
+                                    f"(len={len(x_flat)}). Expected more active variables."
+                                )
+                                logger.error(f"Current z={z}, i={i_idx}")
+                                raise IndexError(f"Decoding out of bounds: {current_x_idx} >= {len(x_flat)}")
+
+                            # This variable is active
+                            full_x[full_idx] = x_flat[current_x_idx]
+                            current_x_idx += 1
+
+            # Use the reconstructed full vector for the rest of decoding
+            x_flat = full_x
+
         # ===== STEP 1: DETECT AND FIX BAD VALUES FROM PSO =====
+        if x_flat is None:
+            logger.warning("Values provided to decode_solution are None. Returning None.")
+            return None
+
         if np.any(~np.isfinite(x_flat)):
             bad_indices = np.where(~np.isfinite(x_flat))[0]
             bad_values = x_flat[bad_indices]
@@ -715,7 +848,7 @@ class TransitOptimizationProblem(Problem):
 
             return {"pt": pt_matrix, "drt": drt_matrix}
 
-    def _encode_solution(self, solution: np.ndarray) -> np.ndarray:
+    def _encode_solution(self, solution: np.ndarray, apply_mask: bool = True) -> np.ndarray:
         """
         Convert route×interval matrix or PT+DRT dict to flat solution vector.
 
@@ -728,10 +861,12 @@ class TransitOptimizationProblem(Problem):
             solution:
                 - PT only: Solution matrix of shape (n_routes, n_intervals)
                 - PT+DRT: dict with 'pt'/'drt' keys
+            apply_mask: Whether to return only active variables (True) or full vector (False).
+                       Default True (returns valid pymoo decision vector).
 
 
         Returns:
-            Flat solution vector of length (n_routes × n_intervals)
+            Flat solution vector (containing only ACTIVE variables if masking is enabled)
 
         Example:
             >>> matrix = np.array([[0, 1, 2], [3, 1, 0]])
@@ -739,22 +874,54 @@ class TransitOptimizationProblem(Problem):
             >>> print(x_flat)
             [0 1 2 3 1 0]
         """
+        # If masked, we need to extract only the active values
+        # This mirrors the decoding process where we ignore fixed values
+
         if not self.drt_enabled:
             # PT-only: solution should be a matrix
-            if isinstance(solution, dict):
-                # Handle case where PT-only solution is passed as dict
-                return solution["pt"].flatten()
+            if isinstance(solution, dict) and "pt" in solution:
+                solution_matrix = solution["pt"]
             else:
-                return solution.flatten()
+                solution_matrix = solution
+
+            if self.fixed_intervals and apply_mask:
+                # Masked encoding: Extract only active columns
+                # solution_matrix[:, active_intervals].flatten() is correct as it follows
+                # the same order as decoding.
+                return solution_matrix[:, self.active_intervals].flatten()
+            else:
+                return solution_matrix.flatten()
         else:
-            # DRT-enabled: solution is a dict
+            # DRT-enabled
             if not isinstance(solution, dict) or "pt" not in solution or "drt" not in solution:
+                # Fallback if just matrix passed in combined mode (sometimes happens in tests)
+                # Assuming it's PT part
+                if not isinstance(solution, dict):
+                    if apply_mask:
+                        logger.warning(
+                            "Passed array to _encode_solution in DRT mode with mask applied. Assuming PT-only part."
+                        )
+
+                    # Simple logic: if matrix passed, treat as PT matrix
+                    if self.fixed_intervals and apply_mask:
+                        return solution[:, self.active_intervals].flatten()
+                    return solution.flatten()
+
                 logger.error("Invalid solution format for DRT-enabled problem.")
                 raise ValueError("DRT-enabled problems require solution dict with 'pt' and 'drt' keys")
 
-            pt_flat = solution["pt"].flatten()
-            drt_flat = solution["drt"].flatten()
-            return np.concatenate([pt_flat, drt_flat])
+            pt_matrix = solution["pt"]
+            drt_matrix = solution["drt"]
+
+            if self.fixed_intervals and apply_mask:
+                # Extract active parts for both
+                pt_flat = pt_matrix[:, self.active_intervals].flatten()
+                drt_flat = drt_matrix[:, self.active_intervals].flatten()
+                return np.concatenate([pt_flat, drt_flat])
+            else:
+                pt_flat = pt_matrix.flatten()
+                drt_flat = drt_matrix.flatten()
+                return np.concatenate([pt_flat, drt_flat])
 
     def decode_solution(self, x_flat: np.ndarray) -> np.ndarray:
         """
@@ -877,11 +1044,16 @@ class TransitOptimizationProblem(Problem):
 
             for i, constraint in enumerate(self.constraints):
                 try:
-                    # For now, constraints only handle PT part TODO: extend for DRT
+                    # Determine correct input for constraints
                     if self.drt_enabled:
-                        violations = constraint.evaluate(solution_matrix["pt"])
+                        if isinstance(constraint, (FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler)):
+                            violations = constraint.evaluate(solution_matrix)
+                        else:
+                            # Older/Other constraints only know about PT part
+                            violations = constraint.evaluate(solution_matrix["pt"])
                     else:
                         violations = constraint.evaluate(solution_matrix)
+
                     constraint_info = constraint.get_constraint_info()
 
                     constraint_violations.extend(violations)
@@ -975,7 +1147,8 @@ class TransitOptimizationProblem(Problem):
         """Get readable name for constraint by index."""
         if constraint_idx < len(self.constraints):
             constraint = self.constraints[constraint_idx]
-            return constraint.__class__.__name__.replace("ConstraintHandler", "")
+            base_name = constraint.__class__.__name__.replace("ConstraintHandler", "")
+            return f"{base_name}_{constraint_idx}"
         return f"Constraint_{constraint_idx}"
 
     def _get_interval_label(self, interval_idx: int) -> str:

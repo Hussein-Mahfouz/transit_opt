@@ -229,10 +229,13 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             - 'peak': Constrain peak interval fleet
             - 'average': Constrain average across intervals
             - 'total': Constrain sum across all intervals (default)
+        drt_cost_factor (float, optional): Equivalence factor for DRT vehicles.
+            Default is 1.0 (1 DRT = 1 Bus).
+            If 0.5, then 1 DRT = 0.5 Bus (allows 2 DRT for every 1 Bus removed).
 
     DRT Integration:
         When DRT is enabled (opt_data['drt_enabled'] = True):
-        - Automatically includes DRT fleet in total calculations
+        - Automatically includes DRT fleet (scaled by cost factor) in total calculations
         - Baseline includes initial DRT fleet allocation
         - All measures (peak/average/total) include both PT and DRT
         - Solution format expects dict with 'pt' and 'drt' keys
@@ -366,8 +369,11 @@ class FleetTotalConstraintHandler(BaseConstraintHandler):
             # Calculate DRT fleet requirements
             drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix["drt"])
 
+            # Apply DRT cost factor
+            drt_factor = self.config.get("drt_cost_factor", 1.0)
+
             # Combine PT and DRT fleet
-            total_fleet_per_interval = pt_fleet_per_interval + drt_fleet_per_interval
+            total_fleet_per_interval = pt_fleet_per_interval + (drt_fleet_per_interval * drt_factor)
 
         else:
             # Handle PT-only case (existing logic)
@@ -581,6 +587,11 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         if self.config["baseline"] == "manual" and "baseline_values" not in self.config:
             raise ValueError("Manual baseline requires 'baseline_values'")
 
+        # Validate fleet parameter
+        fleet_mode = self.config.get("fleet", "pt")
+        if fleet_mode not in ["pt", "pt_drt"]:
+            raise ValueError("fleet must be 'pt' or 'pt_drt'")
+
         # Set defaults
         self.config.setdefault("allow_borrowing", False)
 
@@ -589,13 +600,16 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         Evaluate both ceiling and floor constraints for fleet per interval.
 
         Args:
-            solution_matrix: Decision matrix (n_routes × n_intervals) - PT only
+            solution_matrix: Decision matrix (n_routes × n_intervals) or dict with 'pt'/'drt'
 
         Returns:
             Array of constraint violations where <= 0 means satisfied.
             Order: [ceiling_violations_per_interval..., floor_violations_per_interval...]
         """
-        # Extract PT component only (this constraint ignores DRT)
+        # Determine fleet mode
+        fleet_mode = self.config.get("fleet", "pt")
+
+        # Extract PT component
         if isinstance(solution_matrix, dict):
             pt_solution = solution_matrix.get("pt")
             if pt_solution is None:
@@ -603,8 +617,30 @@ class FleetPerIntervalConstraintHandler(BaseConstraintHandler):
         else:
             pt_solution = solution_matrix
 
-        # Calculate fleet requirements by interval
-        fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
+        # Calculate PT fleet requirements by interval
+        pt_fleet_per_interval = self._calculate_fleet_from_solution(pt_solution)
+
+        # Calculate DRT fleet requirements if enabled
+        drt_fleet_per_interval = np.zeros_like(pt_fleet_per_interval)
+        if fleet_mode == "pt_drt":
+            if isinstance(solution_matrix, dict) and "drt" in solution_matrix:
+                drt_fleet_per_interval = self._calculate_drt_fleet_from_solution(solution_matrix["drt"])
+            elif self.opt_data.get("drt_enabled", False):
+                # Only raise error if we expect DRT but didn't get it
+                if isinstance(solution_matrix, dict):
+                    raise ValueError("fleet='pt_drt' but solution dict missing 'drt' key")
+                # If matrix is not dict, assume it's PT only, so DRT is effectively 0 or we should fail?
+                # The caller (pymoo problem) usually passes what we have.
+                # If it's PT-only problem, solution_matrix is array.
+                # If we asked for pt_drt but provided only array (PT), maybe warn?
+                # But BaseConstraintHandler._calculate_drt_fleet_from_solution handles checks.
+                pass
+
+        # Apply DRT factor
+        drt_factor = self.config.get("drt_cost_factor", 1.0)
+
+        # Combine fleet
+        fleet_per_interval = pt_fleet_per_interval + (drt_fleet_per_interval * drt_factor)
 
         violations = []
 

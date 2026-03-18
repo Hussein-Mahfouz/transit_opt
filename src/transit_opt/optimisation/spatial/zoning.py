@@ -101,9 +101,8 @@ class HexagonalZoneSystem:
         self._print_frequency = 50  # Print every N evaluations (TODO: make configurable)
 
         # reusable buffers for per-evaluation arrays to avoid repeated allocations
-        self._pt_vehicles_buffer = None   # shape: (n_intervals, n_zones) allocated on first use
+        self._pt_vehicles_buffer = None  # shape: (n_intervals, n_zones) allocated on first use
         self._drt_vehicles_buffer = None  # shape: (n_intervals, n_hex_zones) allocated on first use
-
 
         # Validate that CRS is metric
         self._validate_metric_crs()
@@ -114,9 +113,7 @@ class HexagonalZoneSystem:
         # Apply boundary filtering if provided
         if self.boundary is not None:
             logger.info("🎯 Applying boundary filter to %d stops...", len(self.stops_gdf))
-            self.stops_gdf = self.boundary.filter_points(
-                self.stops_gdf, output_crs=self.crs
-            )
+            self.stops_gdf = self.boundary.filter_points(self.stops_gdf, output_crs=self.crs)
             logger.info("✅ Filtered to %d stops within boundary", len(self.stops_gdf))
 
         # Generate hexagonal grid
@@ -125,16 +122,14 @@ class HexagonalZoneSystem:
         # Optionally filter grid to boundary as well
         if self.boundary is not None:
             logger.info("🎯 Applying boundary filter to %d grid cells...", len(self.hex_grid))
-            self.hex_grid = self.boundary.filter_grid(
-                self.hex_grid, predicate="intersects", output_crs=self.crs
-            )
+            self.hex_grid = self.boundary.filter_grid(self.hex_grid, predicate="intersects", output_crs=self.crs)
             logger.info("✅ Filtered to %d grid cells within boundary", len(self.hex_grid))
 
         # OPTIMIZED: Use spatial join instead of nested loops
         self.stop_zone_mapping = self._fast_map_stops_to_zones()
 
         # DRT zone mappings (if provided) - AFTER boundary filtering
-        if drt_config is not None and drt_config.get('enabled', False):
+        if drt_config is not None and drt_config.get("enabled", False):
             self._set_drt_zone_mappings(drt_config)
 
         # OPTIMIZED: Pre-compute route-stop mappings
@@ -154,12 +149,8 @@ class HexagonalZoneSystem:
             if hasattr(crs_info.axis_info[0], "unit_name"):
                 unit = crs_info.axis_info[0].unit_name.lower()
                 if "metre" not in unit and "meter" not in unit:
-                    logger.warning(
-                        f"⚠️  Warning: CRS {self.crs} may not be metric (units: {unit})"
-                    )
-                    logger.info(
-                        "   Consider using EPSG:3857 (Web Mercator) or a local UTM zone"
-                    )
+                    logger.warning(f"⚠️  Warning: CRS {self.crs} may not be metric (units: {unit})")
+                    logger.info("   Consider using EPSG:3857 (Web Mercator) or a local UTM zone")
 
         except ImportError:
             logger.warning("⚠️  pyproj not available - cannot validate CRS units")
@@ -171,10 +162,7 @@ class HexagonalZoneSystem:
         stops = self.gtfs_feed.stops.copy()
 
         # Create geometry from lat/lon (EPSG:4326)
-        geometry = [
-            Point(lon, lat)
-            for lon, lat in zip(stops["stop_lon"], stops["stop_lat"], strict=False)
-        ]
+        geometry = [Point(lon, lat) for lon, lat in zip(stops["stop_lon"], stops["stop_lat"], strict=False)]
         stops_gdf = gpd.GeoDataFrame(stops, geometry=geometry, crs="EPSG:4326")
 
         # Reproject to target metric CRS
@@ -205,9 +193,7 @@ class HexagonalZoneSystem:
         y_steps = int((maxy - miny) / hex_size_m) + 1
 
         logger.info(f"🔧 Creating {x_steps} × {y_steps} = {x_steps * y_steps} grid cells")
-        logger.info(
-            f"   Grid bounds: ({minx:.0f}, {miny:.0f}) to ({maxx:.0f}, {maxy:.0f}) meters"
-        )
+        logger.info(f"   Grid bounds: ({minx:.0f}, {miny:.0f}) to ({maxx:.0f}, {maxy:.0f}) meters")
         logger.info(f"   Cell size: {hex_size_m}m × {hex_size_m}m")
 
         zone_id = 0
@@ -232,9 +218,7 @@ class HexagonalZoneSystem:
                 zone_ids.append(f"zone_{zone_id}")
                 zone_id += 1
 
-        hex_gdf = gpd.GeoDataFrame(
-            {"zone_id": zone_ids, "geometry": hex_polygons}, crs=self.crs
-        )
+        hex_gdf = gpd.GeoDataFrame({"zone_id": zone_ids, "geometry": hex_polygons}, crs=self.crs)
 
         logger.info("✅ Created %d hexagonal zones in %s", len(hex_gdf), self.crs)
         return hex_gdf
@@ -254,9 +238,7 @@ class HexagonalZoneSystem:
         # Rename to avoid conflicts in spatial join
         hex_grid_for_join = hex_grid_for_join.rename(columns={"zone_id": "hex_zone_id"})
 
-        stops_with_zones = gpd.sjoin(
-            self.stops_gdf, hex_grid_for_join, how="left", predicate="within"
-        )
+        stops_with_zones = gpd.sjoin(self.stops_gdf, hex_grid_for_join, how="left", predicate="within")
 
         # Convert to dictionary
         stop_zone_map = {}
@@ -268,9 +250,7 @@ class HexagonalZoneSystem:
                 stop_point = row.geometry
                 distances = self.hex_grid.geometry.distance(stop_point)
                 nearest_zone_idx = distances.idxmin()
-                stop_zone_map[row["stop_id"]] = self.hex_grid.loc[
-                    nearest_zone_idx, "zone_id"
-                ]
+                stop_zone_map[row["stop_id"]] = self.hex_grid.loc[nearest_zone_idx, "zone_id"]
 
         logger.info("✅ Mapped %d stops to zones", len(stop_zone_map))
         return stop_zone_map
@@ -283,14 +263,10 @@ class HexagonalZoneSystem:
         self.route_stops_cache = {}
 
         # Group trips by route_id instead of service_id
-        trips_by_route = (
-            self.gtfs_feed.trips.groupby("route_id")["trip_id"].apply(list).to_dict()
-        )
+        trips_by_route = self.gtfs_feed.trips.groupby("route_id")["trip_id"].apply(list).to_dict()
 
         # Group stop_times by trip_id once
-        stop_times_by_trip = (
-            self.gtfs_feed.stop_times.groupby("trip_id")["stop_id"].apply(set).to_dict()
-        )
+        stop_times_by_trip = self.gtfs_feed.stop_times.groupby("trip_id")["stop_id"].apply(set).to_dict()
 
         for route_id, trip_ids in trips_by_route.items():
             # Get all unique stops for this route
@@ -360,13 +336,11 @@ class HexagonalZoneSystem:
             • Spatial lag mean: {np.mean(spatial_lag):.2f}
             • Non-zero lags: {np.sum(spatial_lag > 0)}
             """
-            )
+        )
 
         return spatial_lag
 
-    def _calculate_accessibility_scores(
-        self, vehicles_per_zone: np.ndarray, alpha: float = 0.1
-    ) -> np.ndarray:
+    def _calculate_accessibility_scores(self, vehicles_per_zone: np.ndarray, alpha: float = 0.1) -> np.ndarray:
         """
         Calculate accessibility scores incorporating neighbor service levels.
 
@@ -453,26 +427,23 @@ class HexagonalZoneSystem:
         # Increment counter for this evaluation
         self._evaluation_count += 1
 
-         # Determine if DRT is enabled
-        drt_enabled = optimization_data.get('drt_enabled', False)
+        # Determine if DRT is enabled
+        drt_enabled = optimization_data.get("drt_enabled", False)
 
         # Only print debug info every N evaluations
-        should_print = (self._evaluation_count % self._print_frequency == 0 or
-                    self._evaluation_count == 1)  # Always print first evaluation
+        should_print = (
+            self._evaluation_count % self._print_frequency == 0 or self._evaluation_count == 1
+        )  # Always print first evaluation
 
         # PT + DRT case
         if drt_enabled and isinstance(solution_matrix, dict):
             if should_print:
                 logger.debug("📊 Calculating PT+DRT vehicles per zone... (eval #%d)", self._evaluation_count)
             # Calculate PT vehicles
-            pt_vehicles_data = self._calculate_pt_vehicles_by_interval(
-                solution_matrix['pt'], optimization_data
-            )
+            pt_vehicles_data = self._calculate_pt_vehicles_by_interval(solution_matrix["pt"], optimization_data)
 
             # Calculate DRT vehicles
-            drt_vehicles_data = self._calculate_drt_vehicles_by_interval(
-                solution_matrix['drt'], optimization_data
-            )
+            drt_vehicles_data = self._calculate_drt_vehicles_by_interval(solution_matrix["drt"], optimization_data)
 
             # Combine PT and DRT data
             return self._combine_vehicle_data(pt_vehicles_data, drt_vehicles_data, should_print)
@@ -482,10 +453,9 @@ class HexagonalZoneSystem:
                 logger.debug("📊 Calculating PT-only vehicles per zone... (eval #%d)", self._evaluation_count)
             if isinstance(solution_matrix, dict):
                 # Extract PT part if dict format used
-                solution_matrix = solution_matrix['pt']
+                solution_matrix = solution_matrix["pt"]
 
             return self._calculate_pt_vehicles_by_interval(solution_matrix, optimization_data)
-
 
     def _calculate_pt_vehicles_by_interval(
         self, pt_solution_matrix: np.ndarray, optimization_data: dict[str, Any]
@@ -508,9 +478,9 @@ class HexagonalZoneSystem:
         # STEP 3: Extract data from optimization structure
         route_ids = optimization_data["routes"]["ids"]
         allowed_headways = optimization_data["allowed_headways"]
-        round_trip_times = optimization_data["routes"]["round_trip_times"]
         no_service_index = optimization_data["no_service_index"]
         interval_labels = optimization_data["intervals"]["labels"]
+        interval_duration_minutes = optimization_data["intervals"]["duration_minutes"]
 
         # STEP 4: Main computation loop (unchanged logic, different output location)
         for interval_idx in range(n_intervals):
@@ -529,8 +499,9 @@ class HexagonalZoneSystem:
                 headway = allowed_headways[choice_idx]
 
                 if headway < 9000:  # Valid service headway
-                    round_trip = round_trip_times[route_idx]
-                    vehicles_in_interval = max(1, int(np.ceil(round_trip / headway)))
+                    # Instead of fleet size (round_trip / headway), calculate trips/passes in interval
+                    # This ensures waiting time is based on service frequency, not vehicle bounds.
+                    vehicles_in_interval = max(1, int(np.ceil(interval_duration_minutes / headway)))
 
                     zones_served = {
                         self.stop_zone_mapping[stop_id]
@@ -601,20 +572,20 @@ class HexagonalZoneSystem:
             - 'sum': Array of shape (n_hex_zones,)
             - 'interval_labels': List of interval labels
         """
-        if not optimization_data.get('drt_enabled', False):
-            n_intervals = optimization_data['n_intervals']
+        if not optimization_data.get("drt_enabled", False):
+            n_intervals = optimization_data["n_intervals"]
             n_hex_zones = len(self.hex_grid)
             return {
-                'intervals': np.zeros((n_intervals, n_hex_zones)),
-                'average': np.zeros(n_hex_zones),
-                'peak': np.zeros(n_hex_zones),
-                'sum': np.zeros(n_hex_zones),
-                'interval_labels': optimization_data['intervals']['labels']
+                "intervals": np.zeros((n_intervals, n_hex_zones)),
+                "average": np.zeros(n_hex_zones),
+                "peak": np.zeros(n_hex_zones),
+                "sum": np.zeros(n_hex_zones),
+                "interval_labels": optimization_data["intervals"]["labels"],
             }
 
         # STEP 1: Allocate or reuse DRT buffer
-        drt_zones = optimization_data['drt_config']['zones']
-        n_intervals = optimization_data['n_intervals']
+        drt_zones = optimization_data["drt_config"]["zones"]
+        n_intervals = optimization_data["n_intervals"]
         n_hex_zones = len(self.hex_grid)
 
         if self._drt_vehicles_buffer is None or self._drt_vehicles_buffer.shape != (n_intervals, n_hex_zones):
@@ -633,25 +604,27 @@ class HexagonalZoneSystem:
         # STEP 3: Process each DRT zone and interval
         for drt_zone_idx, drt_zone in enumerate(drt_zones):
             # Get DRT speed for this zone
-            drt_speed_kmh = drt_zone.get('drt_speed_kmh')
+            drt_speed_kmh = drt_zone.get("drt_speed_kmh")
             if drt_speed_kmh is None:
-                drt_speed_kmh = optimization_data['drt_config'].get('default_drt_speed_kmh', 25.0)
-                logger.debug("Using default DRT speed %s km/h for zone %s", drt_speed_kmh, drt_zone.get('zone_id'))
+                drt_speed_kmh = optimization_data["drt_config"].get("default_drt_speed_kmh", 25.0)
+                logger.debug("Using default DRT speed %s km/h for zone %s", drt_speed_kmh, drt_zone.get("zone_id"))
 
             for interval_idx in range(n_intervals):
                 # Get fleet size for this DRT zone and interval
                 fleet_choice_idx = drt_solution_matrix[drt_zone_idx, interval_idx]
 
-                fleet_size = drt_zone['allowed_fleet_sizes'][int(fleet_choice_idx)]  # IndexError for out-of-range, negative
+                fleet_size = drt_zone["allowed_fleet_sizes"][
+                    int(fleet_choice_idx)
+                ]  # IndexError for out-of-range, negative
 
                 # Calculate vehicle activity
-                interval_length_minutes = optimization_data['intervals']['duration_minutes']
+                interval_length_minutes = optimization_data["intervals"]["duration_minutes"]
 
                 # Time to cross a STUDY AREA zone (not DRT service area)
                 time_to_cross_hours = study_area_zone_diameter_km / drt_speed_kmh
                 time_to_cross_minutes = time_to_cross_hours * 60
 
-                n_zones_in_drt_area = len(drt_zone.get('affected_hex_zones', []))
+                n_zones_in_drt_area = len(drt_zone.get("affected_hex_zones", []))
                 if n_zones_in_drt_area == 0:
                     continue
 
@@ -659,12 +632,14 @@ class HexagonalZoneSystem:
                 vehicle_activity = (interval_length_minutes / time_to_cross_minutes) * coverage
 
                 # Add to affected hexagonal zones for this interval
-                affected_hex_zones = drt_zone.get('affected_hex_zones', [])
+                affected_hex_zones = drt_zone.get("affected_hex_zones", [])
                 for hex_zone_idx in affected_hex_zones:
                     if 0 <= hex_zone_idx < n_hex_zones:  # Safety check for bounds
                         drt_vehicles_by_interval[interval_idx, hex_zone_idx] += vehicle_activity
                     else:
-                        logger.warning("Affected hex zone index %s out of bounds (0..%d); skipping", hex_zone_idx, n_hex_zones-1)
+                        logger.warning(
+                            "Affected hex zone index %s out of bounds (0..%d); skipping", hex_zone_idx, n_hex_zones - 1
+                        )
 
         # STEP 4: Identify time interval with peak total vehicles
         total_vehicles_by_interval = np.sum(drt_vehicles_by_interval, axis=1)
@@ -673,16 +648,15 @@ class HexagonalZoneSystem:
         # STEP 5: Return copies (not the buffer itself!)
         # This ensures callers can't accidentally keep the buffer alive
         return {
-            'intervals': drt_vehicles_by_interval.copy(),
-            'average': np.mean(drt_vehicles_by_interval, axis=0).copy(),
-            'peak': drt_vehicles_by_interval[peak_interval_idx, :].copy(),
-            'sum': np.sum(drt_vehicles_by_interval, axis=0).copy(),
-            'interval_labels': optimization_data['intervals']['labels']
+            "intervals": drt_vehicles_by_interval.copy(),
+            "average": np.mean(drt_vehicles_by_interval, axis=0).copy(),
+            "peak": drt_vehicles_by_interval[peak_interval_idx, :].copy(),
+            "sum": np.sum(drt_vehicles_by_interval, axis=0).copy(),
+            "interval_labels": optimization_data["intervals"]["labels"],
         }
 
     def _combine_vehicle_data(
-        self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray],
-        should_print: bool = False
+        self, pt_data: dict[str, np.ndarray], drt_data: dict[str, np.ndarray], should_print: bool = False
     ) -> dict[str, np.ndarray]:
         """
         Combine PT and DRT vehicle data with temporally consistent peak calculation.
@@ -693,62 +667,63 @@ class HexagonalZoneSystem:
         - Ensures PT and DRT peak values represent the SAME interval/time period
         """
         # STEP 1: Combine interval data
-        combined_intervals = pt_data['intervals'] + drt_data['intervals']
+        combined_intervals = pt_data["intervals"] + drt_data["intervals"]
 
         # STEP 2: Find system-wide peak interval (when total vehicles needed is highest)
         total_vehicles_by_interval = np.sum(combined_intervals, axis=1)
         peak_interval_idx = int(np.argmax(total_vehicles_by_interval))
 
         if should_print:
-            logger.debug("🔄 Combined peak interval: %d (total vehicles: %.0f)",
-                        peak_interval_idx, total_vehicles_by_interval[peak_interval_idx])
+            logger.debug(
+                "🔄 Combined peak interval: %d (total vehicles: %.0f)",
+                peak_interval_idx,
+                total_vehicles_by_interval[peak_interval_idx],
+            )
 
         # STEP 3: Get peak vehicles from the system peak interval
         peak_combined = combined_intervals[peak_interval_idx, :].copy()
 
         # STEP 4: Return combined results
         return {
-            'intervals': combined_intervals,
-            'average': np.mean(combined_intervals, axis=0).copy(),
-            'peak': peak_combined,
-            'sum': np.sum(combined_intervals, axis=0).copy(),
-            'interval_labels': pt_data['interval_labels']
+            "intervals": combined_intervals,
+            "average": np.mean(combined_intervals, axis=0).copy(),
+            "peak": peak_combined,
+            "sum": np.sum(combined_intervals, axis=0).copy(),
+            "interval_labels": pt_data["interval_labels"],
         }
-
-
 
     def set_drt_zone_mappings(self, opt_data: dict):
         """Set DRT zone mappings from optimization data using efficient spatial operations."""
-        if not opt_data.get('drt_enabled', False):
+        if not opt_data.get("drt_enabled", False):
             return
 
         # Access DRT zones from existing location
-        drt_zones = opt_data['drt_config']['zones']
+        drt_zones = opt_data["drt_config"]["zones"]
 
         logger.info("🗺️ Computing spatial intersections for %d DRT zones...", len(drt_zones))
 
         for drt_zone in drt_zones:
             # Use vectorized spatial operations instead of loops
-            drt_geometry = drt_zone['geometry']  # Already in correct CRS
+            drt_geometry = drt_zone["geometry"]  # Already in correct CRS
 
             # Efficient spatial intersection using GeoPandas
             mask = self.hex_grid.geometry.intersects(drt_geometry)
             affected_hex_indices = self.hex_grid.index[mask].tolist()
 
-            drt_zone['affected_hex_zones'] = affected_hex_indices
-            logger.debug("   DRT zone %d affects %d hexagonal zones", drt_zone['zone_id'], len(affected_hex_indices))
+            drt_zone["affected_hex_zones"] = affected_hex_indices
+            logger.debug("   DRT zone %d affects %d hexagonal zones", drt_zone["zone_id"], len(affected_hex_indices))
 
     def _set_drt_zone_mappings(self, drt_config: dict):
         """Set DRT zone mappings from config during initialization (after boundary filtering)."""
-        if not drt_config.get('enabled', False):
+        if not drt_config.get("enabled", False):
             return
 
-        drt_zones = drt_config['zones']
+        drt_zones = drt_config["zones"]
         logger.info("🗺️ Computing DRT spatial intersections for %d zones...", len(drt_zones))
         logger.info("   Hexagonal grid size: %d zones", len(self.hex_grid))
 
         for drt_zone in drt_zones:
-            drt_geometry = drt_zone['geometry']  # Already in correct CRS
+            drt_geometry = drt_zone["geometry"]  # Already in correct CRS
 
             # Find intersections with the CURRENT (filtered) hexagonal grid
             mask = self.hex_grid.geometry.intersects(drt_geometry)
@@ -756,7 +731,7 @@ class HexagonalZoneSystem:
             # Use positional indices (0-based sequential)
             affected_positions = np.where(mask)[0].tolist()
 
-            drt_zone['affected_hex_zones'] = affected_positions
+            drt_zone["affected_hex_zones"] = affected_positions
 
             # Validation check
             if affected_positions:
@@ -764,13 +739,13 @@ class HexagonalZoneSystem:
                 if max_pos >= len(self.hex_grid):
                     logger.error("   ❌ ERROR: Position %d exceeds grid size %d", max_pos, len(self.hex_grid))
                     # Filter out invalid positions as safety net
-                    drt_zone['affected_hex_zones'] = [
-                        pos for pos in affected_positions
-                        if 0 <= pos < len(self.hex_grid)
+                    drt_zone["affected_hex_zones"] = [
+                        pos for pos in affected_positions if 0 <= pos < len(self.hex_grid)
                     ]
 
-            logger.debug("   Zone %s: affects %d hexagonal zones", drt_zone['zone_id'], len(drt_zone['affected_hex_zones']))
-
+            logger.debug(
+                "   Zone %s: affects %d hexagonal zones", drt_zone["zone_id"], len(drt_zone["affected_hex_zones"])
+            )
 
     def get_zone_statistics(
         self,
@@ -829,9 +804,7 @@ class HexagonalZoneSystem:
         stops_geo = self.stops_gdf.to_crs("EPSG:4326")
         stops_geo.plot(ax=ax, color="red", markersize=1, alpha=0.7)
 
-        ax.set_title(
-            f"Transit System Zones: {len(self.hex_grid)} zones, {len(self.stops_gdf)} stops"
-        )
+        ax.set_title(f"Transit System Zones: {len(self.hex_grid)} zones, {len(self.stops_gdf)} stops")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
 
@@ -863,7 +836,6 @@ class HexagonalZoneSystem:
 
         plt.tight_layout()
         return fig, ax
-
 
     def _visualize_with_data(
         self,
@@ -941,7 +913,7 @@ class HexagonalZoneSystem:
         """
         # Auto-detect DRT visualization if not specified
         if show_drt_zones is None:
-            show_drt_zones = optimization_data.get('drt_enabled', False)
+            show_drt_zones = optimization_data.get("drt_enabled", False)
 
         # Create zones with data
         zones_with_data = self.hex_grid.copy()
@@ -979,9 +951,7 @@ class HexagonalZoneSystem:
                 },
             )
         else:
-            zones_geo.plot(
-                ax=ax, color="lightgray", alpha=0.5, edgecolor="black", linewidth=0.5
-            )
+            zones_geo.plot(ax=ax, color="lightgray", alpha=0.5, edgecolor="black", linewidth=0.5)
 
         # Add DRT zones (reuse existing logic from visualize_spatial_coverage)
         self._add_drt_zones_to_plot(ax, optimization_data, show_drt_zones)
@@ -993,7 +963,9 @@ class HexagonalZoneSystem:
         # Add statistics text
         stats_text = self._create_data_stats_text(data_per_zone, data_label, optimization_data)
         ax.text(
-            0.02, 0.98, stats_text,
+            0.02,
+            0.98,
+            stats_text,
             transform=ax.transAxes,
             verticalalignment="top",
             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
@@ -1013,37 +985,37 @@ class HexagonalZoneSystem:
         """Add DRT zones to existing plot."""
         drt_legend_elements = []
 
-        if show_drt_zones and optimization_data.get('drt_enabled', False):
-            drt_zones = optimization_data.get('drt_config', {}).get('zones', [])
+        if show_drt_zones and optimization_data.get("drt_enabled", False):
+            drt_zones = optimization_data.get("drt_config", {}).get("zones", [])
 
             if drt_zones:
                 # Define colors for DRT zones
-                drt_colors = ['purple', 'cyan', 'green', 'orange', 'magenta', 'yellow']
+                drt_colors = ["purple", "cyan", "green", "orange", "magenta", "yellow"]
 
                 for i, drt_zone in enumerate(drt_zones):
-                    if 'geometry' in drt_zone:
+                    if "geometry" in drt_zone:
                         drt_gdf = gpd.GeoDataFrame(
-                            [{'zone_id': drt_zone['zone_id']}],
-                            geometry=[drt_zone['geometry']],
-                            crs=optimization_data['drt_config']['target_crs']
+                            [{"zone_id": drt_zone["zone_id"]}],
+                            geometry=[drt_zone["geometry"]],
+                            crs=optimization_data["drt_config"]["target_crs"],
                         )
                         drt_geo = drt_gdf.to_crs("EPSG:4326")
 
                         color = drt_colors[i % len(drt_colors)]
-                        drt_geo.plot(
-                            ax=ax,
-                            facecolor='none',
-                            edgecolor=color,
-                            linewidth=2.5,
-                            linestyle='--',
-                            alpha=0.8
-                        )
+                        drt_geo.plot(ax=ax, facecolor="none", edgecolor=color, linewidth=2.5, linestyle="--", alpha=0.8)
 
                         # Add to legend
                         from matplotlib.lines import Line2D
+
                         drt_legend_elements.append(
-                            Line2D([0], [0], color=color, linewidth=2.5, linestyle='--',
-                                label=f"DRT: {drt_zone.get('zone_name', drt_zone['zone_id'])}")
+                            Line2D(
+                                [0],
+                                [0],
+                                color=color,
+                                linewidth=2.5,
+                                linestyle="--",
+                                label=f"DRT: {drt_zone.get('zone_name', drt_zone['zone_id'])}",
+                            )
                         )
 
         # Add combined legend if we have DRT zones
@@ -1086,7 +1058,7 @@ class HexagonalZoneSystem:
         ]
 
         # Add service type indicator
-        is_drt_enabled = optimization_data.get('drt_enabled', False)
+        is_drt_enabled = optimization_data.get("drt_enabled", False)
         if is_drt_enabled:
             stats.append("")
             stats.append("🚁 SERVICE TYPE: PT + DRT")

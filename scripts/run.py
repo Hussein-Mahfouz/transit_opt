@@ -86,13 +86,16 @@ def export_results(opt_data: dict, res, cfg: dict, iteration_dir: Path) -> None:
 
     prefix = out_cfg.get("solution_prefix", "solution")
     logger.info("Exporting %d solution(s) to %s (prefix=%s)", len(to_export), out_dir, prefix)
-    export_results = export_manager.export_solution_set(
-        solutions=to_export, base_output_dir=str(out_dir), solution_prefix=prefix, metadata=None
+    export_out = export_manager.export_solution_set(
+        solutions=to_export,
+        base_output_dir=str(out_dir),
+        solution_prefix=prefix,
+        metadata=None,
     )
 
     logger.info("Export completed. Files written:")
-    for r in export_results:
-        for k, v in r["exports"].items():
+    for r in export_out:
+        for k, v in r.get("exports", {}).items():
             logger.info("  %s -> %s", k, v["path"])
 
 

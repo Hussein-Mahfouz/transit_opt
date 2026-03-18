@@ -1,7 +1,7 @@
 input:
   gtfs_path: # The initial gtfs feed that you start the optimisation with
       - data/external/study_area_gtfs_bus.zip
-  allowed_headways: [10, 15, 30, 60, 120] # in minutes
+  allowed_headways: [5, 10, 15, 30, 60] # in minutes (per route: trip = route headway * 2)
   # We split the day into equal intervals. How long is each interval?
   interval_hours: 4
   # The PT and zoning layer are clipped to this boundary
@@ -16,15 +16,29 @@ input:
     zones:
       - zone_id: drt_ne
         service_area_path: data/external/drt/drt_ne.shp # Service area shapefile for this DRT zone
-        allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Fleet size options for this zone
+        allowed_fleet_sizes: [0, 25, 50, 75, 100]  # Fleet size options for this zone
         zone_name: "Leeds NE DRT" # name is used in the saved .json file
         drt_speed_kmh: 20.0  # Zone-specific speed (Will use default_drt_speed_kmh if zone-specific speed is not provided)
       - zone_id: drt_nw
         service_area_path: data/external/drt/drt_nw.shp
-        allowed_fleet_sizes: [0, 10, 25, 50, 100]  # Different fleet options
+        allowed_fleet_sizes: [0, 25, 50, 75, 100]  # Different fleet options
         zone_name: "Leeds NW DRT"
 
-problem:
+problem:  # Masking: Optimise only specific time intervals to save time or fix manually adjusted schedules
+  # Global parameter for Fleet Constraints
+  # DRT Cost Factor: How much 1 DRT vehicle counts towards the fleet limit (1.0 = equal to bus, 0.5 = half cost)
+  drt_cost_factor: 1.0
+
+  # Array of interval indices (0-based) to NOT optimise.
+  # Indices range from 0 to (24 / interval_hours) - 1.
+  # E.g. with interval_hours=4 (6 intervals/day):
+  #   - 0: 00:00-04:00 (Late Night)
+  #   - 1: 04:00-08:00 (Early Morning)
+  #   - 2: 08:00-12:00 (AM Peak)
+  #   etc.
+  # Example: [2, 3] fixes the 08:00-16:00 block to its initial values.
+  fixed_intervals: [0]
+
   objective:
     type: WaitingTimeObjective # StopCoverageObjective, WaitingTimeObjective
     spatial_resolution_km: 2.0 # The size of each zone in the grid
@@ -98,13 +112,16 @@ problem:
       #    - 'current_peak': Use current peak fleet for all intervals
       #    - 'manual': Use manually specified values
       baseline: current_by_interval
-      baseline_values: []  # Only used if baseline: manual. List of baseline fleet values per interval. Same length as intervals
+      # baseline_values: [100, 1262, 1592, 1629, 1580, 811]
       # tolerance: increase allowed per interval
       tolerance: 0.35 # If 0.1, then 10% increase allowed per interval
       # min_fraction: Allowed reduction below baseline per interval
       min_fraction: 0.8  # If 0.7, then maintain at least 70% of current service per interval
+      # fleet: Which fleet to constrain. 'pt' (default) or 'pt_drt'
+      fleet: pt_drt
 
   # specific penalties for violating each constraint. Applies when optimization["algorithm"]["use_penalty_method"]: true
+
   penalty_weights:
     fleet_total: 1000           # FleetTotalConstraintHandler
     minimum_fleet: 1000         # MinimumFleetConstraintHandler
@@ -147,8 +164,27 @@ optimization:
     #        - "output/combined_solution_01_drt.json"
     #        - "output/combined_solution_02_drt.json"
     # Our initial population = pop_size. If sampling, we use base_solutions, and fill the rest (pop_size  base_solutions)
-    frac_gaussian_pert: 0.1 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
+    frac_gaussian_pert: 0.3 # fraction of ramining solutions to fill using gaussian noise around base_solutions). Rest will be filled with LHS
     gaussian_sigma: 1.5 # If sigma = 1.5, then 66% of values will be within 1.5 of original value. IMPORTANT: we use index values, so a change of 1 means jumping to the next headway / DRT fleet size
+
+    # Optional: Seed population with biased "Service Reduction" solutions
+    # This specifically targets the PT (Public Transport) part of the solution by shifting
+    # headway choices towards higher indices (reduced frequency).
+    #
+    # USE CASE:
+    #   When fleet constraints are very tight (e.g. strict budget), the optimizer might struggle
+    #   to find ANY feasible solution if the starting point is "current service".
+    #   This strategy injects "under-service" solutions to ensure the population includes
+    #   feasible candidates that can be improved, rather than just infeasible ones.
+    #
+    # REQUIREMENTS:
+    #   - 'allowed_headways' must be sorted in increasing order (e.g. [10, 15, 30]).
+    #   - Higher index = Lower frequency = Lower fleet requirement.
+    #
+    # NOTE: This only affects PT variables; DRT variables remain unchanged from the base solution.
+    frac_reductions: 0.0 # Fraction of population to fill with reduced service solutions
+    reduction_sigma: 1.0 # Strength of reduction (index shift). Larger sigma = harsher cuts.
+
     #random_seed: 50 # Do not specify if using optimize_multi_swarm() i.e. if optimization["run"]["multi_swarm"]: true
 
   run:

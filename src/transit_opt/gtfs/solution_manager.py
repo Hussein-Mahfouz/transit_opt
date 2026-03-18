@@ -15,6 +15,7 @@ import numpy as np
 from transit_opt.gtfs.drt import DRTSolutionExporter
 from transit_opt.gtfs.gtfs import SolutionConverter
 from transit_opt.optimisation.config.config_manager import SolutionSamplingStrategyConfig
+from transit_opt.optimisation.utils.fleet_calculations import calculate_fleet_requirements, get_operational_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,113 @@ class SolutionExportManager:
         self.drt_exporter = None
         if self.drt_enabled:
             self.drt_exporter = DRTSolutionExporter(optimization_data)
+
+    def _calculate_solution_fleet_rows(self, solution_id: str, solution_data: dict[str, Any]) -> list[dict]:
+        """Calculate fleet stats rows for a specific solution compared to base service."""
+        # Get base fleet stats: in 'prepare_gtfs.py', current_fleet_by_interval is stored directly in opt_data
+        base_fleet_per_interval = self.optimization_data.get("current_fleet_by_interval")
+
+        # Fallback if not top-level: check constraints->fleet_analysis
+        if base_fleet_per_interval is None:
+            base_fleet_per_interval = (
+                self.optimization_data.get("constraints", {}).get("fleet_analysis", {}).get("current_fleet_by_interval")
+            )
+
+        if base_fleet_per_interval is None:
+            logger.warning("⚠️ Missing current_fleet_by_interval in optimization data, skipping fleet stats")
+            return []
+
+        # Get solution components
+        sol_content = solution_data.get("solution")
+        if isinstance(sol_content, dict):
+            pt_sol = sol_content["pt"]
+            drt_sol = sol_content.get("drt")
+        else:
+            pt_sol = sol_content
+            drt_sol = None
+
+        # Calculate PT fleet
+        params = get_operational_parameters(self.optimization_data)
+        allowed_headways = self.optimization_data.get("allowed_headways")
+        no_service_idx = len(allowed_headways)
+        if "headway_to_index" in self.optimization_data:
+            no_service_idx = self.optimization_data["headway_to_index"].get(9999.0, len(allowed_headways))
+
+        sol_fleet = calculate_fleet_requirements(
+            headways_matrix=pt_sol,
+            round_trip_times=self.optimization_data["routes"]["round_trip_times"],
+            operational_buffer=params.get("operational_buffer", 1.15),
+            no_service_threshold=params.get("no_service_threshold", 480),
+            allowed_headways=np.array(allowed_headways),
+            no_service_index=no_service_idx,
+        )
+
+        rows = []
+        n_intervals = len(sol_fleet["fleet_per_interval"])
+
+        # Get interval labels if they exist, otherwise fallback to computing from interval_hours
+        intervals_data = self.optimization_data.get("intervals", {})
+        interval_labels = intervals_data.get("labels", [])
+        interval_hours = self.optimization_data.get("interval_hours", 4)
+
+        # Determine total intervals from data to ensure loop consistency
+        loop_range = min(n_intervals, len(base_fleet_per_interval))
+
+        # Calculate DRT fleet per interval
+        drt_fleet_per_interval = np.zeros(loop_range, dtype=int)
+
+        if drt_sol is not None and self.drt_exporter:
+            # drt_sol is matrix of choice INDICES: (n_zones, n_intervals)
+            # Map indices to actual fleet sizes
+            zones = self.optimization_data.get("drt_config", {}).get("zones", [])
+
+            # Ensure shape matches
+            if drt_sol.shape[0] == len(zones) and drt_sol.shape[1] >= loop_range:
+                for int_idx in range(loop_range):
+                    interval_sum = 0
+                    for zone_idx, zone in enumerate(zones):
+                        choice_idx = int(drt_sol[zone_idx, int_idx])
+                        allowed = zone.get("allowed_fleet_sizes", [])
+                        if 0 <= choice_idx < len(allowed):
+                            interval_sum += allowed[choice_idx]
+                    drt_fleet_per_interval[int_idx] = interval_sum
+
+        for i in range(loop_range):
+            base_bus = int(base_fleet_per_interval[i])
+            sol_bus = int(sol_fleet["fleet_per_interval"][i])
+            sol_drt = int(drt_fleet_per_interval[i])
+
+            bus_diff = sol_bus - base_bus
+            bus_pct = (bus_diff / base_bus * 100) if base_bus > 0 else 0.0
+
+            total_base = base_bus
+            total_sol = sol_bus + sol_drt
+
+            total_diff = total_sol - total_base
+            total_pct = (total_diff / total_base * 100) if total_base > 0 else 0.0
+
+            if i < len(interval_labels):
+                interval_label = interval_labels[i]
+            else:
+                start_h = i * interval_hours
+                end_h = (i + 1) * interval_hours
+                interval_label = f"{start_h:02d}-{end_h:02d}"
+
+            rows.append(
+                {
+                    "solution": solution_id,
+                    "interval_label": interval_label,
+                    "bus_fleet_base": base_bus,
+                    "bus_fleet_solution": sol_bus,
+                    "drt_fleet_solution": sol_drt,
+                    "bus_fleet_diff": bus_diff,
+                    "bus_fleet_pct_change": round(bus_pct, 2),
+                    "total_fleet_diff": total_diff,
+                    "total_fleet_pct_change": round(total_pct, 2),
+                }
+            )
+
+        return rows
 
     def export_single_solution(
         self,
@@ -126,6 +234,7 @@ class SolutionExportManager:
 
         results = []  # results to convert to gtfs / json
         summary_rows = []  # csv with objective value of each run
+        fleet_stats_rows = []  # csv with fleet analysis
 
         for i, solution_data in enumerate(solutions):
             # Use rank directly (already 0-indexed from extract_solutions_for_export)
@@ -143,16 +252,7 @@ class SolutionExportManager:
             # Store the rank from extraction
             solution_metadata["rank"] = rank
 
-            # Export the solution
-            result = self.export_single_solution(
-                solution=solution_data["solution"],
-                solution_id=solution_id,
-                output_dir=base_output_dir,
-                metadata=solution_metadata,
-            )
-
-            results.append(result)
-
+            # Always perform summary / stats extraction FIRST, gtfs exporting later
             # Prepare row for CSV summary
             summary_rows.append(
                 {
@@ -164,8 +264,49 @@ class SolutionExportManager:
                     "violations": solution_data.get("violations", ""),
                 }
             )
-        # write csv summary of results
+
+            # Calculate and store fleet stats (if base fleet data is available)
+            base_fleet_available = self.optimization_data.get("current_fleet_by_interval")
+            if not base_fleet_available:
+                base_fleet_available = (
+                    self.optimization_data.get("constraints", {})
+                    .get("fleet_analysis", {})
+                    .get("current_fleet_by_interval")
+                )
+
+            if base_fleet_available is not None:
+                # Assuming 'solution_prefix' serves as objective name or experiment ID for grouping
+                # Uses solution_id derived above (e.g. combined_solution_00)
+                fleet_rows = self._calculate_solution_fleet_rows(solution_id=solution_id, solution_data=solution_data)
+                fleet_stats_rows.extend(fleet_rows)
+
+        # write csv summary of results FIRST
         self._export_solution_summary_csv(summary_rows, base_output_dir, solution_prefix)
+
+        # write fleet stats csv FIRST
+        if fleet_stats_rows:
+            self._export_fleet_stats_csv(fleet_stats_rows, base_output_dir, solution_prefix)
+
+        # NOW perform the heavy GTFS / JSON exporting
+        for i, solution_data in enumerate(solutions):
+            rank = solution_data.get("rank", i)
+            solution_id = f"{solution_prefix}_{rank:02d}"
+
+            # Create minimal per-solution metadata
+            solution_metadata = {}
+            if "objective" in solution_data:
+                solution_metadata["objective_value"] = solution_data["objective"]
+            solution_metadata["rank"] = rank
+
+            # Export the solution heavy files (zip/json)
+            result = self.export_single_solution(
+                solution=solution_data["solution"],
+                solution_id=solution_id,
+                output_dir=base_output_dir,
+                metadata=solution_metadata,
+            )
+
+            results.append(result)
 
         return results
 
@@ -363,3 +504,29 @@ class SolutionExportManager:
             writer.writeheader()
             writer.writerows(rows)
         logger.info("✅ Solution summary CSV written: %s", csv_path)
+
+    def _export_fleet_stats_csv(self, rows, output_dir, solution_prefix):
+        """Export a CSV summary of fleet statistics."""
+        csv_path = Path(output_dir) / f"{solution_prefix}_fleet_stats.csv"
+        fieldnames = [
+            "solution",
+            "interval_label",
+            "bus_fleet_base",
+            "bus_fleet_solution",
+            "drt_fleet_solution",
+            "bus_fleet_diff",
+            "bus_fleet_pct_change",
+            "total_fleet_diff",
+            "total_fleet_pct_change",
+        ]
+
+        try:
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            logger.info("✅ Fleet stats CSV written: %s", csv_path)
+        except Exception as e:
+            logger.error(f"❌ Failed to write fleet stats CSV: {e}")
+        except Exception as e:
+            logger.error(f"❌ Failed to write fleet stats CSV: {e}")

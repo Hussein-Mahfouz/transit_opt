@@ -561,8 +561,11 @@ class PSORuntimeCallback(Callback):
                                 # ===== Handle constraint-specific input format =====
                                 constraint_name = type(constraint).__name__
 
-                                if constraint_name == "FleetTotalConstraintHandler":
-                                    # FleetTotalConstraintHandler handles PT+DRT dict correctly
+                                if constraint_name in [
+                                    "FleetTotalConstraintHandler",
+                                    "FleetPerIntervalConstraintHandler",
+                                ]:
+                                    # FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler handles PT+DRT dict correctly
                                     # Pass full solution (dict or array)
                                     constraint_viols = constraint.evaluate(solution_matrix)
                                 else:
@@ -672,7 +675,23 @@ class PenaltySchedulingCallback(Callback):
                         is_feasible = True
 
                         for constraint in algorithm.problem.constraints:
-                            violations = constraint.evaluate(solution_matrix)
+                            # ===== Handle constraint-specific input format =====
+                            constraint_name = type(constraint).__name__
+
+                            if constraint_name in ["FleetTotalConstraintHandler", "FleetPerIntervalConstraintHandler"]:
+                                # FleetTotalConstraintHandler, FleetPerIntervalConstraintHandler handles PT+DRT dict correctly
+                                # Pass full solution (dict or array)
+                                violations = constraint.evaluate(solution_matrix)
+                            else:
+                                # Other constraints (FleetPerInterval, MinimumFleet) are PT-only
+                                # Extract PT portion if solution is dict
+                                if isinstance(solution_matrix, dict):
+                                    pt_solution = solution_matrix["pt"]
+                                    violations = constraint.evaluate(pt_solution)
+                                else:
+                                    # PT-only problem: solution_matrix is already PT array
+                                    violations = constraint.evaluate(solution_matrix)
+
                             if np.any(violations > 1e-6):  # Same tolerance as hard constraints
                                 is_feasible = False
                                 break
@@ -743,7 +762,11 @@ class BestFeasibleSolutionsTracker:
             if not feasibles[i]:
                 continue
             # Check for valid solution based on type
-            if not np.isfinite(objectives[i]) or solution_matrices[i] is None:
+            try:
+                obj_val = float(objectives[i])
+                if not np.isfinite(obj_val) or solution_matrices[i] is None:
+                    continue
+            except (TypeError, ValueError):
                 continue
 
             # Handle both dict (DRT-enabled) and array (PT-only) solution formats
@@ -1705,12 +1728,22 @@ class PSORunner:
             constraints = []
             constraint_configs = problem_config.get("constraints", [])
 
+            # Extract global DRT cost factor from problem config
+            global_drt_cost_factor = problem_config.get("drt_cost_factor", 1.0)
+            if global_drt_cost_factor != 1.0:
+                logger.info("   💡 Using global DRT cost factor: %.2f", global_drt_cost_factor)
+
             logger.info("   📋 Creating %d constraint handler(s)...", len(constraint_configs))
 
             for i, constraint_config in enumerate(constraint_configs):
                 constraint_type = constraint_config.get("type")
                 # Extract constraint-specific parameters (exclude 'type' field)
                 constraint_kwargs = {k: v for k, v in constraint_config.items() if k != "type"}
+
+                # Inject global DRT cost factor if not overridden locally
+                if "drt_cost_factor" not in constraint_kwargs:
+                    constraint_kwargs["drt_cost_factor"] = global_drt_cost_factor
+
                 logger.info("      Creating constraint %d: %s", i + 1, constraint_type)
 
                 # Create appropriate constraint handler based on type
@@ -1754,11 +1787,15 @@ class PSORunner:
                 penalty_config = {"enabled": False}
 
             # === PROBLEM ASSEMBLY ===
+            # Extract parameters for masked optimization
+            fixed_intervals = problem_config.get("fixed_intervals")
+
             self.problem = TransitOptimizationProblem(
                 self.optimization_data,  # Problem data
                 objective,  # Objective function instance
                 constraints,  # List of constraint handler instances
                 penalty_config=penalty_config,
+                fixed_intervals=fixed_intervals,  # Masked optimization support
             )
 
             # Print problem construction summary
@@ -1844,12 +1881,15 @@ class PSORunner:
                 base_solutions=sampling_config.base_solutions,
                 frac_gaussian_pert=sampling_config.frac_gaussian_pert,
                 gaussian_sigma=sampling_config.gaussian_sigma,
+                frac_reductions=sampling_config.frac_reductions,
+                reduction_sigma=sampling_config.reduction_sigma,
                 random_seed=sampling_config.random_seed,
             )
 
             algorithm.initialization.sampling = initial_population
             logger.info("✅ Custom population set: shape %s", initial_population.shape)
             logger.info("   📊 Gaussian fraction: %.1f%%", sampling_config.frac_gaussian_pert * 100)
+            logger.info("   📊 Reduction fraction: %.1f%%", sampling_config.frac_reductions * 100)
             logger.info("   📊 LHS fraction: %.1f%% (calculated)", sampling_config.frac_lhs * 100)
 
         return algorithm
@@ -1981,7 +2021,9 @@ class PSORunner:
 
         # === OBJECTIVE VALUE EXTRACTION ===
         # Handle various pymoo objective result formats safely
-        if hasattr(pymoo_result.F, "item"):
+        if pymoo_result.F is None:
+            best_objective = float("nan")
+        elif hasattr(pymoo_result.F, "item"):
             best_objective = float(pymoo_result.F.item())
         elif hasattr(pymoo_result.F, "__len__") and len(pymoo_result.F) > 0:
             best_objective = float(pymoo_result.F[0])

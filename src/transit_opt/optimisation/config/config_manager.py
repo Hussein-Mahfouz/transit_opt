@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 
 # Replace the PSOConfig class definition around line 50
 
+
 @dataclass
 class PSOConfig:
     """
@@ -202,6 +203,7 @@ class PSOConfig:
             raise ValueError("Penalty weight must be positive")
         if self.penalty_increase_rate <= 1.0:
             raise ValueError("Penalty increase rate must be > 1.0 for adaptive penalty")
+
 
 @dataclass
 class TerminationConfig:
@@ -468,21 +470,15 @@ class MultiRunConfig:
         """Validate multi-run configuration."""
         if self.enabled:
             if self.num_runs < 2:
-                raise ValueError(
-                    "Number of runs must be at least 2 for multi-run analysis"
-                )
+                raise ValueError("Number of runs must be at least 2 for multi-run analysis")
 
             if self.num_runs > 100:
-                raise ValueError(
-                    "Number of runs should not exceed 100 (time/resource limits)"
-                )
+                raise ValueError("Number of runs should not exceed 100 (time/resource limits)")
 
             valid_analyses = ["basic", "detailed", "comparison"]
             for analysis in self.statistical_analysis:
                 if analysis not in valid_analyses:
-                    raise ValueError(
-                        f"Statistical analysis '{analysis}' not in {valid_analyses}"
-                    )
+                    raise ValueError(f"Statistical analysis '{analysis}' not in {valid_analyses}")
 
             if self.parameter_sweep:
                 valid_params = [
@@ -496,14 +492,11 @@ class MultiRunConfig:
                         raise ValueError(f"Parameter '{param}' not in {valid_params}")
 
                     if not isinstance(self.parameter_sweep[param], list):
-                        raise ValueError(
-                            f"Parameter sweep values for '{param}' must be a list"
-                        )
+                        raise ValueError(f"Parameter sweep values for '{param}' must be a list")
 
                     if len(self.parameter_sweep[param]) < 2:
-                        raise ValueError(
-                            f"Parameter sweep for '{param}' must have at least 2 values"
-                        )
+                        raise ValueError(f"Parameter sweep for '{param}' must have at least 2 values")
+
 
 @dataclass
 class SamplingConfig:
@@ -517,17 +510,21 @@ class SamplingConfig:
         random_seed: Random seed for reproducibility
 
     Note: frac_lhs is calculated automatically as (1.0 - frac_gaussian_pert)
-"""
+    """
+
     enabled: bool = False
     base_solutions: str | list = "from_data"  # "from_data" or list of solutions
     frac_gaussian_pert: float = 0.7
     gaussian_sigma: float = 1.0
+    frac_reductions: float = 0.0
+    reduction_sigma: float = 1.0
+
     random_seed: int | None = None
 
     @property
     def frac_lhs(self) -> float:
         """Get fraction of Latin Hypercube Sampling."""
-        return 1.0 - self.frac_gaussian_pert
+        return 1.0 - self.frac_gaussian_pert - self.frac_reductions
 
     def __post_init__(self):
         """Validate sampling configuration after initialization."""
@@ -536,9 +533,21 @@ class SamplingConfig:
             if not 0.0 <= self.frac_gaussian_pert <= 1.0:
                 raise ValueError(f"frac_gaussian_pert must be between 0.0 and 1.0, got {self.frac_gaussian_pert}")
 
+            if not 0.0 <= self.frac_reductions <= 1.0:
+                raise ValueError(f"frac_reductions must be between 0.0 and 1.0, got {self.frac_reductions}")
+
+            if self.frac_gaussian_pert + self.frac_reductions > 1.0:
+                raise ValueError(
+                    f"Sum of frac_gaussian_pert and frac_reductions must be <= 1.0, got {self.frac_gaussian_pert + self.frac_reductions}"
+                )
+
             # Check sigma is positive
             if self.gaussian_sigma <= 0:
                 raise ValueError("gaussian_sigma must be positive")
+
+            if self.reduction_sigma <= 0:
+                raise ValueError("reduction_sigma must be positive")
+
 
 @dataclass
 class SolutionSamplingStrategyConfig:
@@ -547,6 +556,7 @@ class SolutionSamplingStrategyConfig:
 
     Determines which solutions from tracked pool get exported for downstream analysis.
     """
+
     type: str = "uniform"  # "uniform", "power", "geometric", "fibonacci", "manual"
     max_to_save: int = 10
     max_rank: int | None = None  # Defaults to track_best_n if not specified
@@ -568,9 +578,7 @@ class SolutionSamplingStrategyConfig:
 
         # Validate max_rank when specified
         if self.max_rank is not None and self.max_rank < 1:
-            raise ValueError(
-                f"max_rank must be positive when specified, got {self.max_rank}"
-            )
+            raise ValueError(f"max_rank must be positive when specified, got {self.max_rank}")
 
         # Validate type-specific parameters
         if self.type == "power" and self.power_exponent < 1.0:
@@ -748,7 +756,9 @@ class OptimizationConfigManager:
             base_solutions=sampling_config.get("base_solutions", []),
             frac_gaussian_pert=sampling_config.get("frac_gaussian_pert", 0.3),
             gaussian_sigma=sampling_config.get("gaussian_sigma", 1.0),
-            random_seed=sampling_config.get("random_seed", None)
+            frac_reductions=sampling_config.get("frac_reductions", 0.0),
+            reduction_sigma=sampling_config.get("reduction_sigma", 1.0),
+            random_seed=sampling_config.get("random_seed", None),
         )
 
         # Setup termination configuration - check required parameters
@@ -766,12 +776,8 @@ class OptimizationConfigManager:
         self.termination_config = TerminationConfig(
             max_generations=term_config["max_generations"],  # REQUIRED
             max_time_minutes=term_config.get("max_time_minutes"),  # Optional
-            convergence_tolerance=term_config.get(
-                "convergence_tolerance", 1e-6
-            ),  # Optional with default
-            convergence_patience=term_config.get(
-                "convergence_patience", 50
-            ),  # Optional with default
+            convergence_tolerance=term_config.get("convergence_tolerance", 1e-6),  # Optional with default
+            convergence_patience=term_config.get("convergence_patience", 50),  # Optional with default
             target_objective=term_config.get("target_objective"),  # Optional
         )
 
@@ -805,7 +811,7 @@ class OptimizationConfigManager:
             max_rank=sampling_strategy_cfg.get("max_rank"),  # None is OK
             power_exponent=sampling_strategy_cfg.get("power_exponent", 2.0),
             geometric_base=sampling_strategy_cfg.get("geometric_base", 2.0),
-            manual_ranks=sampling_strategy_cfg.get("manual_ranks", [])
+            manual_ranks=sampling_strategy_cfg.get("manual_ranks", []),
         )
 
     def get_pso_config(self) -> PSOConfig:
@@ -871,17 +877,16 @@ class OptimizationConfigManager:
 
         print("   🎯 Problem Configuration:")
         print(f"      Objective: {self.config['problem']['objective']['type']}")
-        print(
-            f"      Constraints: {len(self.config['problem'].get('constraints', []))}"
-        )
+        print(f"      Constraints: {len(self.config['problem'].get('constraints', []))}")
 
         print("   🔄 Algorithm Configuration:")
         print("      Type: PSO")
         print(f"      Population size: {self.pso_config.pop_size}")
-        print(f"      Inertia weight: {self.pso_config.inertia_weight} ({'adaptive' if self.pso_config.adaptive else 'fixed'})")
+        print(
+            f"      Inertia weight: {self.pso_config.inertia_weight} ({'adaptive' if self.pso_config.adaptive else 'fixed'})"
+        )
         print(f"      Cognitive/Social coeffs: {self.pso_config.cognitive_coeff}/{self.pso_config.social_coeff}")
         print(f"      Adaptive algorithm: {'Enabled' if self.pso_config.adaptive else 'Disabled'}")
-
 
         if self.pso_config.adaptive:
             print("      Strategy: PyMOO adaptive PSO (parameters adjust based on swarm spread)")
@@ -893,18 +898,14 @@ class OptimizationConfigManager:
             print(f"      Initial penalty weight: {self.pso_config.penalty_weight}")
             if self.pso_config.adaptive_penalty:
                 print("      Adaptive penalty: Enabled")
-                print(
-                    f"      Penalty increase rate: {self.pso_config.penalty_increase_rate}"
-                )
+                print(f"      Penalty increase rate: {self.pso_config.penalty_increase_rate}")
             else:
                 print("      Adaptive penalty: Disabled")
         print("   ⏰ Termination Configuration:")
         print(f"      Max generations: {self.termination_config.max_generations}")
         if self.termination_config.max_time_minutes:
             print(f"      Max time: {self.termination_config.max_time_minutes} minutes")
-        print(
-            f"      Convergence tolerance: {self.termination_config.convergence_tolerance}"
-        )
+        print(f"      Convergence tolerance: {self.termination_config.convergence_tolerance}")
 
         print("   📊 Monitoring Configuration:")
         print(f"      Progress frequency: {self.monitoring_config.progress_frequency}")
@@ -915,9 +916,6 @@ class OptimizationConfigManager:
         print(f"      Enabled: {self.multi_run_config.enabled}")
         if self.multi_run_config.enabled:
             if self.multi_run_config.parameter_sweep:
-                print(
-                    f"      Parameter sweep: {list(self.multi_run_config.parameter_sweep.keys())}"
-                )
+                print(f"      Parameter sweep: {list(self.multi_run_config.parameter_sweep.keys())}")
             else:
                 print(f"      Statistical runs: {self.multi_run_config.num_runs}")
-
