@@ -865,12 +865,14 @@ class GTFSDataPreparator:
                 * fleet_distribution: Count of routes by fleet size category
 
         **Fleet Calculation Formula**:
-            vehicles_needed = ceil((round_trip_time * operational_buffer) / headway)
+            directional_headway = headway * n_directions
+            vehicles_needed = ceil((round_trip_time * operational_buffer) / directional_headway)
 
             Where:
             - round_trip_time: Total time for vehicle to complete route and return (minutes)
             - operational_buffer: Extra time factor for maintenance, delays, crew relief (1.15 = 15%)
-            - headway: Time between consecutive departures (minutes)
+            - headway: Time between consecutive departures across all directions (aggregate headway, minutes)
+            - n_directions: Number of directions served (1 or 2, limits double counting)
             - ceil(): Round up to next integer (can't have fractional vehicles)
 
         **Calculation Examples**:

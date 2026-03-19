@@ -140,7 +140,7 @@ class BaseConstraintHandler(ABC):
 
         # Use shared calculation logic
         fleet_results = calculate_fleet_requirements(
-            headways_matrix=solution_matrix,
+            headways_matrix=pt_matrix,
             round_trip_times=self.round_trip_times,
             operational_buffer=operational_buffer,
             no_service_threshold=no_service_threshold,
