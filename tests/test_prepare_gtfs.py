@@ -213,6 +213,7 @@ class TestGTFSDataPreparator:
         route_data = [
             {  # ROUTE 1: Morning peak route
                 "route_id": "route_1",
+                "n_directions": 1,
                 "round_trip_time": 60.0,  # 1 hour round-trip
                 "headways_by_interval": np.array(
                     [
@@ -223,20 +224,22 @@ class TestGTFSDataPreparator:
                     ]
                 ),
             },
-            {  # ROUTE 2: Evening peak route (staggered from Route 1)
+            {  # ROUTE 2: Evening peak route (staggered from Route 1, 2-directional)
                 "route_id": "route_2",
+                "n_directions": 2,
                 "round_trip_time": 120.0,  # 2 hour round-trip (longer route)
                 "headways_by_interval": np.array(
                     [
-                        60.0,  # Interval 0: 60min headway (light service)
-                        45.0,  # Interval 1: 45min headway (moderate service)
-                        30.0,  # Interval 2: 30min headway (PEAK - frequent service)
+                        30.0,  # Interval 0: 30min aggregate -> 60min directional (light service)
+                        22.5,  # Interval 1: 22.5min aggregate -> 45min directional (moderate service)
+                        15.0,  # Interval 2: 15min aggregate -> 30min directional (PEAK - frequent service)
                         np.nan,  # Interval 3: No service
                     ]
                 ),
             },
             {  # ROUTE 3: No service route (edge case)
                 "route_id": "route_3",
+                "n_directions": 1,
                 "round_trip_time": 40.0,  # Short round-trip (doesn't matter - no service)
                 "headways_by_interval": np.array(
                     [
@@ -260,7 +263,7 @@ class TestGTFSDataPreparator:
 
         # ===== VERIFY PER-ROUTE PEAK FLEET CALCULATIONS =====
         print("\n🚌 PER-ROUTE PEAK FLEET VERIFICATION:")
-        print("Formula: vehicles = ceil((round_trip_time * 1.15) / headway)")
+        print("Formula: vehicles = ceil((round_trip_time * 1.15) / (headway * n_directions))")
 
         # Route 1 calculations by interval:
         print("\nRoute 1 (60min round-trip) - Morning Peak Route:")
@@ -272,10 +275,10 @@ class TestGTFSDataPreparator:
         assert current_fleet_per_route[0] == 5, f"Route 1 peak fleet should be 5, got {current_fleet_per_route[0]}"
 
         # Route 2 calculations by interval:
-        print("\nRoute 2 (120min round-trip) - Evening Peak Route:")
-        print("  Interval 0: ceil(120 * 1.15 / 60) = ceil(138/60) = ceil(2.3) = 3 vehicles")
-        print("  Interval 1: ceil(120 * 1.15 / 45) = ceil(138/45) = ceil(3.07) = 4 vehicles")
-        print("  Interval 2: ceil(120 * 1.15 / 30) = ceil(138/30) = ceil(4.6) = 5 vehicles ← PEAK")
+        print("\nRoute 2 (120min round-trip, 2 directions) - Evening Peak Route:")
+        print("  Interval 0: ceil(120 * 1.15 / (30 * 2)) = ceil(138/60) = ceil(2.3) = 3 vehicles")
+        print("  Interval 1: ceil(120 * 1.15 / (22.5 * 2)) = ceil(138/45) = ceil(3.07) = 4 vehicles")
+        print("  Interval 2: ceil(120 * 1.15 / (15 * 2)) = ceil(138/30) = ceil(4.6) = 5 vehicles ← PEAK")
         print("  Interval 3: No service = 0 vehicles")
         print("  → Peak across intervals = max(3, 4, 5, 0) = 5 vehicles")
         assert current_fleet_per_route[1] == 5, f"Route 2 peak fleet should be 5, got {current_fleet_per_route[1]}"

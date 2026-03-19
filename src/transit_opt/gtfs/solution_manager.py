@@ -86,6 +86,7 @@ class SolutionExportManager:
             no_service_threshold=params.get("no_service_threshold", 480),
             allowed_headways=np.array(allowed_headways),
             no_service_index=no_service_idx,
+            n_directions=self.optimization_data.get("routes", {}).get("n_directions", None),
         )
 
         rows = []

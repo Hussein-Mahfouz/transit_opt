@@ -139,8 +139,7 @@ def precalculated_fleet_data(sample_optimization_data):
     print(f"      Fleet by interval: {baseline_data['current_fleet_by_interval']}")
 
     # Get parameters for fleet calculations (same as GTFSDataPreparator used)
-    from transit_opt.optimisation.utils.fleet_calculations import \
-        calculate_fleet_requirements
+    from transit_opt.optimisation.utils.fleet_calculations import calculate_fleet_requirements
 
     allowed_headways = sample_optimization_data["allowed_headways"]
     round_trip_times = sample_optimization_data["routes"]["round_trip_times"]
@@ -173,10 +172,7 @@ def precalculated_fleet_data(sample_optimization_data):
         # Convert solution indices to actual headway minutes
         # This is the key step - solution_matrix contains indices, we need actual headway values
         headways_matrix = np.array(
-            [
-                [allowed_headways[solution_matrix[i, j]] for j in range(n_intervals)]
-                for i in range(n_routes)
-            ]
+            [[allowed_headways[solution_matrix[i, j]] for j in range(n_intervals)] for i in range(n_routes)]
         )
 
         print(f"        Solution indices: {np.unique(solution_matrix)}")
@@ -190,6 +186,7 @@ def precalculated_fleet_data(sample_optimization_data):
             no_service_threshold=no_service_threshold,
             allowed_headways=allowed_headways,
             no_service_index=no_service_index,
+            n_directions=sample_optimization_data.get("routes", {}).get("n_directions", None),
         )
 
         # Store calculated results
@@ -211,6 +208,7 @@ def precalculated_fleet_data(sample_optimization_data):
 
     print("\n✅ PRECALCULATED FLEET DATA READY")
     return result
+
 
 @pytest.fixture
 def usa_population_path():

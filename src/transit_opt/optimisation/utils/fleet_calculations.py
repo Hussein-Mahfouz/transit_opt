@@ -5,6 +5,7 @@ This module provides standardized fleet calculation methods used by both
 GTFSDataPreparator and optimization constraint handlers to ensure consistency.
 """
 
+import numbers
 from typing import Any
 
 import numpy as np
@@ -17,6 +18,7 @@ def calculate_fleet_requirements(
     no_service_threshold: float = 480,
     allowed_headways: np.ndarray | None = None,
     no_service_index: int | None = None,
+    n_directions: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """
     Unified fleet calculation for both baseline analysis and optimization constraints.
@@ -45,9 +47,10 @@ def calculate_fleet_requirements(
 
     # Validate inputs
     if len(round_trip_times) != n_routes:
-        raise ValueError(
-            f"round_trip_times length ({len(round_trip_times)}) must match n_routes ({n_routes})"
-        )
+        raise ValueError(f"round_trip_times length ({len(round_trip_times)}) must match n_routes ({n_routes})")
+
+    if n_directions is not None and len(n_directions) != n_routes:
+        raise ValueError(f"n_directions length ({len(n_directions)}) must match n_routes ({n_routes})")
 
     # Initialize output arrays
     route_fleet_matrix = np.zeros((n_routes, n_intervals), dtype=int)
@@ -57,15 +60,20 @@ def calculate_fleet_requirements(
     for route_idx in range(n_routes):
         round_trip_time = round_trip_times[route_idx]
 
+        raw_dirs = n_directions[route_idx] if n_directions is not None else 2.0
+        try:
+            dirs = float(raw_dirs)
+            dirs = 2.0 if np.isnan(dirs) or np.isinf(dirs) else max(1.0, dirs)
+        except (ValueError, TypeError):
+            dirs = 2.0
+
         for interval_idx in range(n_intervals):
             headway_value = headways_matrix[route_idx, interval_idx]
 
             # Decode headway value based on context
             if allowed_headways is not None and no_service_index is not None:
                 # Optimization context: decode choice index to headway value
-                if isinstance(headway_value, (int, np.integer)) and headway_value < len(
-                    allowed_headways
-                ):
+                if isinstance(headway_value, numbers.Integral) and headway_value < len(allowed_headways):
                     if headway_value == no_service_index:
                         actual_headway = np.inf  # No service
                     else:
@@ -77,15 +85,11 @@ def calculate_fleet_requirements(
                 actual_headway = headway_value
 
             # Calculate vehicles needed using standardized logic
-            if (
-                not np.isnan(actual_headway)
-                and not np.isinf(actual_headway)
-                and actual_headway < no_service_threshold
-            ):
-                # Valid service headway - apply same formula as GTFSDataPreparator
-                vehicles_needed = np.ceil(
-                    (round_trip_time * operational_buffer) / actual_headway
-                )
+            if not np.isnan(actual_headway) and not np.isinf(actual_headway) and actual_headway < no_service_threshold:
+                # Using Little's Law: We derive directional headway so it correctly
+                # scales against round_trip_time without double counting across forks.
+                directional_headway = actual_headway * dirs
+                vehicles_needed = np.ceil((round_trip_time * operational_buffer) / directional_headway)
                 vehicles_needed = max(1, int(vehicles_needed))  # At least 1 vehicle
             else:
                 # No service or invalid headway

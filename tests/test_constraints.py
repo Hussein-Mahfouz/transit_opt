@@ -831,7 +831,7 @@ class TestFleetPerIntervalConstraintHandler:
             "no_service_index": 3,
             "routes": {
                 "round_trip_times": np.array([60.0, 120.0]),  # Floats for safety
-                "route_ids": ["r1", "r2"],
+                "route_ids": ["r1", "r2"], "n_directions": np.array([1.0, 1.0]),
             },
             "constraints": {
                 "fleet_analysis": {
@@ -878,7 +878,7 @@ class TestFleetPerIntervalConstraintHandler:
             "n_intervals": 3,
             "allowed_headways": [10, 20, 30],
             "no_service_index": 3,
-            "routes": {"round_trip_times": np.array([60.0, 120.0]), "route_ids": ["r1", "r2"]},
+            "routes": {"round_trip_times": np.array([60.0, 120.0]), "route_ids": ["r1", "r2"], "n_directions": np.array([1.0, 1.0])},
             "constraints": {
                 "fleet_analysis": {
                     "operational_buffer": 1.0,
