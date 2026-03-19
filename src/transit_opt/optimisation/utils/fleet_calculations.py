@@ -5,6 +5,7 @@ This module provides standardized fleet calculation methods used by both
 GTFSDataPreparator and optimization constraint handlers to ensure consistency.
 """
 
+import numbers
 from typing import Any
 
 import numpy as np
@@ -48,6 +49,9 @@ def calculate_fleet_requirements(
     if len(round_trip_times) != n_routes:
         raise ValueError(f"round_trip_times length ({len(round_trip_times)}) must match n_routes ({n_routes})")
 
+    if n_directions is not None and len(n_directions) != n_routes:
+        raise ValueError(f"n_directions length ({len(n_directions)}) must match n_routes ({n_routes})")
+
     # Initialize output arrays
     route_fleet_matrix = np.zeros((n_routes, n_intervals), dtype=int)
     fleet_per_interval = np.zeros(n_intervals, dtype=int)
@@ -55,7 +59,13 @@ def calculate_fleet_requirements(
     # Process each route-interval combination
     for route_idx in range(n_routes):
         round_trip_time = round_trip_times[route_idx]
-        dirs = n_directions[route_idx] if n_directions is not None else 2.0
+
+        raw_dirs = n_directions[route_idx] if n_directions is not None else 2.0
+        try:
+            dirs = float(raw_dirs)
+            dirs = 2.0 if np.isnan(dirs) or np.isinf(dirs) else max(1.0, dirs)
+        except (ValueError, TypeError):
+            dirs = 2.0
 
         for interval_idx in range(n_intervals):
             headway_value = headways_matrix[route_idx, interval_idx]
@@ -63,7 +73,7 @@ def calculate_fleet_requirements(
             # Decode headway value based on context
             if allowed_headways is not None and no_service_index is not None:
                 # Optimization context: decode choice index to headway value
-                if isinstance(headway_value, int | np.integer) and headway_value < len(allowed_headways):
+                if isinstance(headway_value, numbers.Integral) and headway_value < len(allowed_headways):
                     if headway_value == no_service_index:
                         actual_headway = np.inf  # No service
                     else:

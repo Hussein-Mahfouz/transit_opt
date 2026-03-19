@@ -624,7 +624,7 @@ class GTFSDataPreparator:
 
             if len(route_stop_times) == 0:
                 logger.debug(f"Route {route_id}: No stop times, using default {self.default_round_trip_time}min")
-                return self.default_round_trip_time
+                return self.default_round_trip_time, 2
 
             trip_durations = []
             for trip_id, trip_stops in route_stop_times.groupby("trip_id"):
@@ -655,6 +655,10 @@ class GTFSDataPreparator:
                     n_directions = route_trips["trip_headsign"].nunique()
                 else:
                     n_directions = 2  # Fallback to standard 2-way assumption if no info
+
+                # Normalize directions to avoid division-by-zero or massive fleet inflation
+                # from fragmented headsigns. Assume it's either a 1-way loop or a 2-way route.
+                n_directions = 1 if n_directions == 1 else 2
 
                 # If we have exactly 1 direction, we treat it as a loop (1x).
                 # All other cases (2, 8, etc.) we treat as needing return trips (2x).
